@@ -6,9 +6,7 @@ class_name WaveSim
 
 const RES := 128
 const TILE_BYTES := 64
-const QUIET_H := 0.02
 const QUIET_WINDOWS := 2
-const SHIP_HOLD := 3.0
 const EXPIRE_SCAN := 32
 
 var dx: float
@@ -18,6 +16,8 @@ var grid: int
 var origin: int
 var damping: float
 var hard_lifetime: float
+var quiet_h := 0.02            # peak |h| (m) below which a tile counts as quiet
+var hold := 3.0                 # a tile lives this long after its last touch before quiet checks
 var bow_gain := 0.0
 
 var _index_img: Image
@@ -180,7 +180,7 @@ func expire(time: float) -> void:
 		_scan = (_scan + 1) % pool
 		if _slot_used[slot] == 0: continue
 		var idle := time - _slot_touch[slot]
-		if idle > SHIP_HOLD and (_slot_quiet[slot] >= QUIET_WINDOWS or idle > hard_lifetime):
+		if idle > hold and (_slot_quiet[slot] >= QUIET_WINDOWS or idle > hard_lifetime):
 			_free(slot)
 
 func _on_energy(data: PackedByteArray, window_start: float) -> void:
@@ -188,7 +188,7 @@ func _on_energy(data: PackedByteArray, window_start: float) -> void:
 	if data.size() < pool * 4: return
 	for slot in _active:
 		if _slot_alloc[slot] > window_start: continue
-		if data.decode_float(slot * 4) < QUIET_H: _slot_quiet[slot] += 1
+		if data.decode_float(slot * 4) < quiet_h: _slot_quiet[slot] += 1
 		else: _slot_quiet[slot] = 0
 
 # Main-thread snapshot handed to dispatch() on the render thread.
@@ -273,6 +273,15 @@ func dispatch(cl: int, pipeline: RID, pc: PackedByteArray, f: Dictionary, parity
 		_rd.compute_list_set_push_constant(cl, pc, pc.size())
 		_rd.compute_list_dispatch(cl, RES / 16, RES / 16, f.active.size())
 		_rd.compute_list_add_barrier(cl)
+
+
+# Detach wrappers before freeing so material uniform sets never see a dead texture.
+func free_rd() -> void:
+	for w in wraps:
+		if w: w.texture_rd_rid = RID()
+	if lod_wrap: lod_wrap.texture_rd_rid = RID()
+	for r: RID in [_tex[0], _tex[1], _lod_tex, _tiles_buf, _masks_buf, _active_buf, _energy_buf]:
+		if r.is_valid(): _rd.free_rid(r)
 
 
 static func array_tex(rd: RenderingDevice, size: int, layers: int, format: RenderingDevice.DataFormat, usage: int) -> RID:

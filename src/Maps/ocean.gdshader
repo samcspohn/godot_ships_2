@@ -89,7 +89,6 @@ uniform sampler2D      index_tex_c  : repeat_disable, filter_nearest;
 uniform float tile_world_c    = 768.0;
 uniform int   grid_origin_c   = 24;
 uniform bool  tiles_on        = false;
-uniform int   debug_sim       = 0;
 uniform float wave_height_scale = 1.0;
 
 // --- persistent wake map: (stamp time, strength) per 4 m texel ---
@@ -479,9 +478,6 @@ void fragment() {
 	float base_rough = mix(mix(calm_roughness, water_roughness, v_calm_factor), foam_roughness, foam);
 	float alpha = sqrt(pow(base_rough, 4.0) + lost_var);
 	ROUGHNESS = sqrt(alpha);
-	if (debug_sim == 1) ALBEDO = vec3(tile_slot(index_tex_c, tile_world_c, grid_origin_c, v_world_xz) / 64.0, fract(v_world_xz / tile_world_c));
-	if (debug_sim == 3) { float dh = fine_h(v_world_xz, false); ALBEDO = vec3(0.0); EMISSION = vec3(max(dh, 0.0), max(-dh, 0.0), 0.0) * 4.0; }
-	if (debug_sim == 2) { float dh = coarse_h(v_world_xz, false); ALBEDO = vec3(0.0); EMISSION = vec3(max(dh, 0.0), max(-dh, 0.0), 0.0) * 2.0; }
 	f_crest = crest;
 	f_foam = foam;
 }

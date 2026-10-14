@@ -7,12 +7,15 @@ const PLAY_HALF := 17500.0
 # Coarse grid carries ship pressure: 6 m cells keep Kelvin wavelengths (~100-250 m)
 # inside the kernel's dispersive band. Fine grid carries splashes only.
 const COARSE_DX := 6.0
-const COARSE_POOL := 192
+const COARSE_POOL := 176
 const COARSE_DAMPING := 0.05
-const COARSE_MARGIN := 600.0     # water simulated beyond the hull so the wake has room to spread
+const COARSE_MARGIN := 450.0     # water simulated beyond the hull so the wake has room to spread
 const FINE_DX := 2.0
-const FINE_POOL := 96
+const FINE_POOL := 64
 const FINE_DAMPING := 0.15
+const FINE_HOLD := 1.5
+const FINE_QUIET_H := 0.05
+const FINE_LIFETIME := 8.0       # splash rings are invisible by then; their slow decay would hold tiles ~30 s
 const HARD_LIFETIME := 60.0
 const READBACK_INTERVAL := 0.5
 
@@ -21,16 +24,17 @@ const WAKE_RES := 128
 const WAKE_WORLD := 512.0
 const WAKE_GRID := 72
 const WAKE_ORIGIN := WAKE_GRID / 2
-const WAKE_POOL := 160
+const WAKE_POOL := 176
 const WAKE_LIFE := 60.0
-const WAKE_MARGIN := 300.0
+const WAKE_REACH := 1.25         # wake tiles claimed around a ship, in half-lengths (spray + stern ribbon)
+const SPLASH_FOAM_LIFE := WAKE_LIFE * 0.2   # matches SPLASH_LIFE_FRAC in the wake shaders
 
 const SIM_HZ := 30.0
 const SIM_DT := 1.0 / SIM_HZ
 const MAX_SUBSTEPS := 2
 const GRAVITY := 9.81
 const BOW_GAIN := 0.3            # stem hump as a fraction of U^2/2g
-const HULL_GAIN := 0.65           # hull pressure as metres of head, per metre of draft
+const HULL_GAIN := 0.5           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
 const MAX_RINGS := 32
@@ -52,9 +56,11 @@ const SIM_SHADER := preload("res://src/Maps/wave.glsl")
 const STAMP_SHADER := preload("res://src/Maps/wake_stamp.glsl")
 
 var _coarse := WaveSim.new(COARSE_DX, COARSE_POOL, COARSE_DAMPING, HARD_LIFETIME, PLAY_HALF)
-var _fine := WaveSim.new(FINE_DX, FINE_POOL, FINE_DAMPING, HARD_LIFETIME, PLAY_HALF)
+var _fine := WaveSim.new(FINE_DX, FINE_POOL, FINE_DAMPING, FINE_LIFETIME, PLAY_HALF)
 
 var _rd: RenderingDevice
+var _shaders: Array[RID] = []
+var _wake_wrap: Texture2DArrayRD
 var _sim_pipeline: RID
 var _stamp_pipeline: RID
 var _wake_tex: RID
@@ -76,7 +82,7 @@ var _w_dirty := false
 var _w_cell_slot := {}
 var _w_slot_cell: Array[Vector2i] = []
 var _w_used := PackedByteArray()
-var _w_touch := PackedFloat64Array()
+var _w_expire := PackedFloat64Array()   # time after which the tile holds nothing visible
 var _w_free := PackedInt32Array()
 var _w_scan := 0
 var _w_clear_queue := PackedInt32Array()
@@ -146,7 +152,7 @@ func _add_impulse(pos: Vector3, sigma: float, depth: float, foam: float, foam_si
 	var p := Vector2(pos.x, pos.z)
 	var reach := maxf(sigma, foam_sigma) * 2.5
 	_fine.touch_rect(p, p, minf(reach, _fine.tile_world), _time)
-	if foam > 0.0: _w_touch_rect(p, reach)
+	if foam > 0.0: _w_touch_rect(p, reach, SPLASH_FOAM_LIFE)
 	_impulses.append({p = p, s = sigma, d = depth, f = foam, fs = maxf(foam_sigma, 0.01), r = reach})
 
 
@@ -154,11 +160,13 @@ func _ready() -> void:
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
 		queue_free(); return
+	_fine.hold = FINE_HOLD
+	_fine.quiet_h = FINE_QUIET_H
 	_coarse.bow_gain = BOW_GAIN
 
 	_w_slot_cell.resize(WAKE_POOL)
 	_w_used.resize(WAKE_POOL)
-	_w_touch.resize(WAKE_POOL)
+	_w_expire.resize(WAKE_POOL)
 	for i in WAKE_POOL: _w_free.append(WAKE_POOL - 1 - i)
 	_w_index.resize(WAKE_GRID * WAKE_GRID)
 	_w_index.fill(-1)
@@ -187,6 +195,24 @@ func _ready() -> void:
 	get_child(0).ocean_material = ocean_material
 	RenderingServer.call_on_render_thread(_init_rd)
 
+func _exit_tree() -> void:
+	if not _initialized: return
+	_initialized = false
+	if ocean_material:
+		for p in ["wave_array", "wave_array_c", "wave_lod", "wave_lod_c", "wake_array"]:
+			ocean_material.set_shader_parameter(p, null)
+	RenderingServer.call_on_render_thread(_free_rd)
+
+# Freeing a base resource also frees its slices, uniform sets and pipelines.
+func _free_rd() -> void:
+	_coarse.free_rd()
+	_fine.free_rd()
+	if _wake_wrap: _wake_wrap.texture_rd_rid = RID()
+	for r: RID in [_wake_tex, _ships_buf, _impulses_buf, _wake_index_buf, _stamps_buf]:
+		if r.is_valid(): _rd.free_rid(r)
+	for sh in _shaders: _rd.free_rid(sh)
+	_shaders.clear()
+
 func get_ocean_material() -> ShaderMaterial:
 	return ocean_material
 
@@ -206,7 +232,7 @@ func _w_alloc(cell: Vector2i) -> int:
 	_w_cell_slot[cell] = slot
 	_w_slot_cell[slot] = cell
 	_w_used[slot] = 1
-	_w_touch[slot] = _time
+	_w_expire[slot] = _time
 	_w_clear_queue.append(slot)
 	_w_set_index(ix, iy, slot)
 	return slot
@@ -227,25 +253,25 @@ func _w_evict_oldest() -> void:
 	var oldest := -1
 	var oldest_time := INF
 	for slot in WAKE_POOL:
-		if _w_used[slot] == 1 and _w_touch[slot] < oldest_time:
-			oldest_time = _w_touch[slot]
+		if _w_used[slot] == 1 and _w_expire[slot] < oldest_time:
+			oldest_time = _w_expire[slot]
 			oldest = slot
 	if oldest >= 0:
 		_w_release(oldest)
 
-func _w_touch_rect(p: Vector2, r: float) -> void:
+func _w_touch_rect(p: Vector2, r: float, life: float) -> void:
 	var c0 := Vector2i(floori((p.x - r) / WAKE_WORLD), floori((p.y - r) / WAKE_WORLD))
 	var c1 := Vector2i(floori((p.x + r) / WAKE_WORLD), floori((p.y + r) / WAKE_WORLD))
 	for cy in range(c0.y, c1.y + 1):
 		for cx in range(c0.x, c1.x + 1):
 			var slot := _w_alloc(Vector2i(cx, cy))
-			if slot >= 0: _w_touch[slot] = _time
+			if slot >= 0: _w_expire[slot] = maxf(_w_expire[slot], _time + life)
 
 func _expire_wake() -> void:
 	for k in 8:
 		var slot := _w_scan
 		_w_scan = (_w_scan + 1) % WAKE_POOL
-		if _w_used[slot] == 1 and _time - _w_touch[slot] > WAKE_LIFE + 1.0:
+		if _w_used[slot] == 1 and _time > _w_expire[slot] + 1.0:
 			_w_release(slot)
 
 
@@ -302,7 +328,7 @@ func _process(delta: float) -> void:
 		_prev_fwd[s] = fwd
 		var hull: Vector3 = _ship_hulls[s]
 		_coarse.touch_rect(q2, p2, hull.x + COARSE_MARGIN, _time, ship_count)
-		_w_touch_rect(p2, hull.x + WAKE_MARGIN)
+		_w_touch_rect(p2, hull.x * WAKE_REACH, WAKE_LIFE)
 		var f := ship_count * SHIP_FLOATS
 		_ship_f[f] = p2.x;           _ship_f[f + 1] = p2.y
 		_ship_f[f + 2] = q2.x;       _ship_f[f + 3] = q2.y
@@ -372,6 +398,7 @@ func _init_rd() -> void:
 		queue_free(); return
 	var sim_shader := _rd.shader_create_from_spirv(SIM_SHADER.get_spirv())
 	var stamp_shader := _rd.shader_create_from_spirv(STAMP_SHADER.get_spirv())
+	_shaders = [sim_shader, stamp_shader]
 	_sim_pipeline = _rd.compute_pipeline_create(sim_shader)
 	_stamp_pipeline = _rd.compute_pipeline_create(stamp_shader)
 
@@ -390,9 +417,9 @@ func _init_rd() -> void:
 		WaveSim.uni(RenderingDevice.UNIFORM_TYPE_IMAGE, 2, _wake_tex),
 	], stamp_shader, 0)
 
-	var wake_wrap := Texture2DArrayRD.new(); wake_wrap.texture_rd_rid = _wake_tex
+	_wake_wrap = Texture2DArrayRD.new(); _wake_wrap.texture_rd_rid = _wake_tex
 	if ocean_material:
-		ocean_material.set_shader_parameter.call_deferred("wake_array", wake_wrap)
+		ocean_material.set_shader_parameter.call_deferred("wake_array", _wake_wrap)
 	_initialized = true
 
 func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,

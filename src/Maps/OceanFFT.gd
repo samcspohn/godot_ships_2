@@ -4,7 +4,7 @@ class_name OceanFFT
 const SHADER_BUTTERFLY_PRECOMP := preload("res://src/Maps/ocean_butterfly_precompute.glsl")
 const SHADER_SPEC_INITIAL      := preload("res://src/Maps/ocean_spectrum_initial.glsl")
 const SHADER_SPEC_UPDATE       := preload("res://src/Maps/ocean_spectrum_update.glsl")
-const SHADER_FFT_BUTTERFLY     := preload("res://src/Maps/ocean_fft_butterfly.glsl")
+const SHADER_FFT               := preload("res://src/Maps/ocean_fft_shared.glsl")
 const SHADER_COMPOSE           := preload("res://src/Maps/ocean_compose.glsl")
 const SHADER_MIP               := preload("res://src/Maps/ocean_mip.glsl")
 
@@ -54,6 +54,7 @@ var _log2n:  int
 var _mips:   int
 
 var _rd: RenderingDevice
+var _shaders: Array[RID] = []
 
 var _pip_butterfly_precomp: RID
 var _pip_spec_initial:      RID
@@ -91,6 +92,26 @@ func _ready() -> void:
 		queue_free()
 		return
 	RenderingServer.call_on_render_thread(_init_rd.bind(_build_ubo_bytes()))
+
+
+func _exit_tree() -> void:
+	if not _initialized: return
+	_initialized = false
+	if ocean_material:
+		ocean_material.set_shader_parameter("fft_displacement", null)
+		ocean_material.set_shader_parameter("fft_derivatives", null)
+	_disp_wrap.texture_rd_rid = RID()
+	_deriv_wrap.texture_rd_rid = RID()
+	RenderingServer.call_on_render_thread(_free_rd)
+
+
+# Freeing a base resource also frees its slices, uniform sets and pipelines.
+func _free_rd() -> void:
+	for t: RID in [_h0, _butterfly, _a[0], _a[1], _a[2], _b[0], _b[1], _b[2], _a3, _b3,
+			_displacement, _derivatives, _disp_mipped, _deriv_mipped, _ubo]:
+		if t.is_valid(): _rd.free_rid(t)
+	for sh in _shaders: _rd.free_rid(sh)
+	_shaders.clear()
 
 
 func _process(delta: float) -> void:
@@ -233,7 +254,8 @@ func _tex_array(fmt: RenderingDevice.DataFormat, layers: int, n: int, mips := 1)
 	tf.array_layers = layers
 	tf.mipmaps      = mips
 	tf.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
-	tf.usage_bits   = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	tf.usage_bits   = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT \
+		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	if mips > 1:
 		tf.usage_bits |= RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
 	var t := _rd.texture_create(tf, RDTextureView.new(), [])
@@ -261,12 +283,15 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_log2n  = int(round(log(float(_n)) / log(2.0)))
 	_mips   = _log2n + 1
 
+	if _n != 256:
+		push_error("OceanFFT: ocean_fft_shared.glsl is built for grid_size 256")
 	var sh_bp := _rd.shader_create_from_spirv(SHADER_BUTTERFLY_PRECOMP.get_spirv())
 	var sh_si := _rd.shader_create_from_spirv(SHADER_SPEC_INITIAL.get_spirv())
 	var sh_su := _rd.shader_create_from_spirv(SHADER_SPEC_UPDATE.get_spirv())
-	var sh_fb := _rd.shader_create_from_spirv(SHADER_FFT_BUTTERFLY.get_spirv())
+	var sh_fb := _rd.shader_create_from_spirv(SHADER_FFT.get_spirv())
 	var sh_co := _rd.shader_create_from_spirv(SHADER_COMPOSE.get_spirv())
 	var sh_mip := _rd.shader_create_from_spirv(SHADER_MIP.get_spirv())
+	_shaders = [sh_bp, sh_si, sh_su, sh_fb, sh_co, sh_mip]
 	_pip_butterfly_precomp = _rd.compute_pipeline_create(sh_bp)
 	_pip_spec_initial      = _rd.compute_pipeline_create(sh_si)
 	_pip_spec_update       = _rd.compute_pipeline_create(sh_su)
@@ -315,12 +340,12 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 		_make_uni(IM, 0, _a[0]),
 		_make_uni(IM, 1, _a[1]),
 		_make_uni(IM, 2, _a[2]),
-		_make_uni(IM, 3, _b[0]),
-		_make_uni(IM, 4, _b[1]),
-		_make_uni(IM, 5, _b[2]),
-		_make_uni(IM, 6, _butterfly),
-		_make_uni(IM, 7, _a3),
-		_make_uni(IM, 8, _b3),
+		_make_uni(IM, 3, _a3),
+		_make_uni(IM, 4, _b[0]),
+		_make_uni(IM, 5, _b[1]),
+		_make_uni(IM, 6, _b[2]),
+		_make_uni(IM, 7, _b3),
+		_make_uni(IM, 8, _butterfly),
 	], sh_fb, 0)
 
 	_uset_compose = _rd.uniform_set_create([
@@ -391,15 +416,14 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 	_rd.compute_list_dispatch(cl, g, g, _c)
 	_rd.compute_list_add_barrier(cl)
 
-	var pc_fft := PackedByteArray(); pc_fft.resize(12)
+	var pc_fft := PackedByteArray(); pc_fft.resize(16)
+	pc_fft.encode_s32(4, _log2n)
 	_rd.compute_list_bind_compute_pipeline(cl, _pip_fft)
 	_rd.compute_list_bind_uniform_set(cl, _uset_fft, 0)
-	for step in range(2 * _log2n):
-		pc_fft.encode_s32(0, step if step < _log2n else step - _log2n)
-		pc_fft.encode_s32(4, 0 if step < _log2n else 1)
-		pc_fft.encode_s32(8, step & 1)
-		_rd.compute_list_set_push_constant(cl, pc_fft, 12)
-		_rd.compute_list_dispatch(cl, g, g, _c)
+	for direction in 2:
+		pc_fft.encode_s32(0, direction)
+		_rd.compute_list_set_push_constant(cl, pc_fft, 16)
+		_rd.compute_list_dispatch(cl, _n, 1, _c)
 		_rd.compute_list_add_barrier(cl)
 
 	var pc_co := PackedByteArray(); pc_co.resize(16)
