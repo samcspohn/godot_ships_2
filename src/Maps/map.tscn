@@ -2,7 +2,6 @@
 
 [ext_resource type="PackedScene" uid="uid://b07osptcgjb7a" path="res://src/Maps/map.glb" id="1_e0an3"]
 [ext_resource type="Script" uid="uid://bpanntf8muod" path="res://src/Maps/map.gd" id="2_1vrru"]
-[ext_resource type="Material" uid="uid://ddgdh5xl1p0ml" path="res://src/Maps/water_material.tres" id="2_7hjns"]
 [ext_resource type="PackedScene" uid="uid://cpgfkfvip0xch" path="res://src/Maps/Ocean.tscn" id="4_mi1vd"]
 
 [node name="map" unique_id=64721563 instance=ExtResource("1_e0an3")]
@@ -72,7 +71,6 @@ visible = false
 use_collision = true
 collision_layer = 8
 size = Vector3(100000, 0, 100000)
-material = ExtResource("2_7hjns")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." index="23" unique_id=99374785]
 transform = Transform3D(0.6184084, 0.45074898, -0.64373636, 0, 0.819152, 0.5735765, 0.7858569, -0.35470447, 0.5065706, 0, 0, 0)
@@ -110,7 +108,6 @@ directional_shadow_pancake_size = 0.4
 
 [node name="water" parent="." index="25" unique_id=1498896448 groups=["map"]]
 visible = false
-material_override = ExtResource("2_7hjns")
 
 [node name="Plane_020" parent="." index="26" unique_id=1348909282 groups=["map"]]
 visible = false

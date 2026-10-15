@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bymj2eq3yureh"
+path="res://.godot/imported/foam_decal.glsl-0551b4dfd79b03b9ae0ee3b639cf90d0.res"
+
+[deps]
+
+source_file="res://src/Maps/foam_decal.glsl"
+dest_files=["res://.godot/imported/foam_decal.glsl-0551b4dfd79b03b9ae0ee3b639cf90d0.res"]
+
+[params]
+

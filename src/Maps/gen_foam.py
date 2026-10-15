@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""
-Generate a seamless *looping animated* ocean foam texture (Texture2DArray).
+"""Tiling foam texture for ocean.gdshader -> ocean_foam.png.
 
-Outputs N_FRAMES RGBA PNGs to ocean_foam_frames/foam_NN.png.
-
-Looping guarantee: every noise field is sampled at a small circular offset
-that is a function of (frame / N_FRAMES). At frame 0 and frame N_FRAMES the
-offset is identical, so the last frame morphs seamlessly back to the first.
-
-Feature complexity is doubled vs. the original (periods * 2) so there are
-more, finer bubble streams per tile.
+R: reveal order, histogram-equalised so coverage c reveals fraction c of the tile.
+G: whorl reveal order (churn advected through a curl field) for wakes, splashes and spray.
+B: churn reveal order for wakes and blasts, equalised like R.
+A: soft blotch noise (signed, 0.5 = 0) that breaks wake and splash coverage into patches.
 """
 
 import os
@@ -17,200 +12,143 @@ import os
 import numpy as np
 from PIL import Image
 
-# ---------------------------------------------------------------------------
 RES = 1024
-N_FRAMES = 16
-# Circular drift radius in [0,1) normalised coords.  Controls how much the
-# foam pattern changes across one loop.
-DRIFT = 0.15
-# Final blur pass (pixels, at RES resolution): widens the transition zones
-# between streamers/background and between different intensity levels,
-# amplifying the graded (non-binary) alpha established by the intensity field.
-BLUR_RADIUS = 3
-BLUR_PASSES = 2
-# ---------------------------------------------------------------------------
+SEED = 7
 
 
-def quintic(t):
-    return t * t * t * (t * (t * 6 - 15) + 10)
+def worley(cells, rng):
+    pts = rng.random((cells, cells, 2))
+    y, x = np.mgrid[0:RES, 0:RES] / RES * cells
+    cx, cy = np.floor(x).astype(int), np.floor(y).astype(int)
+    f1 = np.full((RES, RES), 9.0)
+    f2 = np.full((RES, RES), 9.0)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            nx, ny = cx + dx, cy + dy
+            p = pts[ny % cells, nx % cells]
+            d = np.hypot(nx + p[..., 0] - x, ny + p[..., 1] - y)
+            f2 = np.where(d < f1, f1, np.minimum(f2, d))
+            f1 = np.minimum(f1, d)
+    return f1, f2
 
 
-def make_grid(period, seed):
-    return np.random.default_rng(seed).random((period, period))
-
-
-def value_noise_at(x, y, period, grid):
-    """Periodic value noise at arbitrary (wrapped) coordinates."""
-    xi = np.floor(x).astype(int)
-    yi = np.floor(y).astype(int)
-    xf = x - xi
-    yf = y - yi
-    u = quintic(xf)
-    v = quintic(yf)
-    x0 = xi % period
-    x1 = (xi + 1) % period
-    y0 = yi % period
-    y1 = (yi + 1) % period
-    g00 = grid[y0, x0]
-    g10 = grid[y0, x1]
-    g01 = grid[y1, x0]
-    g11 = grid[y1, x1]
-    nx0 = g00 * (1 - u) + g10 * u
-    nx1 = g01 * (1 - u) + g11 * u
-    return nx0 * (1 - v) + nx1 * v
-
-
-def fbm_at(x, y, periods, seed):
-    """fbm over [0,1) domain; each octave period keeps the tile periodic."""
-    out = np.zeros_like(x)
-    amp = 1.0
-    norm = 0.0
-    for k, p in enumerate(periods):
-        g = make_grid(p, seed + k)
-        out += amp * value_noise_at(x * p, y * p, p, g)
-        norm += amp
+def value_fbm(base, octaves, rng):
+    out = np.zeros((RES, RES))
+    amp, total = 1.0, 0.0
+    for o in range(octaves):
+        n = base << o
+        grid = rng.random((n, n))
+        t = np.arange(RES) / RES * n
+        i0 = np.floor(t).astype(int)
+        f = t - i0
+        f = f * f * (3 - 2 * f)
+        i1 = (i0 + 1) % n
+        rows = grid[i0][:, i0] * (1 - f)[None, :] + grid[i0][:, i1] * f[None, :]
+        rows1 = grid[i1][:, i0] * (1 - f)[None, :] + grid[i1][:, i1] * f[None, :]
+        out += amp * (rows * (1 - f)[:, None] + rows1 * f[:, None])
+        total += amp
         amp *= 0.5
-    return out / norm
+    return out / total
 
 
-def smoothstep(a, b, x):
-    t = np.clip((x - a) / (b - a), 0.0, 1.0)
-    return t * t * (3 - 2 * t)
+def equalise(a):
+    flat = a.ravel()
+    ranks = np.empty_like(flat)
+    ranks[np.argsort(flat, kind="stable")] = np.arange(flat.size)
+    return (ranks / (flat.size - 1)).reshape(a.shape)
 
 
-def tileable_blur(img, radius, passes=2):
-    """Periodic (wrap-around) box blur via FFT convolution, repeated a few
-    times to approximate a Gaussian. Stays exactly tileable since the FFT
-    treats the image as one period."""
-    res = img.shape[0]
-    k = 2 * radius + 1
-    kernel = np.zeros((res, res))
-    kernel[:k, :k] = 1.0 / (k * k)
-    kernel = np.roll(kernel, (-radius, -radius), axis=(0, 1))
-    kernel_f = np.fft.fft2(kernel)
-    out = img
-    for _ in range(passes):
-        out = np.real(np.fft.ifft2(np.fft.fft2(out) * kernel_f))
-    return out
+def blur(a, r):
+    n = int(np.ceil(3 * r))
+    shifts = np.arange(-n, n + 1)
+    k = np.exp(-0.5 * (shifts / r) ** 2)
+    k /= k.sum()
+    for axis in (0, 1):
+        a = sum(w * np.roll(a, s, axis) for s, w in zip(shifts, k))
+    return a
 
 
-def warped_ridge(X, Y, periods, warp_amt, warp_periods, seed, tx=0.0, ty=0.0):
-    """Domain-warped ridged noise.  tx/ty are the per-frame circular offset."""
-    wx = fbm_at(X + 0.13 + tx, Y + ty, warp_periods, seed + 11) - 0.5
-    wy = fbm_at(X + tx, Y + 0.27 + ty, warp_periods, seed + 23) - 0.5
-    qx = X + warp_amt * wx
-    qy = Y + warp_amt * wy
-    n = fbm_at(qx + tx * 0.4, qy + ty * 0.4, periods, seed + 37)
-    return 1.0 - np.abs(2.0 * n - 1.0)
+def blur_fft(a, sigma):
+    f = np.fft.fftfreq(RES)
+    k = np.exp(-2.0 * (np.pi * sigma) ** 2 * (f[:, None] ** 2 + f[None, :] ** 2))
+    return np.real(np.fft.ifft2(np.fft.fft2(a) * k))
 
 
-os.makedirs("ocean_foam_frames", exist_ok=True)
+def sample_wrap(a, x, y):
+    x = x % RES
+    y = y % RES
+    x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+    fx, fy = x - x0, y - y0
+    x1, y1 = (x0 + 1) % RES, (y0 + 1) % RES
+    top = a[y0, x0] * (1 - fx) + a[y0, x1] * fx
+    bot = a[y1, x0] * (1 - fx) + a[y1, x1] * fx
+    return top * (1 - fy) + bot * fy
 
-lin = np.linspace(0.0, 1.0, RES, endpoint=False)
-X, Y = np.meshgrid(lin, lin)
 
-for fi in range(N_FRAMES):
-    t = fi / N_FRAMES
-    angle = 2.0 * np.pi * t
+def churn(rng, raw=False):
+    billow = np.zeros((RES, RES))
+    amp, total = 1.0, 0.0
+    for o in range(5):
+        billow += amp * np.abs(2.0 * value_fbm(12 << o, 1, rng) - 1.0)
+        total += amp
+        amp *= 0.6
+    billow = billow / total
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    wx = value_fbm(6, 3, rng) - 0.5
+    wy = value_fbm(6, 3, rng) - 0.5
+    warped = sample_wrap(billow, x + wx * RES * 0.12, y + wy * RES * 0.12)
+    mixed = 0.8 * warped + 0.2 * value_fbm(4, 2, rng)
+    return mixed if raw else equalise(blur(mixed, 1.0))
 
-    # Per-field circular offsets.  Different phase shifts so fields don't
-    # move in lockstep — produces more organic-looking animation.
-    def off(phase=0.0):
-        a = angle + phase
-        return DRIFT * np.cos(a), DRIFT * np.sin(a)
 
-    # --- Sinewy streamer network — doubled periods for finer complexity ---
-    tx, ty = off(0.0)
-    r_coarse = warped_ridge(
-        X, Y, [4, 8, 16], warp_amt=0.38, warp_periods=[2, 4], seed=100, tx=tx, ty=ty
-    )
-    tx, ty = off(np.pi * 0.4)
-    r_mid = warped_ridge(
-        X, Y, [8, 16, 32], warp_amt=0.30, warp_periods=[3, 6], seed=400, tx=tx, ty=ty
-    )
-    tx, ty = off(np.pi * 0.8)
-    r_fine = warped_ridge(
-        X, Y, [16, 32, 64], warp_amt=0.20, warp_periods=[4, 8], seed=600, tx=tx, ty=ty
-    )
+def whorls(base, rng):
+    psi = blur_fft(rng.standard_normal((RES, RES)), RES / 14) + 0.5 * blur_fft(rng.standard_normal((RES, RES)), RES / 40)
+    psi /= psi.std()
+    vx = (np.roll(psi, -1, 0) - np.roll(psi, 1, 0)) * 0.5
+    vy = -(np.roll(psi, -1, 1) - np.roll(psi, 1, 1)) * 0.5
+    step = 6.0 / np.abs(np.stack([vx, vy])).max()
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    for _ in range(24):
+        u = sample_wrap(vx, x, y)
+        v = sample_wrap(vy, x, y)
+        x, y = x - u * step, y - v * step
+    return equalise(blur(sample_wrap(base, x, y), 1.0))
 
-    # Wide smoothstep bands (not a near-binary threshold): this keeps the
-    # ridged noise's natural, continuous falloff away from each ridge crest,
-    # so alpha grades smoothly across a streamer's whole width instead of
-    # plateauing at a flat value with only a thin transition at its edge.
-    # fbm values cluster near the middle of their range (CLT), so a ridged
-    # transform's "ridge" (near 1) covers much more area than its "valley"
-    # (near 0) — widening this threshold explodes coverage to ~everything
-    # rather than gently broadening it. Keep it narrow (for a sparse network
-    # with real gaps) and add along-length variation separately below.
-    veins = np.maximum.reduce(
-        [
-            smoothstep(0.84, 1.0, r_coarse),
-            smoothstep(0.86, 1.0, r_mid) * 0.9,
-            smoothstep(0.90, 1.0, r_fine) * 0.7,
-        ]
-    )
 
-    # --- Bubble grain ---
-    tx, ty = off(np.pi * 1.1)
-    grain = fbm_at(X + tx, Y + ty, [48, 96, 128], seed=1700)
-    grain_mask = smoothstep(0.46, 0.82, grain)
-    speck = smoothstep(0.58, 0.86, grain)
+def blotches(rng):
+    # Blurred white noise is isotropic; lattice noise lines blotches up in rows.
+    n = np.zeros((RES, RES))
+    for sigma, amp in ((RES / 30, 1.0), (RES / 75, 0.5), (RES / 180, 0.3)):
+        layer = blur_fft(rng.standard_normal((RES, RES)), sigma)
+        n += amp * layer / layer.std()
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    wx = value_fbm(8, 3, rng) - 0.5
+    wy = value_fbm(8, 3, rng) - 0.5
+    n = sample_wrap(n, x + wx * RES * 0.06, y + wy * RES * 0.06)
+    n = (n - n.mean()) / n.std() * 0.32
+    return np.clip(0.5 + 0.5 * n, 1 / 255, 1.0)
 
-    coverage = veins * (0.45 + 0.7 * grain_mask)
 
-    # --- Erode to cut stringy gaps ---
-    tx, ty = off(np.pi * 1.5)
-    erode = fbm_at(X + 4.1 + tx, Y + 2.3 + ty, [16, 32, 64], seed=1300)
-    coverage *= smoothstep(0.05, 0.40, coverage + (erode - 0.5) * 0.55)
-    coverage = np.clip(coverage, 0.0, 1.0)
+def main():
+    rng = np.random.default_rng(SEED)
+    f1a, f2a = worley(10, rng)
+    f1b, f2b = worley(26, rng)
+    worley(90, rng)  # keeps the later channels on their original random streams
+    lace_a = np.exp(-(f2a - f1a) / 0.10)
+    lace_b = np.exp(-(f2b - f1b) / 0.12)
+    blobs = value_fbm(4, 4, rng)
+    order = 0.45 * lace_a + 0.25 * lace_b + 0.30 * blobs
+    order = equalise(blur(order, 1.5))
+    img = np.zeros((RES, RES, 4), np.uint8)
+    img[..., 0] = np.round(order * 255)
+    churn_raw = churn(rng, raw=True)
+    img[..., 1] = np.round(whorls(churn_raw, np.random.default_rng(SEED + 1)) * 255)
+    img[..., 2] = np.round(equalise(blur(churn_raw, 1.0)) * 255)
+    img[..., 3] = np.round(blotches(rng) * 255)
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ocean_foam.png")
+    Image.fromarray(img, "RGBA").save(out)
+    print("wrote", out)
 
-    # --- Colour: white foam, slightly cool-grey in thin/shadowed areas ---
-    thickness = smoothstep(0.2, 0.8, coverage)
-    cool = np.array([0.80, 0.84, 0.90])
-    white = np.array([1.0, 1.0, 1.0])
-    rgb = (
-        cool[None, None, :] * (1.0 - thickness[..., None])
-        + white[None, None, :] * thickness[..., None]
-    )
-    rgb = np.clip(rgb + (speck * 0.10)[..., None], 0.0, 1.0)
 
-    # --- Broad intensity variation so different streamers/patches land at
-    # genuinely different alpha levels instead of all clustering near the same
-    # high value. Without this, the shader's alpha-cutoff has almost nothing
-    # to work with (any reasonable threshold reveals either ~all or ~none of
-    # the coverage), since the vein construction above makes every streamer's
-    # *edge* crisp but gives them all roughly the same *peak* alpha. ---
-    tx, ty = off(np.pi * 1.9)
-    intensity = fbm_at(X + 5.3 + tx, Y + 8.1 + ty, [3, 5], seed=2200)
-    intensity = (
-        0.15 + 0.85 * intensity
-    )  # keep a floor so weak streamers aren't fully killed
-
-    # --- Mid-frequency variation *along* each streamer's own length (period
-    # comparable to the vein scales themselves), so a single streamer rises
-    # and falls through many alpha levels along its length instead of being a
-    # flat plateau bounded only by a thin edge. ---
-    tx, ty = off(np.pi * 2.3)
-    midvar = fbm_at(X + 9.7 + tx, Y + 3.3 + ty, [10, 20], seed=2600)
-    midvar = 0.25 + 0.75 * midvar
-
-    # --- Alpha: smooth coverage gradient (used as an alpha-cutoff mask by the
-    # shader, not a straight opacity multiply, so keep it continuous). ---
-    alpha = np.clip(coverage * (0.72 + 0.28 * speck) * intensity * midvar, 0.0, 1.0)
-
-    # --- Blur pass: widens transition zones and blends adjacent intensity
-    # levels together, amplifying the graded alpha effect. ---
-    alpha = np.clip(tileable_blur(alpha, BLUR_RADIUS, BLUR_PASSES), 0.0, 1.0)
-    for c in range(3):
-        rgb[..., c] = tileable_blur(rgb[..., c], BLUR_RADIUS, BLUR_PASSES)
-    rgb = np.clip(rgb, 0.0, 1.0)
-
-    rgba = np.zeros((RES, RES, 4), dtype=np.uint8)
-    rgba[..., :3] = (rgb * 255).astype(np.uint8)
-    rgba[..., 3] = (alpha * 255).astype(np.uint8)
-
-    path = f"ocean_foam_frames/foam_{fi:02d}.png"
-    Image.fromarray(rgba, mode="RGBA").save(path)
-    print(f"  [{fi + 1:2d}/{N_FRAMES}] {path}")
-
-print("Done.")
+if __name__ == "__main__":
+    main()

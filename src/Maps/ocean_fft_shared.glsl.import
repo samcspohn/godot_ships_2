@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dhqitbs4jpgfa"
+path="res://.godot/imported/ocean_fft_shared.glsl-a7836cb5952e0512fa6914d0c5e35ccf.res"
+
+[deps]
+
+source_file="res://src/Maps/ocean_fft_shared.glsl"
+dest_files=["res://.godot/imported/ocean_fft_shared.glsl-a7836cb5952e0512fa6914d0c5e35ccf.res"]
+
+[params]
+

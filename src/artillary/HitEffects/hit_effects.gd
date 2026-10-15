@@ -26,13 +26,13 @@ func _ready() -> void:
 func splash_effect(pos: Vector3, size: float) -> void:
 	if splash_template == null:
 		return
-	splash_template.emit(pos, Vector3.UP, size, SPLASH_PARTICLES, 4.0 / size)
-	WaveManager.add_shell_splash(pos, size * 5.0)
+	splash_template.emit(pos, Vector3.UP, size * 2.0, SPLASH_PARTICLES, 4.0 / size)
+	WaveManager.add_shell_splash(pos, size * 7.0)
 
 func he_explosion_effect(pos: Vector3, size: float, dir: Vector3) -> void:
 	if explosion_template == null:
 		return
-	explosion_template.emit(pos, dir, size * 3.0, HE_EXPLOSION_PARTICLES, 3.0 / size)
+	explosion_template.emit(pos, dir, size * 4.0, HE_EXPLOSION_PARTICLES, 4.0 / size)
 
 func sparks_effect(pos: Vector3, size: float, normal: Vector3) -> void:
 	if sparks_template == null:
@@ -46,9 +46,11 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	size = pow(size, 1.4)
 	var direction = (-basis.z).normalized()
 	muzzle_blast_template.emit(pos, direction, size, MUZZLE_BLAST_PARTICLES, 2.0 / sqrt(size))
-	var offset = direction.normalized() * size * 2.0
-	offset.y = 0
-	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z) + offset , size)
+	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size)
+
+func death_blast_effect(pos: Vector3, size: float) -> void:
+	he_explosion_effect(pos, size, Vector3.UP)
+	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size)
 
 func return_to_pool(effect: Node) -> void:
 	pass

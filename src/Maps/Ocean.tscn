@@ -2,5 +2,5 @@
 
 [ext_resource type="Script" uid="uid://18n1n55bp8wg" path="res://src/Maps/ocean.gd" id="1_k3nad"]
 
-[node name="Ocean" type="MeshInstance3D" unique_id=689554270]
+[node name="Ocean" type="Node3D" unique_id=689554270]
 script = ExtResource("1_k3nad")

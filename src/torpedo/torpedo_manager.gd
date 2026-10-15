@@ -13,8 +13,6 @@ const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
-# Wake particle system
-@export var wake_template: ParticleTemplate
 
 
 # Torpedo indicators UI
@@ -31,7 +29,6 @@ class TorpedoData:
 	var params: TorpedoParams
 	var owner: Ship
 	var visible_to_enemy: bool = false
-	var emitter_id: int = -1  # GPU wake particle emitter ID
 	var launcher: TorpedoLauncher
 	var armed: bool = false
 	var ships_passed: Array[Ship] = []
@@ -44,7 +41,6 @@ class TorpedoData:
 		self.params = _params
 		self.owner = _owner
 		self._range = __range
-		self.emitter_id = -1
 		self.launcher = tl
 		self.armed = _armed
 		self.ships_passed = []
@@ -86,14 +82,12 @@ func _ready():
 
 func clear_all():
 	"""Clear all torpedoes and reset state for server scene reload."""
-	# Clear visuals and wake particle emitters for each torpedo
 	for idx in torpedos.size():
 		var p = torpedos[idx]
 		if p == null:
 			continue
-		# Free wake particle emitter
-		if p.emitter_id >= 0:
-			ParticleTemplate.free_emitter(p.emitter_id)
+		if is_instance_valid(WaveManager):
+			WaveManager.end_trail(p)
 		# Zero out the multi-mesh transform so it stops rendering
 		_clear_torpedo_transform(idx)
 	torpedos.clear()
@@ -241,11 +235,8 @@ func _process(_delta: float) -> void:
 		#var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
 		#update_transform_scale(id, scale_factor)
 
-		# Update wake particle emitter position
-		if p.emitter_id >= 0:
-			var pos = p.position
-			pos.y = 0.2 # Keep wake on water surface
-			ParticleTemplate.update_emitter_position(p.emitter_id, pos)
+		if is_instance_valid(WaveManager):
+			WaveManager.trail_point(p, p.position)
 
 		id += 1
 		#var offset = p.position - p.trail_pos
@@ -487,10 +478,6 @@ func fireTorpedoClient(pos: Vector3, vel: Vector3, t: float, id: int, speed: flo
 
 	torp.initialize(pos, vel, params, t, _owner, 0.0, null, armed)
 
-	# Allocate wake particle emitter
-	if wake_template != null:
-		torp.emitter_id = wake_template.allocate_emitter(pos, 1.0, 0.2, 1.0, 0.0)
-
 	if self.torpedos.get(id) != null:
 		push_error("Torpedo ID already exists")
 	self.torpedos.set(id, torp)
@@ -564,10 +551,9 @@ func destroyTorpedo_c(id, pos: Vector3) -> void:
 
 	var radius = torp.params.damage * 8 / 20000.0
 
-	# Free wake particle emitter
-	if torp.emitter_id >= 0:
-		ParticleTemplate.free_emitter(torp.emitter_id)
-		torp.emitter_id = -1
+	if is_instance_valid(WaveManager):
+		WaveManager.end_trail(torp)
+		WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), radius)
 
 	HitEffects.he_explosion_effect(pos, radius, Vector3.UP)
 	HitEffects.sparks_effect(pos, radius, Vector3.UP)

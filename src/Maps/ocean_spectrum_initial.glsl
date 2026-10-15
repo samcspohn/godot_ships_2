@@ -14,20 +14,27 @@
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std140) uniform OceanParams {
-	vec4  patch_sizes;   // L per cascade (m)
-	vec4  cutoff_low;    // min |k| per cascade  (band limiting)
-	vec4  cutoff_high;   // max |k| per cascade
-	vec2  wind;          // wind vector = direction * speed (m/s)
-	float fetch;         // fetch (m)
-	float gravity;       // 9.81
-	float depth;         // water depth (m); large => deep water
-	float amplitude;     // global tuning multiplier
-	float suppress;      // small-wave suppression length (m)
-	float _pad0;
-	uint  seed;
-	int   n;             // grid size N
-	int   cascade_count;
-	int   _pad1;
+    vec4 patch_sizes;
+    vec4 cutoff_low;
+    vec4 cutoff_high;
+    vec2 wind;
+    float fetch;
+    float gravity;
+    float depth;
+    float amplitude;
+    float suppress;
+    float wind_spread;
+    vec2 swell;
+    float swell_fetch;
+    float swell_amount;
+    float swell_spread;
+    float wind_norm;
+    float swell_norm;
+    float _pad0;
+    uint seed;
+    int n;
+    int cascade_count;
+    int _pad1;
 } P;
 
 layout(set = 0, binding = 1, rgba32f) uniform restrict writeonly image2DArray h0_tex;
@@ -54,40 +61,37 @@ vec2 gaussian(ivec3 c, uint s) {
 	return vec2(mag * cos(TAU * u2), mag * sin(TAU * u2));
 }
 
-// --- JONSWAP energy * directional spread, returned as S(k) (2D wavenumber) ---
-// Approximate but a sane starting point. Swap this function for an empirical
-// directional spectrum (Horvath 2015) if you want higher fidelity.
-float spectrum(vec2 k, float kl) {
-	float U = length(P.wind);
-	if (U < 1e-3 || kl < 1e-6) return 0.0;
-
-	float g  = P.gravity;
-	float om = sqrt(g * kl);                       // deep-water dispersion for shape
-	float F  = max(P.fetch, 1.0);
-
-	float xi    = g * F / (U * U);
-	float om_p  = 22.0 * pow((g * g) / (U * F), 1.0 / 3.0);   // peak ang. freq.
-	float alpha = 0.076 * pow(xi, -0.22);
+// Omnidirectional JONSWAP S(k); mirrored by OceanFFT._jonswap_k for the slope-variance table.
+float jonswap_k(float kl, float U, float F, float gamma) {
+	if (U < 1e-3) return 0.0;
+	float g    = P.gravity;
+	float om   = sqrt(g * kl);
+	float om_p = 22.0 * pow((g * g) / (U * F), 1.0 / 3.0);
+	float alpha = 0.076 * pow(g * F / (U * U), -0.22);
 	float sigma = (om <= om_p) ? 0.07 : 0.09;
 	float r     = exp(-((om - om_p) * (om - om_p)) / (2.0 * sigma * sigma * om_p * om_p));
-	float gamma = 3.3;
+	float S_om  = alpha * g * g / pow(om, 5.0) * exp(-1.25 * pow(om_p / om, 4.0)) * pow(gamma, r);
+	return S_om * g / (2.0 * om);
+}
 
-	float S_om = alpha * g * g / pow(om, 5.0)
-	           * exp(-1.25 * pow(om_p / om, 4.0))
-	           * pow(gamma, r);
+float spread(vec2 khat, vec2 dir, float s, float norm) {
+	float d = dot(khat, dir);
+	return d > 0.0 ? pow(d, s) * norm : 0.0;
+}
 
-	// S(omega) -> S(k):  dω/dk = g / (2ω)
-	float S_k = S_om * (g / (2.0 * om)) / kl;
-
-	// Directional spread: cos^2 toward wind, suppressed against it.
-	vec2 wdir = P.wind / U;
-	float d = dot(k / kl, wdir);
-	float dir = (d > 0.0) ? d * d : 0.0;
-
-	// Tessendorf small-wave suppression.
-	float damp = exp(-kl * kl * P.suppress * P.suppress);
-
-	return S_k * dir * damp * (2.0 / PI);
+// 2D S(k) = S(|k|) / |k| * D(theta); wind sea + swell.
+float spectrum(vec2 k, float kl) {
+	if (kl < 1e-6) return 0.0;
+	vec2 khat = k / kl;
+	float S = 0.0;
+	float U = length(P.wind);
+	if (U > 1e-3)
+		S += jonswap_k(kl, U, max(P.fetch, 1.0), 3.3) * spread(khat, P.wind / U, P.wind_spread, P.wind_norm);
+	float Us = length(P.swell);
+	if (Us > 1e-3 && P.swell_amount > 0.0)
+		S += P.swell_amount * jonswap_k(kl, Us, max(P.swell_fetch, 1.0), 7.0)
+				* spread(khat, P.swell / Us, P.swell_spread, P.swell_norm);
+	return S / kl * exp(-kl * kl * P.suppress * P.suppress);
 }
 
 void main() {
