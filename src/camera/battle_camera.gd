@@ -515,7 +515,9 @@ func start_spectating(team_id: int) -> void:
 		ui.crosshair_container.visible = false
 		if ui.sniper_reticle != null:
 			ui.sniper_reticle.visible = false
-	spectate_cycle(1)
+	spectate_free = true
+	_free_rot = Vector2(rotation.x, rotation.y)
+	_free_vel = Vector3.ZERO
 
 
 func spectate_candidates() -> Array[Ship]:

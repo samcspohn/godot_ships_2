@@ -553,6 +553,7 @@ func destroyTorpedo_c(id, pos: Vector3) -> void:
 
 	if is_instance_valid(WaveManager):
 		WaveManager.end_trail(torp)
+		WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), radius)
 
 	HitEffects.he_explosion_effect(pos, radius, Vector3.UP)
 	HitEffects.sparks_effect(pos, radius, Vector3.UP)

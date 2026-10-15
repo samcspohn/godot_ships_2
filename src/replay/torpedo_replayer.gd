@@ -200,6 +200,8 @@ func destroy_torpedo(torp_id: int, world_pos: Vector3) -> void:
 		HitEffects.he_explosion_effect(world_pos, radius, Vector3.UP)
 		HitEffects.sparks_effect(world_pos, radius, Vector3.UP)
 		HitEffects.splash_effect(Vector3(world_pos.x, 0.0, world_pos.z), radius)
+		if is_instance_valid(WaveManager):
+			WaveManager.add_muzzle_blast(Vector3(world_pos.x, 0.0, world_pos.z), radius)
 
 
 ## Immediately destroy all torpedo visuals.
