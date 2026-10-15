@@ -91,10 +91,9 @@ var zoom_smoothing: float = 1.0 # Adjust this value to control smoothing
 
 var audio_listener: AudioListener3D
 
-const SPECTATE_LOST_DELAY: float = 3.0
+const SPECTATE_ZOOM: float = 3.0
 var spectating: bool = false
 var _spectate_team: int = -1
-var _spectate_lost_timer: float = 0.0
 const FREE_SPEED: float = 400.0
 var spectate_free: bool = false
 var _free_rot: Vector2
@@ -264,7 +263,7 @@ var transition_time := 0.0
 const TRANSITION_DURATION = 0.1
 func _process(delta):
 	if spectating:
-		_spectate_tick(delta)
+		_spectate_tick()
 		if spectate_free:
 			_spectate_free_tick(delta)
 			return
@@ -515,6 +514,10 @@ func start_spectating(team_id: int) -> void:
 		ui.crosshair_container.visible = false
 		if ui.sniper_reticle != null:
 			ui.sniper_reticle.visible = false
+	_spectate_go_free()
+
+
+func _spectate_go_free() -> void:
 	spectate_free = true
 	_free_rot = Vector2(rotation.x, rotation.y)
 	_free_vel = Vector3.ZERO
@@ -535,35 +538,60 @@ func spectate_cycle(step: int) -> void:
 		return
 	var i := list.find(follow_ship)
 	i = 0 if i < 0 and step > 0 else posmod(i + step, list.size())
-	follow_ship = list[i]
-	_spectate_lost_timer = 0.0
+	_spectate_follow(list[i])
+
+
+func _spectate_follow(s: Ship) -> void:
+	follow_ship = s
 	spectate_free = false
+	free_look = false
+	last_view = null
+	current_mode = CameraMode.THIRD_PERSON
+	last_non_free_look_mode = CameraMode.THIRD_PERSON
+	current_aim_mode = AimMode.SNIPER
+	zoom_accumulator = 0.0
+	third_person_view.current_zoom = SPECTATE_ZOOM
+	third_person_view.rot_h = rotation.y
+	third_person_view.rot_v = clampf(rotation.x, -0.5, 0.1)
+	third_person_view.locked_rot_h = 0.0
+	third_person_view.locked_rot_v = 0.0
+	current_view = third_person_view
+	transition_time = TRANSITION_DURATION * 3.0
 
 
-func _spectate_tick(delta: float) -> void:
+func _spectate_tick() -> void:
 	if spectate_free or (is_instance_valid(follow_ship) and follow_ship.is_alive()):
 		return
-	_spectate_lost_timer += delta
-	if _spectate_lost_timer >= SPECTATE_LOST_DELAY or not is_instance_valid(follow_ship):
-		spectate_cycle(1)
+	_spectate_go_free()
+
+
+func _spectate_center() -> bool:
+	var s = find_ship_closest_to_screen_center()
+	if s == null or (_spectate_team >= 0 and s.team.team_id != _spectate_team):
+		return false
+	_spectate_follow(s)
+	return true
 
 
 # True = consumed; blocks sniper/lock/aim-mode input that needs a live own ship.
 func _spectate_input(event: InputEvent) -> bool:
-	if event is InputEventKey and event.pressed and not event.echo:
+	if event is InputEventKey:
+		if not event.pressed or event.echo:
+			return true
 		match event.keycode:
 			KEY_TAB:
 				spectate_cycle(-1 if event.shift_pressed else 1)
 			KEY_SPACE:
-				var s = find_ship_closest_to_screen_center()
-				if s != null and (_spectate_team < 0 or s.team.team_id == _spectate_team):
-					follow_ship = s
-					_spectate_lost_timer = 0.0
-					spectate_free = false
+				_spectate_center()
 			KEY_F:
-				spectate_free = not spectate_free
-				_free_rot = Vector2(rotation.x, rotation.y)
-				_free_vel = Vector3.ZERO
+				if not spectate_free:
+					_spectate_go_free()
+				elif _spectate_center():
+					pass
+				elif is_instance_valid(follow_ship) and follow_ship.is_alive():
+					_spectate_follow(follow_ship)
+				else:
+					spectate_cycle(1)
 		return true
 	if not spectate_free:
 		return event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE

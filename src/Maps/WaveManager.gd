@@ -57,7 +57,7 @@ const SHIP_FLOATS := 12
 const IMPULSE_FLOATS := 8
 const STAMP_FLOATS := 8
 const MAX_TRAILS := 128
-const WAKE_DECAL_SPACING := 0.9  # stern decal spacing, in half-beams
+const WAKE_DECAL_SPACING := 0.45 # stern decal spacing, in half-beams
 const WAKE_FADE_IN := 1.0
 const SPRAY_AT := 0.8            # bow spray emitter forward of centre, in half-lengths
 const SPRAY_STRENGTH := 0.6      # wake is 0.85
@@ -485,7 +485,7 @@ func _drop_points(key: Array, a: Vector2, b: Vector2, spacing: float) -> PackedV
 
 func _emit_wake(s: Node3D, stern: Vector2, prev_stern: Vector2, fwd: Vector2, hull: Vector3, speed01: float) -> void:
 	var side := Vector2(-fwd.y, fwd.x)
-	for at in _drop_points([s, 0], prev_stern, stern, maxf(hull.y * WAKE_DECAL_SPACING, 4.0)):
+	for at in _drop_points([s, 0], prev_stern, stern, maxf(hull.y * WAKE_DECAL_SPACING, 2.0)):
 		at += side * randf_range(-0.15, 0.15) * hull.y
 		_decals.add(at, hull.y * 1.38, hull.y * 3.12, 25.0, WAKE_LIFE, _time,
 			0.85 * speed01, 0.6 * speed01, 3.0, 0.0, DECAL_GROW_TILE, Vector4.ZERO, false, 1.0, WAKE_FADE_IN)
