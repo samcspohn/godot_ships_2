@@ -411,7 +411,7 @@ func _handle_event(ev: Dictionary) -> void:
 					gs.start_sinking()
 					if is_instance_valid(HitEffects):
 						# Sizes match hp_manager.gd sink() / sink_c() exactly.
-						HitEffects.he_explosion_effect(gs.global_position, 30.0, Vector3.UP)
+						HitEffects.death_blast_effect(gs.global_position, 30.0)
 						HitEffects.sparks_effect(gs.global_position, 20.0, Vector3.UP)
 
 		ReplayEvent.MATCH_END:

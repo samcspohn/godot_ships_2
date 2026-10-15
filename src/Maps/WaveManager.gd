@@ -8,7 +8,7 @@ const PLAY_HALF := 17500.0
 # inside the kernel's dispersive band. Fine grid carries splashes only.
 const COARSE_DX := 6.0
 const COARSE_POOL := 176
-const COARSE_DAMPING := 0.01
+const COARSE_DAMPING := 0.05
 const COARSE_MARGIN := 450.0     # water simulated beyond the hull so the wake has room to spread
 const FINE_DX := 2.0
 const FINE_POOL := 64

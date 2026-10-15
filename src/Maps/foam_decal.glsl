@@ -101,8 +101,8 @@ layout(location = 2) flat in float v_radius;
 
 layout(location = 0) out vec4 frag;
 
-const float BLAST_TILE = 162.0;         // metres; ~27 m blotches
-const float BLAST_DETAIL_TILE = 56.7;
+const float BLAST_TILE = 146.0;         // metres; ~24 m blotches
+const float BLAST_DETAIL_TILE = 51.0;
 
 // Fraction of the segment hull.xy -> hull.zw that hides p from the decal centre.
 float hull_shadow(vec2 p, vec4 hull) {
@@ -122,7 +122,8 @@ void main() {
     if (q2 >= 1.0) discard;
     float age = P.time - d.birth;
     float t = clamp(age / d.life, 0.0, 1.0);
-    float profile = (1.0 - q2) * (1.0 - q2);
+    // Blast: flat to the rim so foam reaches the shock front, not just the inner half.
+    float profile = d.blast > 0.5 ? 1.0 - q2 * q2 * q2 : (1.0 - q2) * (1.0 - q2);
     float vis = dot(d.hull, d.hull) > 1e-3 ? 1.0 - hull_shadow(v_local, d.hull - d.pos.xyxy) : 1.0;
     float c = clamp(d.strength * profile * pow(1.0 - t, d.fade_pow) * vis, 0.0, 1.0);
     if (d.fade_in > 0.0) c *= smoothstep(0.0, d.fade_in, age);
@@ -139,7 +140,8 @@ void main() {
                 + 0.4 * texture(foam_tex, mat2(vec2(0.47, 0.88), vec2(-0.88, 0.47)) * bp / (BLAST_TILE * 2.37) + 0.31).a
                 - 0.5) * 2.0 * 1.39;
         n = n * 0.8 + (texture(foam_tex, mat2(vec2(-0.6, 0.8), vec2(-0.8, -0.6)) * bp / BLAST_DETAIL_TILE + 0.57).a - 0.5) * 1.2;
-        order = smoothstep(-0.45, 0.55, n);
+        // ~CDF of n (sd ~0.64): no flat 0/1 plateaus, so the fading threshold erodes every blotch evenly.
+        order = 1.0 / (1.0 + exp(-2.6 * (n - 0.05)));
     } else {
         // Radius-tied tile so clumps spread with the decal; inverted churn reveals creases first, a web.
         float tile = P.churn_scale * d.tile_a + d.tile_b * v_radius;

@@ -31,6 +31,15 @@ uniform float water_roughness   = 0.06;
 uniform float water_specular    = 0.02;  // Fresnel F0 of water
 uniform float specular_max      = 0.8;   // per-light cap, keeps the sun glint below bloom
 uniform float sun_glint         = 0.35;  // gameplay dimming of the sun path, applied before the cap
+// Sub-pixel glitter: the mip-averaged lobe is redistributed into sparse sparkles with the same mean.
+uniform float glint_density     = 0.5;   // expected lit facets per cell at the lobe peak
+uniform float glint_cell        = 1.5;   // cell size in pixels
+uniform float glint_rate        = 3.0;   // sparkle lifetimes per second
+uniform float glint_density_down = 0.5;  // density scale with the camera looking straight down; 1 at horizontal
+uniform float glint_max         = 3.0;   // sparkle brightness ceiling; above glow_hdr_threshold so sparkles bloom
+uniform float glint_tail        = 0.5;   // sparkle dimming toward the lobe edge
+uniform float glint_var_ref     = 0.004; // lost slope variance at which glitter is half the lobe
+uniform vec2  glint_aniso_fade  = vec2(12.0, 48.0);  // footprint elongation where glitter blends into a smooth band
 
 // --- water body ---
 uniform vec3  deep          : source_color = vec3(0.025, 0.07, 0.13);
@@ -120,11 +129,18 @@ uniform float ring_fill_life = 2.5;   // total visible life as a multiple of the
 uniform float ring_fill_spread = 0.5; // growth after the front's nominal stop, as a fraction of max radius
 
 varying vec2  v_world_xz;
+varying vec2  v_surf_xz;      // displaced; glint cells stay world-fixed instead of riding the chop
 varying float v_wave_height;
 varying float v_calm_factor;  // 0 = flat/windless, 1 = full waves
 varying vec4  v_cm;           // cascade_mods: varies over km, so per-vertex is exact enough
 varying float f_crest;
 varying float f_foam;
+varying vec4  f_glint_u0;  // per-cell random thresholds, angle bin 0 / 1
+varying vec4  f_glint_u1;
+varying vec4  f_glint_e0;  // per-cell envelope x blend weight
+varying vec4  f_glint_e1;
+varying float f_glint_w;
+varying float f_glint_density;   // glitter share of the specular lobe
 
 // =====================================================================
 // Gradient noise (IQ quintic)
@@ -133,6 +149,39 @@ varying float f_foam;
 vec2 _nhash2(vec2 p) {
 	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
 	return fract(sin(p) * 43758.5453) * 2.0 - 1.0;
+}
+
+const float GLINT_BINS = 64.0;
+
+float _uhash(ivec2 c, int a, int b) {
+	uint h = uint(c.x) * 1597334677u ^ uint(c.y) * 3812015801u ^ uint(a) * 2798796415u ^ uint(b) * 958745281u;
+	h = (h ^ (h >> 16u)) * 2246822519u;
+	h = (h ^ (h >> 13u)) * 3266489917u;
+	h ^= h >> 16u;
+	return float(h) * (1.0 / 4294967295.0);
+}
+
+vec2 glint_cell_sample(vec2 q, vec2 lvl, int bin) {
+	ivec2 c = ivec2(floor(q / exp2(lvl)));
+	int k = bin * 4096 + int(lvl.x + 32.0) * 64 + int(lvl.y + 32.0);
+	float t = TIME * glint_rate + _uhash(c, k, 0);
+	return vec2(_uhash(c, k, int(floor(t)) + 1), sin(PI * fract(t)) * (PI * 0.5));
+}
+
+// Cells stretched along the radial (footprint major) axis so each is ~glint_cell pixels on screen;
+// the axis is binned so the lattice stays world-fixed.
+void glint_lattice(vec2 wxz, vec2 fx, vec2 fy, float bin, out vec4 u, out vec4 e) {
+	float th = bin * (TAU / GLINT_BINS);
+	vec2 r = vec2(cos(th), sin(th)), t = vec2(-r.y, r.x);
+	vec2 q = vec2(dot(wxz, r), dot(wxz, t));
+	vec2 fp = vec2(length(vec2(dot(fx, r), dot(fy, r))), length(vec2(dot(fx, t), dot(fy, t)))) * glint_cell;
+	vec2 lv = log2(max(fp, vec2(1e-4)));
+	vec2 l0 = floor(lv), f = lv - l0;
+	int b = int(mod(bin, GLINT_BINS));
+	vec2 s00 = glint_cell_sample(q, l0, b), s10 = glint_cell_sample(q, l0 + vec2(1.0, 0.0), b);
+	vec2 s01 = glint_cell_sample(q, l0 + vec2(0.0, 1.0), b), s11 = glint_cell_sample(q, l0 + 1.0, b);
+	u = vec4(s00.x, s10.x, s01.x, s11.x);
+	e = vec4(s00.y, s10.y, s01.y, s11.y) * vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
 }
 
 // Returns (height, dh/dx, dh/dz).
@@ -417,6 +466,7 @@ void vertex() {
 	v_world_xz    = s_xz;
 
 	vec3 world = vec3(s_xz.x, 0.0, s_xz.y) + disp;
+	v_surf_xz = world.xz;
 	VERTEX = vec3((world.x - center.x) / cell, world.y, (world.z - center.y) / cell);
 	NORMAL = vec3(0.0, 1.0, 0.0);
 }
@@ -506,6 +556,22 @@ void fragment() {
 	float base_rough = mix(mix(calm_roughness, water_roughness, v_calm_factor), foam_roughness, foam);
 	float alpha = sqrt(pow(base_rough, 4.0) + lost_var);
 	ROUGHNESS = sqrt(alpha);
+	vec2 rad = v_surf_xz - CAMERA_POSITION_WORLD.xz;
+	float gb = atan(rad.y, rad.x) * (GLINT_BINS / TAU);
+	float gb0 = floor(gb);
+	vec2 sfx = dFdx(v_surf_xz), sfy = dFdy(v_surf_xz);
+	vec4 gu0, ge0, gu1, ge1;
+	glint_lattice(v_surf_xz, sfx, sfy, gb0, gu0, ge0);
+	glint_lattice(v_surf_xz, sfx, sfy, gb0 + 1.0, gu1, ge1);
+	f_glint_u0 = gu0;
+	f_glint_u1 = gu1;
+	f_glint_e0 = ge0 * (1.0 - (gb - gb0));
+	f_glint_e1 = ge1 * (gb - gb0);
+	float fmaj = max(dot(fx, fx), dot(fy, fy));
+	float elong = fmaj / max(abs(fx.x * fy.y - fx.y * fy.x), 1e-8);
+	float cam_down = asin(clamp(INV_VIEW_MATRIX[2].y, 0.0, 1.0)) / (PI * 0.5);
+	f_glint_density = glint_density * mix(1.0, glint_density_down, cam_down);
+	f_glint_w = lost_var / max(lost_var + glint_var_ref, 1e-8) * (1.0 - smoothstep(glint_aniso_fade.x, glint_aniso_fade.y, elong));
 	f_crest = crest;
 	f_foam = foam;
 }
@@ -538,6 +604,16 @@ void light() {
 		float Gv = NdotV / (NdotV * (1.0 - k) + k);
 		float Gl = NdotL / (NdotL * (1.0 - k) + k);
 		float spec = D * F * Gv * Gl / (4.0 * NdotV);
-		SPECULAR_LIGHT += clamp(sun * spec * sun_glint, vec3(0.0), vec3(specular_max)) * water;
+		vec3 raw = sun * spec * sun_glint;
+		vec3 smooth_spec = specular_max * (1.0 - exp(-raw / specular_max));
+		// Each lit cell carries the energy of 1/p cells, so sparkle brightness is flat across the lobe.
+		float lobe = D * PI * alpha2;
+		float p = max(1.0 - exp(-f_glint_density * lobe), 1e-4);
+		float soft = 0.2 * p + 0.01;
+		float lit = dot(clamp((p - f_glint_u0) / soft + 0.5, 0.0, 1.0), f_glint_e0)
+				+ dot(clamp((p - f_glint_u1) / soft + 0.5, 0.0, 1.0), f_glint_e1);
+		// Tail sparkles dimmed: at full brightness they read as a starfield off the sun path.
+		vec3 sparkle = glint_max * (1.0 - exp(-raw / (p * glint_max))) * lit * pow(lobe, glint_tail);
+		SPECULAR_LIGHT += mix(smooth_spec, sparkle, f_glint_w) * water;
 	}
 }

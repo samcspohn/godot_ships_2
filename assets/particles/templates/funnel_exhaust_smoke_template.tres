@@ -4,15 +4,15 @@
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_smoke"]
-offsets = PackedFloat32Array(0, 0.022653721, 0.5, 0.8467742, 1)
-colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.21568628, 0.21568628, 0.21568628, 1, 0.22378072, 0.22378072, 0.2237807, 0.94891584, 0.26622066, 0.26622063, 0.26622054, 0.6810767, 0.37413937, 0.37413928, 0.37413898, 0)
+offsets = PackedFloat32Array(0, 0.022653721, 0.72695035, 1)
+colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.21568628, 0.21568628, 0.21568628, 0.83137256, 0.2396094, 0.23960939, 0.23960935, 0.7058525, 0.37413937, 0.37413928, 0.37413898, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_smoke"]
 gradient = SubResource("Gradient_smoke")
 
 [sub_resource type="Curve" id="Curve_scale_smoke"]
-_data = [Vector2(0, 0.22954929), 0.0, 2.5, 0, 0, Vector2(0.22295807, 0.5225376), 1.8, 1.0, 0, 0, Vector2(0.7, 0.85), 0.4, 0.1, 0, 0, Vector2(1, 1), 0.2, 0.0, 0, 0]
-point_count = 4
+_data = [Vector2(0, 0.4152543), 0.0, 1.4993018, 0, 0, Vector2(1, 1), 0.2, 0.0, 0, 0]
+point_count = 2
 
 [sub_resource type="CurveTexture" id="CurveTexture_scale_smoke"]
 curve = SubResource("Curve_scale_smoke")
@@ -29,9 +29,9 @@ spread = 25.0
 gravity = Vector3(0, 0, 0)
 damping_min = 0.35
 damping_max = 0.5
-lifetime_min = 3.0
-lifetime_max = 4.5
-lifetime_randomness = 0.3
-scale_min = Vector2(4, 4)
-scale_max = Vector2(8, 8)
+lifetime_min = 2.0
+lifetime_max = 3.0
+lifetime_randomness = 0.66
+scale_min = Vector2(2, 2)
+scale_max = Vector2(5, 5)
 is_trail = true

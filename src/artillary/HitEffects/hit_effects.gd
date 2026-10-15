@@ -48,6 +48,11 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	muzzle_blast_template.emit(pos, direction, size, MUZZLE_BLAST_PARTICLES, 2.0 / sqrt(size))
 	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size)
 
+func death_blast_effect(pos: Vector3, size: float) -> void:
+	if muzzle_blast_template == null:
+		return
+	muzzle_blast_template.emit(pos, Vector3.UP, size, MUZZLE_BLAST_PARTICLES, 2.0 / sqrt(size))
+
 func return_to_pool(effect: Node) -> void:
 	pass
 
