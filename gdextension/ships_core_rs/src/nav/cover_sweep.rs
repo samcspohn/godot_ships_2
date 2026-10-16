@@ -40,6 +40,20 @@ pub(crate) struct SweepArgs {
     pub w_range: f32,
     pub w_hard: f32,
     pub held: Option<Vector2>,
+    /// (axis, half angle): stations only along the axis, toward or away from it.
+    pub cone: Option<(f32, f32)>,
+}
+
+impl SweepArgs {
+    pub(crate) fn in_cone(&self, c: Vector2) -> bool {
+        let Some((axis, half)) = self.cone else { return true };
+        let d = c - self.from;
+        if d.length_squared() < 1.0 {
+            return true;
+        }
+        let off = (d.x.atan2(d.y) - axis + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        off.abs().min(std::f32::consts::PI - off.abs()) <= half
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -129,7 +143,8 @@ impl VisibilityGrid {
                 lit[l] = lit_at(k) as i8;
             }
             let here = Pick { k, score: f32::NEG_INFINITY, gain: 0.0, risk: risk[l], time: time[l], mask: 0, hard: false };
-            if res.dark.is_none() && lit[l] == 0 {
+            let in_cone = a.in_cone(self.centres[k]);
+            if res.dark.is_none() && lit[l] == 0 && in_cone {
                 res.dark = Some(Pick { score: -cost[l], ..here });
             }
             let shot = if lit[l] == 1 || a.allow_hard { fire_at(l, self.centres[k]) } else { all };
@@ -137,13 +152,13 @@ impl VisibilityGrid {
             let hard = inp.fire.is_some() && known & all == all && shot & all == 0;
             if let Some(p) = self.score_cell(inp, a, &dps_out, (gx, gz), here, cost[l] + a.w_risk * hold, hard) {
                 // The held station outlives a target ducking out of sight; SkillCover times it out.
-                if held_k == Some(k) {
+                if held_k == Some(k) && in_cone {
                     res.held = Some(p);
                 }
                 if k == start {
                     res.here = Some(p);
                 }
-                if p.mask.count_ones() >= a.need && res.best.is_none_or(|b| p.score > b.score) {
+                if in_cone && p.mask.count_ones() >= a.need && res.best.is_none_or(|b| p.score > b.score) {
                     res.best = Some(p);
                 }
             }
@@ -286,5 +301,6 @@ pub(crate) fn sweep_args(from: Vector2, o: &VarDictionary, dm: &mut DamageModel)
         w_range: f("w_range", 0.0),
         w_hard: f("w_hard", 0.0),
         held: o.get("held").and_then(|v| v.try_to::<Vector2>().ok()).filter(|p| p.is_finite()),
+        cone: o.get("cone_axis").map(|v| v.to_f32()).filter(|a| a.is_finite()).map(|axis| (axis, f("cone_half", std::f32::consts::PI))),
     }
 }

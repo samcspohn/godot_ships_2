@@ -490,7 +490,7 @@ impl VisibilityGrid {
                     .filter(|(_, e)| a.max_range <= 0.0 || c.distance_to(e.pos) <= a.max_range)
                     .fold(0u64, |m, (i, _)| m | 1 << i);
                 out[(iz * self.w + ix) as usize] = if !det && !seen {
-                    if self.spotted_mask(k, &inp) & a.live & in_range != 0 { 5 } else { 4 }
+                    if a.in_cone(c) && self.spotted_mask(k, &inp) & a.live & in_range != 0 { 5 } else { 4 }
                 } else if out_of_fire {
                     6
                 } else if det {

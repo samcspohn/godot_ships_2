@@ -12,7 +12,7 @@ extends SkillPosition
 const SAFE_MARGIN := 1.15
 const SPOT_CLAIM_TTL_MS := 6000
 ## At zero HP the detection and radar/hydro zones a spotter keeps out of are this much wider.
-const HURT_MARGIN := 0.5
+const HURT_MARGIN := 0.25
 ## A dark contact counts as looked at from this far outside the ring it would see us from.
 const LOOK_M := 1000.0
 ## team_id -> enemy instance id -> [spotter instance id, ms].
@@ -47,9 +47,23 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	opts.merge({"clearance": ctx.behavior._get_ship_clearance(),
 		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SEEN,
 		"flank": _flank_dir(ctx)}, true)
-	_walk_station(vis, danger, here, pos, opts)
+	var team: PackedByteArray = _team_wanted(team_id, ship, belief, refs.size()) if inp.mine else inp.shoot
+	# A held station stands while it lights anything wanted; only a fresh search puts our priorities first.
+	if _has_station:
+		var any := PackedByteArray(inp.shoot)
+		for i in any.size():
+			any[i] = any[i] | team[i]
+		opts.shootable = any
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), pos, opts)
+		if bool(ev.free) and int(ev.count) > 0:
+			_walk_station(vis, danger, here, pos, opts)
+		else:
+			_drop()
+	if not _has_station:
+		opts.shootable = inp.shoot
+		_walk_station(vis, danger, here, pos, opts)
 	if not _has_station and inp.mine:
-		opts.shootable = _team_wanted(team_id, ship, belief, refs.size())
+		opts.shootable = team
 		_walk_station(vis, danger, here, pos, opts)
 	if not _has_station:
 		return _decline()

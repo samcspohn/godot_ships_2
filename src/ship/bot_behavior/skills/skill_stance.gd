@@ -33,6 +33,10 @@ const SIDE_TIE: float = deg_to_rad(10.0)
 ## A request not fired by its turn plus this is dropped for a reload.
 const FIRE_GRACE_S: float = 10.0
 const TORP_RETRY_S: float = 10.0
+## Land this close along a heading, in turning circles, leaves the helm to the navigator.
+const CLEAR_AHEAD_TURNS: float = 1.5
+const CLEAR_AHEAD_MIN_M: float = 800.0
+const CLEAR_AHEAD_STEP_M: float = 100.0
 const SHELL_QUERY_M: float = 1500.0
 ## Shells landing this close in time, from this close in bearing, are one salvo.
 const SALVO_GAP_S: float = 1.0
@@ -52,6 +56,8 @@ var _on_route: bool = false
 var _stern_in: bool = false
 ## Committed to turning round to the far end.
 var _turning: bool = false
+## Bearing of the weighted fire while under it, else INF (debug).
+var _axis: float = INF
 var _turn_cost: float = 0.0
 var _astern_cost: float = 0.0
 var _juke: bool = false
@@ -80,12 +86,15 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	_active = true
 	_throttle = 1.0
 	_on_route = not threatened
+	_axis = INF
 	if threatened:
 		_lie_on_axis(ctx, intent, route, hdg)
 	var fire_h: float = _fire_heading(ctx, _heading if threatened else hdg, route, hdg)
-	if is_finite(fire_h):
+	if is_finite(fire_h) and _clear_ahead(ctx, fire_h, _throttle < 0.0):
 		_heading = fire_h
 		_on_route = false
+	elif threatened and not _clear_ahead(ctx, _heading, _throttle < 0.0):
+		_on_route = true
 	_juke = threatened and _throttle != 0.0 and _stop_dodges(ctx)
 	if _juke:
 		_throttle = 0.0
@@ -113,6 +122,16 @@ func debug_heading() -> Vector2:
 	return Vector2(_heading, absf(_throttle)) if _active and not _on_route else Vector2(INF, 0.0)
 
 
+## Bearing of the weighted fire as of the last tick; INF while not under it.
+func threat_axis() -> float:
+	return _axis
+
+
+## Heading straight away from the fire; INF while not under it.
+func debug_away() -> float:
+	return wrapf(_axis + PI, -PI, PI) if is_finite(_axis) else INF
+
+
 func debug_text() -> String:
 	if not _active:
 		return "Stance: off"
@@ -124,6 +143,7 @@ func debug_text() -> String:
 
 
 func reset() -> void:
+	_axis = INF
 	_active = false
 	_on_route = false
 	_juke = false
@@ -136,6 +156,7 @@ func reset() -> void:
 ## for a goal past the other end, turned round or backing, whichever costs less.
 func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float) -> void:
 	var axis: float = _fire_axis(ctx)
+	_axis = axis
 	var goal: float = route
 	if not is_finite(goal):
 		var to: Vector3 = intent.target_position - ctx.ship.global_position
@@ -272,6 +293,20 @@ func _nearest(mounts: Array, at: Vector2, base: float, route: float, hdg: float,
 		return hs[0] if da < db else hs[1]
 	var ref: float = route if is_finite(route) else hdg
 	return hs[0] if absf(angle_difference(hs[0], ref)) <= absf(angle_difference(hs[1], ref)) else hs[1]
+
+
+## No land within the hull's clearance along `h` (astern: its reciprocal) for a turning circle and a half.
+func _clear_ahead(ctx: SkillContext, h: float, astern: bool) -> bool:
+	var ship: Ship = ctx.ship
+	var clearance: float = ctx.behavior._get_ship_clearance()
+	var reach: float = maxf(ship.movement_controller._p().turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
+	var dir := Vector3(sin(h), 0.0, cos(h)) * (-1.0 if astern else 1.0)
+	var d: float = clearance
+	while d <= reach:
+		if NavigationMapManager.get_distance(ship.global_position + dir * d) < clearance:
+			return false
+		d += maxf(clearance, CLEAR_AHEAD_STEP_M)
+	return true
 
 
 func _turn_s(ctx: SkillContext, angle: float) -> float:

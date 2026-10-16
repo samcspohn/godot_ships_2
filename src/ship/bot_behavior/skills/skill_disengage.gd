@@ -3,15 +3,21 @@ extends BotSkill
 
 ## Getting out, cheapest first: behind an island when hiding there beats going
 ## dark (SkillCover DEFENSE), else to the nearest cell nobody lights while going
-## dark still works, else a fighting retreat on the angled away-heading. Stance
+## dark still works, else a fighting retreat on the angled away-heading. Cover
+## and dark cells must hide us from every enemy and lie within CONE of the threat
+## axis, toward or away. Stance
 ## decides whether the hull turns or backs out. Params: cant_go_dark.
 
+## Island cover and the dark cell are taken only within this of the threat axis, toward or away.
+const CONE: float = deg_to_rad(40.0)
 const KITE_DISTANCE_M: float = 3000.0
 const KITE_TURNS: float = 8.0
 
 enum Leg { NONE, COVER, DARK, KITE }
 
 var leg: int = Leg.NONE
+## The threat axis the cone was cut on; INF without one.
+var cone_axis: float = INF
 var _cover := SkillCover.new()
 
 func reset() -> void:
@@ -30,7 +36,9 @@ func cover() -> SkillCover:
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var cant_go_dark: bool = params.get("cant_go_dark", false)
-	var dive := _cover.execute(ctx, {"mode": SkillCover.Mode.DEFENSE, "fire_en_route": cant_go_dark})
+	cone_axis = _threat_axis(ctx)
+	var dive := _cover.execute(ctx, {"mode": SkillCover.Mode.DEFENSE, "fire_en_route": cant_go_dark,
+		"cone_axis": cone_axis, "cone_half": CONE})
 	var dark: Dictionary = _cover.dark()
 	if dive != null and (cant_go_dark or dark.is_empty() or float(_cover.best().score) >= float(dark.score)):
 		leg = Leg.COVER
@@ -43,6 +51,17 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return NavIntent.create(Vector3(p.x, 0.0, p.y), atan2(to.x, to.z))
 	leg = Leg.KITE
 	return _kite(ctx, params)
+
+## Stance's fire axis, else the bearing of the priority.
+static func _threat_axis(ctx: SkillContext) -> float:
+	var axis: float = ctx.behavior._skill_stance.threat_axis()
+	if is_finite(axis):
+		return axis
+	var pp: Vector3 = ctx.behavior.priority_point()
+	if not pp.is_finite():
+		return INF
+	var to: Vector3 = pp - ctx.ship.global_position
+	return atan2(to.x, to.z)
 
 ## The angled away-heading, reprojected every tick.
 func _kite(ctx: SkillContext, params: Dictionary) -> NavIntent:

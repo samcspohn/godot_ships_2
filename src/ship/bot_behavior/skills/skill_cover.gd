@@ -170,11 +170,13 @@ func sweep_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arra
 		ctx.behavior.unknown_target_value(pref if pref > 0.0 else float(g.get("range", 0.0)) * 0.7))
 	opts.merge(WEIGHTS[mode], true)
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
-		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
+		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1,
+		"allow_hard": ship.is_detected() and not params.has("cone_axis"),
 		"box_m": SWEEP_BOX_M, "speed": ship.movement_controller.max_speed, "my_hp": ship.health_controller.current_hp,
 		"gun_range": float(g.get("range", 0.0)), "pref_range": float(params.get("pref_range", 0.0)),
 		"max_range": float(params.get("max_range", 0.0)), "hold_s": HOLD_S,
-		"held": Vector2(_station.x, _station.z) if _has_station else Vector2.INF}, true)
+		"held": Vector2(_station.x, _station.z) if _has_station else Vector2.INF,
+		"cone_axis": float(params.get("cone_axis", INF)), "cone_half": float(params.get("cone_half", PI))}, true)
 	return opts
 
 ## What this station shoots, so a dark spell can be waited out while a friend can spot it.

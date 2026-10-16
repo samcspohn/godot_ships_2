@@ -1088,6 +1088,22 @@ func _emit_debug_draws() -> void:
 		if is_finite(st.x):
 			Debug.draw_arrow(ship_pos + Vector3(0.0, 150.0, 0.0), Vector3(sin(st.x), 0.0, cos(st.x)), 200.0 * st.y, Color(1.0, 0.6, 0.0), 10.0)
 
+	# --- a3) Away from the fire (RED); Disengage's destination and its cones, toward and away (GREEN) ---
+	if behavior != null:
+		var away: float = behavior._skill_stance.debug_away()
+		var lift := Vector3(0.0, 30.0, 0.0)
+		if is_finite(away):
+			Debug.draw_arrow(ship_pos + Vector3(0.0, 170.0, 0.0), Vector3(sin(away), 0.0, cos(away)), 400.0, Color.RED, 12.0)
+		if behavior._active_skill_name == &"Disengage" and _last_intent != null:
+			Debug.draw_line(ship_pos + lift, Vector3(_last_intent.target_position.x, 0.0, _last_intent.target_position.z) + lift, Color.GREEN)
+			var axis: float = behavior._skill_disengage.cone_axis
+			if is_finite(axis):
+				for end in [0.0, PI]:
+					for side in [-1.0, 1.0]:
+						var b: float = axis + end + side * SkillDisengage.CONE
+						Debug.draw_line(ship_pos + lift, ship_pos + lift + Vector3(sin(b), 0.0, cos(b)) * SkillCover.SWEEP_BOX_M,
+							Color(0.0, 1.0, 0.0, 0.5))
+
 	# --- b) Heading + rudder arrow (CYAN) ---
 	if _debug_heading_rudder_vector.length() > 0.1:
 		var rudder_pos = ship_pos
