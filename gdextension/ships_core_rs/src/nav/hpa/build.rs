@@ -14,6 +14,7 @@ impl HpaGraph {
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
         self.obstacles.clear();
+        self.regions.borrow_mut().clear();
 
         // `map.is_valid()` has no Rust equivalent — `Gd<NavigationMap>` is always a
         // valid reference once constructed, so only the `is_built()` check applies.
@@ -81,6 +82,14 @@ impl HpaGraph {
 
         self.build_clusters();
         self.build_sub_clusters();
+        self.cell_scratch.borrow_mut().begin((self.grid_w * self.grid_h) as usize);
+        self.centre_sdf = {
+            let m = map.bind();
+            (0..self.grid_w * self.grid_h).map(|i| {
+                let (wx, wz) = self.grid_to_world(i % self.grid_w, i / self.grid_w);
+                m.get_distance_impl(wx, wz)
+            }).collect()
+        };
 
         let navigable_count = self.clusters.iter().filter(|c| c.navigable).count() as i32;
         let sub_navigable_count = self.sub_clusters.iter().filter(|s| s.navigable).count() as i32;

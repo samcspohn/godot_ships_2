@@ -236,6 +236,11 @@ impl VisibilityGrid {
                     return None;
                 }
                 wk.seen[k] |= 1 << nd;
+                // Hugging the map edge: past here the walk only skirts round
+                // to the far side of whatever met the edge.
+                let ws = DIRS[if wk.left { (nd + 1) % 4 } else { (nd + 3) % 4 }];
+                let (ex, ez) = (nx + ws.0, nz + ws.1);
+                wk.done = ex < 0 || ez < 0 || ex >= self.w || ez >= self.h;
                 return Some(k);
             }
         }
@@ -244,7 +249,7 @@ impl VisibilityGrid {
     }
 
     /// Two wall followers leave the start in opposite directions along the edge of
-    /// blocked ground (the `avoid` set, land, the map edge); the one heading
+    /// blocked ground (the `avoid` set, land), each stopping at the map edge; the one heading
     /// toward `flank` takes two steps for each of the other's. Stops at the first
     /// cell that spots at least `need` shootable enemies.
     pub(crate) fn spot_walk_impl(

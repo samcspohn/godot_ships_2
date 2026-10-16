@@ -5,6 +5,8 @@ use super::{
     PULL_RELAX_ITERS,
 };
 use crate::nav::map::NavigationMap;
+use crate::nav::types::ThreatCircle;
+use crate::nav::visibility::VisibilityGrid;
 
 // True if segment (ax,az)-(bx,bz) clips any part of the AABB [x0,x1]x[z0,z1].
 // Uses Liang-Barsky parametric clipping -- exact, no sqrt required.
@@ -95,6 +97,9 @@ impl HpaGraph {
         if !active {
             return true;
         }
+        if !self.circles.is_empty() {
+            return self.circles_clear(a, b);
+        }
         let sub = self.sub_layer_active.get();
         let node_cells = if sub { self.sub_size } else { self.cluster_size };
         let (nx, nz) = if sub { (self.nsubx, self.nsubz) } else { (self.ncx, self.ncz) };
@@ -150,6 +155,62 @@ impl HpaGraph {
             }
             if blocked(ix, iz) {
                 return false;
+            }
+        }
+        true
+    }
+
+    /// Exact circles, not the walled clusters: a leg may cross a circle only
+    /// where the enemy cannot see it (island shadow), may leave one it starts
+    /// in, and may start or finish inside its endpoints' clusters.
+    /// Inside `c` and seen from its origin: within radar/hydro reach or out of island shadow.
+    fn circle_sees(c: &ThreatCircle, oc: Option<usize>, p: Vector2, vis: Option<&VisibilityGrid>) -> bool {
+        let d2 = p.distance_squared_to(c.origin);
+        if d2 >= c.radius * c.radius {
+            return false;
+        }
+        d2 < c.force_spot * c.force_spot || match (vis, oc) {
+            (Some(v), Some(oc)) => v.cell_of(p).is_none_or(|j| v.visible_idx(oc, j)),
+            _ => true,
+        }
+    }
+
+    pub(crate) fn point_threatened(&self, p: Vector2, vis: Option<&VisibilityGrid>) -> bool {
+        self.circles.iter().any(|(c, oc)| Self::circle_sees(c, *oc, p, vis))
+    }
+
+    fn circles_clear(&self, a: Vector2, b: Vector2) -> bool {
+        let vis = self.vis.as_ref().map(|v| v.bind());
+        let vis = vis.as_deref().filter(|v| v.is_ready());
+        let step = vis.map_or(self.cell_size, |v| v.cell * 0.5).max(self.cell_size);
+        let node_w = self.cluster_size as f32 * self.cell_size;
+        let node = |p: Vector2| -> (i32, i32) {
+            (((p.x - self.min_x + self.cell_size * 0.5) / node_w).floor() as i32,
+             ((p.y - self.min_z + self.cell_size * 0.5) / node_w).floor() as i32)
+        };
+        let (start_node, goal_node) = (node(a), node(b));
+        let ab = b - a;
+        let len2 = ab.length_squared();
+        for (c, oc) in &self.circles {
+            let (o, r) = (c.origin, c.radius);
+            if r <= 0.0 {
+                continue;
+            }
+            let t_close = if len2 > 0.0 { ((o - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            if (a + ab * t_close).distance_squared_to(o) >= r * r || t_close <= 0.0 {
+                continue;
+            }
+            let half = (r * r - (a + ab * t_close).distance_squared_to(o)).sqrt() / len2.sqrt();
+            let (t0, t1) = ((t_close - half).max(0.0), (t_close + half).min(1.0));
+            let n = (((t1 - t0) * len2.sqrt() / step).ceil() as usize).max(1);
+            for k in 0..=n {
+                let p = a + ab * (t0 + (t1 - t0) * k as f32 / n as f32);
+                if node(p) == goal_node || node(p) == start_node {
+                    continue;
+                }
+                if Self::circle_sees(c, *oc, p, vis) {
+                    return false;
+                }
             }
         }
         true
@@ -213,6 +274,7 @@ impl HpaGraph {
         hug_cl: f32,
         threat_active: bool,
     ) -> Vec<Vector2> {
+        let _t = self.stage(3);
         if input.len() < 3 {
             return input.to_vec();
         }

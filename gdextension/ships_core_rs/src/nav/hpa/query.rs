@@ -1,7 +1,8 @@
 use godot::prelude::*;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use super::{fail_stage::*, HpaGraph, PathBias, PATH_BIAS_FACTOR};
+use super::{fail_stage::*, HpaGraph, PathBias, PATH_BIAS_FACTOR, SAME_MACRO_RING, SAME_MACRO_RING_WIDE, SNAP_LABEL_RING,
+    WALLED_EXPAND_BASE, WALLED_EXPAND_PER_CELL};
 use crate::nav::types::{waypoint_flags::WP_NONE, PathResult};
 
 /// The C++ keeps these as locals captured by a `[&]` closure. Rust cannot both
@@ -51,6 +52,8 @@ impl HpaGraph {
     ) -> PathResult {
         self.last_query_ignored_threats.set(false);
         self.last_find_stats.set((0, 0, 0));
+        self.stage_us.set([0.0; super::STAGES.len()]);
+        self.stage_n.set([0; super::STAGES.len()]);
 
         let mut bias = PathBias::default();
         if let Some(p) = bias_path {
@@ -85,6 +88,86 @@ impl HpaGraph {
 
         self.last_query_ignored_threats.set(r.valid);
         r
+    }
+
+    /// Cell A* inside `mask`; a leg threat walls sever is retried with them
+    /// muted, as the sub A* does: one leg's exposure, not the whole route's.
+    fn bridge_leg(&self, a: Vector2, b: Vector2, q_cl: f32, mask: &[u8], threat_active: bool) -> PathResult {
+        // A leg the walls really cut costs a search of the whole corridor to
+        // prove it; one that clears them finds it within a few cells per cell of leg.
+        let budget = if threat_active {
+            WALLED_EXPAND_BASE + WALLED_EXPAND_PER_CELL * (a.distance_to(b) / self.cell_size) as u32
+        } else {
+            u32::MAX
+        };
+        let r = self.constrained_cell_astar(a, b, q_cl, mask, budget);
+        if r.valid && r.waypoints.len() >= 2 || !threat_active {
+            return r;
+        }
+        let flag = if self.threat_cost_mode.get() { &self.walls_muted } else { &self.threats_muted };
+        flag.set(true);
+        let r = self.constrained_cell_astar(a, b, q_cl, mask, u32::MAX);
+        flag.set(false);
+        r
+    }
+
+    pub(crate) fn same_region_at(&self, ax: i32, az: i32, bx: i32, bz: i32, q_cl: f32) -> bool {
+        let labels = self.region_labels(q_cl);
+        let (i, j) = ((az * self.grid_w + ax) as usize, (bz * self.grid_w + bx) as usize);
+        i < labels.len() && j < labels.len() && labels[i] >= 0 && labels[i] == labels[j]
+    }
+
+    pub(crate) fn region_labels(&self, q_cl: f32) -> std::rc::Rc<Vec<i32>> {
+        let _t = self.stage(4);
+        if let Some(l) = self.regions.borrow().get(&q_cl.to_bits()) {
+            return l.clone();
+        }
+        let (w, h) = (self.grid_w, self.grid_h);
+        let open: Vec<bool> = self.centre_sdf.iter().map(|&d| d >= q_cl).collect();
+        let mut labels = vec![-1i32; (w * h) as usize];
+        let mut next = 0;
+        let mut stack = Vec::new();
+        for seed in 0..(w * h) as usize {
+            if !open[seed] || labels[seed] >= 0 {
+                continue;
+            }
+            labels[seed] = next;
+            stack.push(seed as i32);
+            while let Some(c) = stack.pop() {
+                let (cx, cz) = (c % w, c / w);
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let (nx, nz) = (cx + dx, cz + dz);
+                        if (dx == 0 && dz == 0) || nx < 0 || nz < 0 || nx >= w || nz >= h {
+                            continue;
+                        }
+                        let n = (nz * w + nx) as usize;
+                        // Diagonals need both cardinals open, as in the cell A*.
+                        if !open[n] || labels[n] >= 0
+                            || dx != 0 && dz != 0 && !(open[(cz * w + nx) as usize] && open[(nz * w + cx) as usize]) {
+                            continue;
+                        }
+                        labels[n] = next;
+                        stack.push(n as i32);
+                    }
+                }
+            }
+            next += 1;
+        }
+        let labels = std::rc::Rc::new(labels);
+        self.regions.borrow_mut().insert(q_cl.to_bits(), labels.clone());
+        labels
+    }
+
+    fn ring_mask(&self, cid: i32, ring: i32) -> Vec<u8> {
+        let mut mask = vec![0u8; self.clusters.len()];
+        let c = self.clusters[cid as usize];
+        for z in (c.cz - ring).max(0)..=(c.cz + ring).min(self.ncz - 1) {
+            for x in (c.cx - ring).max(0)..=(c.cx + ring).min(self.ncx - 1) {
+                mask[self.cluster_id(x, z) as usize] = 1;
+            }
+        }
+        mask
     }
 
     fn finalize_query(&self, r: PathResult, m: &QueryMetrics, t0: Instant) -> PathResult {
@@ -226,12 +309,34 @@ impl HpaGraph {
         if !map.find_nearest_navigable(&mut sx, &mut sz, q_cl) {
             return false;
         }
+        drop(map);
+        // The map snaps on its grid nodes; the cell A* and region labels test
+        // cell centres, half a cell over. Settle on a cell they accept.
+        let labels = self.region_labels(q_cl);
+        let labelled = |x: i32, z: i32| x >= 0 && z >= 0 && x < self.grid_w && z < self.grid_h
+            && labels[(z * self.grid_w + x) as usize] >= 0;
+        if !labelled(sx, sz) {
+            let mut best: Option<(i32, i32, i32)> = None;
+            for r in 1..=SNAP_LABEL_RING {
+                for z in sz - r..=sz + r {
+                    for x in sx - r..=sx + r {
+                        let d = (x - sx) * (x - sx) + (z - sz) * (z - sz);
+                        if labelled(x, z) && best.is_none_or(|b| d < b.2) {
+                            best = Some((x, z, d));
+                        }
+                    }
+                }
+                if best.is_some() {
+                    break;
+                }
+            }
+            let Some((x, z, _)) = best else { return false };
+            (sx, sz) = (x, z);
+        }
         *gx = sx;
         *gz = sz;
-        *out = Vector2::new(
-            self.min_x + sx as f32 * self.cell_size,
-            self.min_z + sz as f32 * self.cell_size,
-        );
+        let (wx, wz) = self.grid_to_world(sx, sz);
+        *out = Vector2::new(wx, wz);
         true
     }
 
@@ -389,6 +494,10 @@ impl HpaGraph {
         let goal_snapped = true_to.distance_to(plan_to) > 1.0;
         let from = plan_from;
         let to = plan_to;
+        if !self.same_region_at(from_gx, from_gz, to_gx, to_gz, q_cl) {
+            self.last_fail_stage.set(FAIL_SEPARATE_WATER);
+            return self.finalize_query(no_path, &m, query_t0);
+        }
 
         // threats_muted is set by the relaxed retry in find_path(); it has to
         // disable LOS rejection too, not just cluster blocking, or the retry
@@ -462,16 +571,14 @@ impl HpaGraph {
 
                 if sub_path.is_empty() {
                     let t0 = Instant::now();
-                    let mut local = self.constrained_cell_astar(from, to, q_cl, &allowed_macros);
-                    let mut reachable = true;
-                    if !local.valid || local.waypoints.len() < 2 {
-                        // Single macro, but no channel within it — search the
-                        // full grid rather than declaring it unreachable.
-                        let map = self.nav_map.as_ref().unwrap().bind();
-                        reachable = map.is_reachable_impl(from, to, q_cl);
-                        if reachable {
-                            local = map.find_path_internal(from, to, q_cl, 0.0);
+                    let mut local = self.bridge_leg(from, to, q_cl, &allowed_macros, threat_layer_active);
+                    // No channel inside the macro: the same water reaches round through its neighbours.
+                    for ring in [SAME_MACRO_RING, SAME_MACRO_RING_WIDE] {
+                        if local.valid && local.waypoints.len() >= 2 {
+                            break;
                         }
+                        let mask = self.ring_mask(from_cid, ring);
+                        local = self.bridge_leg(from, to, q_cl, &mask, threat_layer_active);
                     }
                     // Same treatment the cross-macro route gets:
                     // constrained_cell_astar greedily simplifies, so this
@@ -497,11 +604,7 @@ impl HpaGraph {
                     m.refine_us = micros_since(t0);
                     m.local_search_runs += 1;
                     if !local.valid {
-                        self.last_fail_stage.set(if reachable {
-                            FAIL_CONNECTOR_ASTAR
-                        } else {
-                            FAIL_SEPARATE_WATER
-                        });
+                        self.last_fail_stage.set(FAIL_CONNECTOR_ASTAR);
                     }
                     let r = self.restore_endpoints(local, &rctx);
                     return self.finalize_query(r, &m, query_t0);
@@ -607,6 +710,8 @@ impl HpaGraph {
             let a_sid = self.sub_id(self.cell_scx(ax), self.cell_scz(az));
             let b_sid = self.sub_id(self.cell_scx(bx), self.cell_scz(bz));
             let mut sub_helped = false;
+            // The sub A* needed the walls muted: the cell A* honours the same walls, so its walled try only fails slowly.
+            let mut walls_cut = false;
 
             if a_sid != b_sid {
                 let mut sub_path = self.sub_cluster_astar(
@@ -622,6 +727,7 @@ impl HpaGraph {
                 // than hand it to the cell A*, which honours the same walls and
                 // ends in a full-grid search.
                 if sub_path.is_empty() && threat_layer_active {
+                    walls_cut = true;
                     let flag = if self.threat_cost_mode.get() { &self.walls_muted } else { &self.threats_muted };
                     flag.set(true);
                     sub_path = self.sub_cluster_astar(
@@ -648,6 +754,10 @@ impl HpaGraph {
                     }
                 }
 
+                if self.debug_legs.get() {
+                    godot_print!("[leg] {:?}->{:?} {:.0} m  sub path {} subs, {} open, walls cut {}", a, b, a.distance_to(b),
+                        sub_path.len(), open_intermediates, walls_cut);
+                }
                 if !sub_path.is_empty() && open_intermediates > 0 {
                     let mut chain: Vec<Vector2> = Vec::with_capacity(sub_path.len());
                     for j in 1..sub_path.len().saturating_sub(1) {
@@ -690,6 +800,9 @@ impl HpaGraph {
                         prev = p;
                     }
 
+                    if self.debug_legs.get() && !chain_ok {
+                        godot_print!("[leg]   open-sub chain rejected: a link fails terrain LOS at q_cl {:.0}", q_cl);
+                    }
                     if chain_ok {
                         for &p in &chain {
                             waypoints.push(p);
@@ -717,26 +830,18 @@ impl HpaGraph {
             }
 
             // Sub A* couldn't help — cell A* constrained to the HPA corridor.
+            // Region labels already proved the goal reachable, so a leg that
+            // fails here is a corridor or threat matter, never a reason to
+            // search the whole map.
             m.local_search_runs += 1;
-            let mut local = self.constrained_cell_astar(a, b, q_cl, &allowed_macros);
-
-            let mut segment_reachable = true;
-            if !local.valid || local.waypoints.len() < 2 {
-                // The corridor has no channel this ship fits through. Cluster
-                // A* links two clusters when each merely *contains* a navigable
-                // cell, so it happily bridges an isthmus no cell-level route
-                // can cross. Retry the segment on the full grid before giving
-                // up: a longer real route beats no route. The region test gates
-                // the expensive search and stays silent when the two really are
-                // separate bodies of water.
-                let map = self.nav_map.as_ref().unwrap().bind();
-                segment_reachable = map.is_reachable_impl(a, b, q_cl);
-                if segment_reachable {
-                    m.local_search_runs += 1;
-                    m.grid_fallbacks += 1;
-                    local = map.find_path_internal(a, b, q_cl, 0.0);
-                }
-            }
+            let local = if walls_cut {
+                self.threats_muted.set(true);
+                let r = self.constrained_cell_astar(a, b, q_cl, &allowed_macros, u32::MAX);
+                self.threats_muted.set(false);
+                r
+            } else {
+                self.bridge_leg(a, b, q_cl, &allowed_macros, threat_layer_active)
+            };
 
             if local.valid && local.waypoints.len() >= 2 {
                 for j in 1..local.waypoints.len() {
@@ -751,11 +856,7 @@ impl HpaGraph {
                 // A to the following guide point instead.
                 continue;
             } else {
-                self.last_fail_stage.set(if segment_reachable {
-                    FAIL_CONNECTOR_ASTAR
-                } else {
-                    FAIL_SEPARATE_WATER
-                });
+                self.last_fail_stage.set(FAIL_CONNECTOR_ASTAR);
                 return self.finalize_query(no_path, &m, query_t0);
             }
         }

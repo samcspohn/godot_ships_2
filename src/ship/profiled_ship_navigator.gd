@@ -5,9 +5,11 @@ class_name ProfiledShipNavigator
 ## Thin GDScript proxy around the native ShipNavigator.
 ## Purpose: make navigator work visible as named GDScript calls in the profiler.
 
-const SPIKE_US := 10000
+const SPIKE_US := 3000
 var _impl: ShipNavigator = ShipNavigator.new()
 var label := ""
+## (us: int, target: Vector3), after a navigate_to of SPIKE_US or more.
+var on_spike: Callable
 
 
 func get_raw() -> ShipNavigator:
@@ -20,6 +22,10 @@ func set_map(nav_map: Variant) -> void:
 
 func set_hpa_graph(hpa_graph: Variant) -> void:
 	_impl.set_hpa_graph(hpa_graph)
+
+
+func prepare_regions() -> void:
+	_impl.prepare_regions()
 
 
 func set_ship_registry(registry: ShipRegistry, own_id: int, team_id: int) -> void:
@@ -106,6 +112,8 @@ func navigate_to(
 	var us := Time.get_ticks_usec() - t0
 	if us >= SPIKE_US:
 		print("[nav spike] %s %.1f ms %s" % [label, us / 1000.0, _impl.get_last_plan_breakdown()])
+		if on_spike.is_valid():
+			on_spike.call(us, target_position)
 
 
 func clear_obstacles() -> void:

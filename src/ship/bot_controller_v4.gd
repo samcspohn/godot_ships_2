@@ -191,6 +191,7 @@ func _ready() -> void:
 	# Initialize the profiled GDScript wrapper around the C++ ShipNavigator
 	navigator = ProfiledShipNavigatorScript.new()
 	navigator.label = String(owner.name) if owner != null else String(get_parent().get_parent().name)
+	navigator.on_spike = func(us: int, target: Vector3) -> void: NavSpikeLog.write(self, us, target)
 
 	# Connect to the shared NavigationMap (built by NavigationMapManager autoload)
 	var nav_map = NavigationMapManager.get_map()
@@ -223,6 +224,7 @@ func _ready() -> void:
 		params.turn_speed_loss,
 		movement.BASE_DRAG
 	)
+	navigator.prepare_regions()
 
 	# Initialize behavior
 	behavior._ship = _ship
@@ -239,6 +241,7 @@ func _deferred_init() -> void:
 		var hpa_graph = NavigationMapManager.get_hpa_graph()
 		if hpa_graph != null:
 			navigator.set_hpa_graph(hpa_graph)
+			navigator.prepare_regions()
 
 	# Pass bot_id to navigator for staggered periodic replanning
 	if navigator != null:
@@ -760,8 +763,6 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 ## transitions (spotted <-> hidden) flip subscription at most once per
 ## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
 func _sync_threat_subscription() -> void:
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	var field_ok: bool = field != null and field.is_built()
 	var want: bool = behavior != null and server_node != null and behavior.wants_stealth \
 		and server_node.threat_registry != null
 	if want == _stealth_routing:
@@ -778,9 +779,6 @@ func _sync_threat_subscription() -> void:
 		if _threat_effective_radius <= 0.0:
 			return
 	navigator.set_threat_source(server_node.threat_registry, _ship.team.team_id, _threat_effective_radius)
-	if field_ok:
-		navigator.set_detection_source(field, _ship.team.team_id, _threat_effective_radius,
-			behavior.doctrine().detection_cost_gain)
 	_stealth_routing = true
 
 

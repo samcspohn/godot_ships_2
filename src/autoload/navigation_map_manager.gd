@@ -115,6 +115,7 @@ func _build_hpa_graph() -> void:
 	var start_time = Time.get_ticks_msec()
 	_hpa_graph = HpaGraph.new()
 	_hpa_graph.build(_map, DEFAULT_MIN_SHIP_RADIUS)
+	_hpa_graph.set_visibility(_visibility)
 	var elapsed = Time.get_ticks_msec() - start_time
 
 	print("[NavigationMapManager] HpaGraph built in %.1f ms — %d nodes across %d clusters" % [
@@ -165,6 +166,8 @@ func build_visibility() -> void:
 	_visibility = vis
 	if _reach_field != null:
 		_reach_field.set_visibility(vis)
+	if _hpa_graph != null:
+		_hpa_graph.set_visibility(vis)
 	var info := vis.get_info()
 	print("[NavigationMapManager] Visibility %s in %d ms: %d cells, %.1f MB" % [
 		"loaded" if loaded else "built", Time.get_ticks_msec() - t0, info.cells, info.bytes / 1048576.0])

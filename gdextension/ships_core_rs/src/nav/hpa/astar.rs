@@ -47,6 +47,7 @@ impl HpaGraph {
         bias_mask: Option<&[u8]>,
         bias_factor: f32,
     ) -> Vec<i32> {
+        let _t = self.stage(0);
         if from_cid == to_cid {
             return vec![from_cid];
         }
@@ -195,6 +196,7 @@ impl HpaGraph {
         bias_mask: Option<&[u8]>,
         bias_factor: f32,
     ) -> Vec<i32> {
+        let _t = self.stage(1);
         if from_sid == to_sid {
             return vec![from_sid];
         }
@@ -366,7 +368,9 @@ impl HpaGraph {
         to: Vector2,
         q_cl: f32,
         allowed_macros: &[u8],
+        max_expand: u32,
     ) -> PathResult {
+        let _t = self.stage(2);
         let mut result = PathResult::default();
         result.valid = false;
         result.total_distance = 0.0;
@@ -374,8 +378,6 @@ impl HpaGraph {
         if !self.built || self.nav_map.is_none() {
             return result;
         }
-        // Bound once; every cell_allowed() call below reuses this guard.
-        let map = self.nav_map.as_ref().unwrap().bind();
 
         let world_to_gx = |wx: f32| -> i32 {
             (((wx - self.min_x) / self.cell_size) as i32)
@@ -395,7 +397,13 @@ impl HpaGraph {
         let ez = world_to_gz(to.y);
         let start_idx = idx(sx, sz);
         let end_idx = idx(ex, ez);
+        // Endpoint subs are exempt from walls, as in the sub A*: a leg may start or finish inside one.
+        let (start_sid, end_sid) = (self.sub_id(self.cell_scx(sx), self.cell_scz(sz)),
+            self.sub_id(self.cell_scx(ex), self.cell_scz(ez)));
 
+        let vis_ref = self.vis.as_ref().map(|v| v.bind());
+        let vis = vis_ref.as_deref().filter(|v| v.is_ready());
+        let muted = self.threats_muted.get() || self.walls_muted.get();
         let macro_allowed = |cid: i32| -> bool {
             cid >= 0 && (cid as usize) < allowed_macros.len() && allowed_macros[cid as usize] != 0
         };
@@ -413,19 +421,25 @@ impl HpaGraph {
                 // up on the leg, so when exposure is a price rather than a wall
                 // it only respects obstacles; a threat wall here just sends the
                 // leg to the full-grid search.
+                let sid = self.sub_id(self.cell_scx(gx), self.cell_scz(gz));
+                let obstacle = cid >= 0 && (cid as usize) < self.cluster_block_count.len() && self.cluster_block_count[cid as usize] > 0;
                 let blocked = if self.threat_cost_mode.get() {
-                    cid >= 0 && (cid as usize) < self.cluster_block_count.len() && self.cluster_block_count[cid as usize] > 0
+                    obstacle
+                } else if sid == start_sid || sid == end_sid {
+                    false
+                } else if self.circles.is_empty() {
+                    self.sub_impassable(sid)
                 } else {
-                    self.sub_impassable(self.sub_id(self.cell_scx(gx), self.cell_scz(gz)))
+                    // The circles themselves, not walls stamped up to a cluster past their edge.
+                    obstacle || !muted && self.point_threatened(
+                        Vector2::new(self.min_x + (gx as f32 + 0.5) * self.cell_size,
+                            self.min_z + (gz as f32 + 0.5) * self.cell_size), vis)
                 };
                 if blocked {
                     return false;
                 }
             }
-            map.get_distance_impl(
-                self.min_x + (gx as f32 + 0.5) * self.cell_size,
-                self.min_z + (gz as f32 + 0.5) * self.cell_size,
-            ) >= q_cl
+            self.centre_sdf[cidx as usize] >= q_cl
         };
         let line_allowed = |x0: i32, z0: i32, x1: i32, z1: i32| -> bool {
             let dx = (x1 - x0).abs();
@@ -490,11 +504,12 @@ impl HpaGraph {
             return result;
         }
 
-        let total = (self.grid_w * self.grid_h) as usize;
-        const INF: f32 = f32::INFINITY;
-        let mut g = vec![INF; total];
-        let mut parent = vec![-1i32; total];
-        let mut closed = vec![0u8; total];
+        let t_alloc = std::time::Instant::now();
+        let mut sc = self.cell_scratch.borrow_mut();
+        let gen = sc.begin((self.grid_w * self.grid_h) as usize);
+        let alloc_us = t_alloc.elapsed().as_secs_f32() * 1e6;
+        let t_search = std::time::Instant::now();
+        let mut expanded = 0u32;
 
         let heur = |gx: i32, gz: i32| -> f32 {
             let dx = (gx - ex) as f32;
@@ -504,8 +519,7 @@ impl HpaGraph {
 
         // (f, -g, id) — see the tie-break note on AstarPq above.
         let mut open: BinaryHeap<Reverse<AstarPq>> = BinaryHeap::new();
-        g[start_idx as usize] = 0.0;
-        parent[start_idx as usize] = start_idx;
+        sc.visit(start_idx as usize, gen, 0.0, start_idx);
         open.push(Reverse(AstarPq(heur(sx, sz), 0.0, start_idx)));
 
         const DX8: [i32; 8] = [-1, 0, 1, -1, 1, -1, 0, 1];
@@ -513,10 +527,14 @@ impl HpaGraph {
 
         while let Some(Reverse(AstarPq(_f, _ng, cur))) = open.pop() {
             let curu = cur as usize;
-            if closed[curu] != 0 {
+            if sc.closed[curu] == gen {
                 continue;
             }
-            closed[curu] = 1;
+            sc.closed[curu] = gen;
+            expanded += 1;
+            if expanded > max_expand {
+                break;
+            }
             if cur == end_idx {
                 break;
             }
@@ -532,7 +550,7 @@ impl HpaGraph {
                 }
                 let nidx = idx(nx, nz);
                 let nidxu = nidx as usize;
-                if closed[nidxu] != 0 {
+                if sc.closed[nidxu] == gen {
                     continue;
                 }
 
@@ -547,19 +565,28 @@ impl HpaGraph {
                 }
 
                 let step_cost = if is_diag { 1.41421356237f32 } else { 1.0f32 };
-                let ng = g[curu] + step_cost;
-                if ng < g[nidxu] {
-                    g[nidxu] = ng;
-                    parent[nidxu] = cur;
+                let ng = sc.g[curu] + step_cost;
+                if sc.seen[nidxu] != gen || ng < sc.g[nidxu] {
+                    sc.visit(nidxu, gen, ng, cur);
                     open.push(Reverse(AstarPq(ng + heur(nx, nz), -ng, nidx)));
                 }
             }
         }
 
-        if parent[end_idx as usize] < 0 {
+        if sc.seen[end_idx as usize] != gen {
+            if self.debug_legs.get() {
+                godot_print!("[leg] cell A* FAILED {:?}->{:?} {:.0} m  alloc {:.0}us  search {:.0}us  expanded {}  allowed clusters {}  muted {}",
+                    from, to, from.distance_to(to), alloc_us, t_search.elapsed().as_secs_f32() * 1e6, expanded,
+                    allowed_macros.iter().filter(|&&m| m != 0).count(), self.threats_muted.get());
+            }
             return result;
         }
 
+        if self.debug_legs.get() {
+            godot_print!("[leg] cell A* {:?}->{:?} {:.0} m  alloc {:.0}us  search {:.0}us  expanded {}  allowed clusters {}  reached {}",
+                from, to, from.distance_to(to), alloc_us, t_search.elapsed().as_secs_f32() * 1e6, expanded,
+                allowed_macros.iter().filter(|&&m| m != 0).count(), true);
+        }
         let mut raw: Vec<Vector2> = Vec::new();
         let mut cur = end_idx;
         while cur != start_idx {
@@ -567,10 +594,10 @@ impl HpaGraph {
             let gz = cur / self.grid_w;
             let (wx, wz) = self.grid_to_world(gx, gz);
             raw.push(Vector2::new(wx, wz));
-            if parent[cur as usize] < 0 || parent[cur as usize] == cur {
+            if sc.parent[cur as usize] < 0 || sc.parent[cur as usize] == cur {
                 return result;
             }
-            cur = parent[cur as usize];
+            cur = sc.parent[cur as usize];
         }
         raw.push(from);
         raw.reverse();
@@ -579,6 +606,7 @@ impl HpaGraph {
             raw[last] = to;
         }
 
+        let t_simp = std::time::Instant::now();
         let mut simplified: Vec<Vector2> = Vec::new();
         simplified.push(raw[0]);
         let mut anchor: usize = 0;
@@ -602,6 +630,10 @@ impl HpaGraph {
             anchor = farthest;
         }
 
+        if self.debug_legs.get() {
+            godot_print!("[leg]   simplify {} raw cells -> {} in {:.0}us", raw.len(), simplified.len(),
+                t_simp.elapsed().as_secs_f32() * 1e6);
+        }
         result.flags = vec![WP_NONE; simplified.len()];
         result.valid = simplified.len() >= 2;
         for i in 0..simplified.len().saturating_sub(1) {
@@ -609,5 +641,31 @@ impl HpaGraph {
         }
         result.waypoints = simplified;
         result
+    }
+}
+
+/// Reusable cell A* state; `gen` stamps make a fresh search O(1) instead of a full-grid clear.
+#[derive(Default)]
+pub(crate) struct CellScratch {
+    pub g: Vec<f32>,
+    pub parent: Vec<i32>,
+    pub seen: Vec<u32>,
+    pub closed: Vec<u32>,
+    gen: u32,
+}
+
+impl CellScratch {
+    pub fn begin(&mut self, n: usize) -> u32 {
+        if self.seen.len() != n || self.gen == u32::MAX {
+            *self = CellScratch { g: vec![0.0; n], parent: vec![-1; n], seen: vec![0; n], closed: vec![0; n], gen: 0 };
+        }
+        self.gen += 1;
+        self.gen
+    }
+
+    pub fn visit(&mut self, i: usize, gen: u32, g: f32, parent: i32) {
+        self.seen[i] = gen;
+        self.g[i] = g;
+        self.parent[i] = parent;
     }
 }

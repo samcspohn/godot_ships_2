@@ -14,18 +14,13 @@ impl HpaGraph {
     /// Tests every navigable cluster: clusters within a threat circle that have
     /// line-of-sight to the threat origin are marked blocked.
     pub(crate) fn stamp_threats(&mut self, threats: &[ThreatCircle]) {
-        for b in self.cluster_threat_blocked.iter_mut() {
-            *b = 0;
-        }
-        for c in self.cluster_threat_cost.iter_mut() {
-            *c = 0.0;
-        }
-        self.threat_cost_mode.set(false);
-        self.threat_blocked_cids.clear();
-        self.threat_blocked_count = 0;
+        self.clear_threats();
         if threats.is_empty() || self.clusters.is_empty() || self.nav_map.is_none() {
             return;
         }
+        let vis = self.vis.clone();
+        let vis = vis.as_ref().map(|v| v.bind()).filter(|v| v.is_ready());
+        self.circles = threats.iter().map(|t| (*t, vis.as_ref().and_then(|v| v.cell_of(t.origin)))).collect();
 
         let map = self.nav_map.as_ref().unwrap().bind();
 
@@ -73,7 +68,11 @@ impl HpaGraph {
                         continue;
                     }
 
-                    if d2 < t.force_spot * t.force_spot || map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
+                    let seen = match (&vis, vis.as_ref().and_then(|v| v.cell_of(t.origin))) {
+                        (Some(v), Some(oc)) => v.cell_of(Vector2::new(wx, wz)).is_none_or(|k| v.visible_idx(oc, k)),
+                        _ => map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0),
+                    };
+                    if d2 < t.force_spot * t.force_spot || seen {
                         threatened = true;
                     }
                 }
@@ -170,6 +169,7 @@ impl HpaGraph {
         self.threat_cost_mode.set(false);
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
+        self.circles.clear();
         if self.sub_layer_active.get() {
             for b in self.sub_threat_blocked.iter_mut() {
                 *b = 0;

@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::ReachField;
+use crate::nav::types::ThreatCircle;
+use crate::nav::visibility::VisibilityGrid;
 
 mod astar;
 mod build;
@@ -13,6 +15,13 @@ pub(crate) mod threats;
 
 pub const DEFAULT_CLUSTER_SIZE: i32 = 16;
 pub const DEFAULT_SUB_SIZE: i32 = 4;
+/// Cluster rings searched round a same-macro leg with no channel inside its macro.
+pub const SAME_MACRO_RING: i32 = 2;
+pub const SAME_MACRO_RING_WIDE: i32 = 6;
+pub const SNAP_LABEL_RING: i32 = 3;
+/// Cell A* expansions a walled leg may spend before its muted retry.
+pub const WALLED_EXPAND_BASE: u32 = 500;
+pub const WALLED_EXPAND_PER_CELL: u32 = 24;
 
 /// Bisection steps per tangent sweep / relaxation slide. 8 resolves a segment
 /// to 1/256 of its length, well below cell resolution.
@@ -217,6 +226,14 @@ pub struct HpaGraph {
     base: Base<RefCounted>,
 
     pub(crate) nav_map: Option<Gd<NavigationMap>>,
+    /// Island shadows for threat circles; without it a circle is a full disc.
+    pub(crate) vis: Option<Gd<VisibilityGrid>>,
+    /// The stamped circles, each with its origin's visibility cell, for exact leg tests.
+    pub(crate) circles: Vec<(ThreatCircle, Option<usize>)>,
+    /// Connected water per hull clearance (f32 bits), labelled as the cell A* moves.
+    pub(crate) regions: RefCell<HashMap<u32, std::rc::Rc<Vec<i32>>>>,
+    /// SDF at each cell centre, the value the cell A* tests.
+    pub(crate) centre_sdf: Vec<f32>,
     pub(crate) clearance: f32,
     pub(crate) cluster_size: i32,
     pub(crate) sub_size: i32,
@@ -279,6 +296,46 @@ pub struct HpaGraph {
     pub(crate) last_fail_stage: Cell<i32>,
     /// find_path's queries, grid fallbacks and local searches, summed over its retries.
     pub(crate) last_find_stats: Cell<(i32, i32, i32)>,
+    /// Per find_path: microseconds and calls in each STAGES entry, inclusive.
+    pub(crate) stage_us: Cell<[f32; STAGES.len()]>,
+    pub(crate) stage_n: Cell<[u32; STAGES.len()]>,
+    pub(crate) debug_legs: Cell<bool>,
+    pub(crate) cell_scratch: RefCell<astar::CellScratch>,
+}
+
+pub const STAGES: [&str; 5] = ["cluster_astar", "sub_astar", "cell_astar", "string_pull", "region_labels"];
+
+pub(crate) struct StageTimer<'a> {
+    g: &'a HpaGraph,
+    k: usize,
+    t0: std::time::Instant,
+}
+
+impl Drop for StageTimer<'_> {
+    fn drop(&mut self) {
+        let (mut us, mut n) = (self.g.stage_us.get(), self.g.stage_n.get());
+        us[self.k] += self.t0.elapsed().as_secs_f32() * 1.0e6;
+        n[self.k] += 1;
+        self.g.stage_us.set(us);
+        self.g.stage_n.set(n);
+    }
+}
+
+impl HpaGraph {
+    pub(crate) fn stage(&self, k: usize) -> StageTimer<'_> {
+        StageTimer { g: self, k, t0: std::time::Instant::now() }
+    }
+
+    pub(crate) fn stage_dict(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let (us, n) = (self.stage_us.get(), self.stage_n.get());
+        for k in 0..STAGES.len() {
+            if n[k] > 0 {
+                d.set(STAGES[k], &GString::from(format!("{:.0}us/{}", us[k], n[k]).as_str()));
+            }
+        }
+        d
+    }
 }
 
 #[godot_api]
@@ -287,6 +344,10 @@ impl IRefCounted for HpaGraph {
         Self {
             base,
             nav_map: None,
+            vis: None,
+            circles: Vec::new(),
+            regions: RefCell::new(HashMap::new()),
+            centre_sdf: Vec::new(),
             clearance: 0.0,
             cluster_size: DEFAULT_CLUSTER_SIZE,
             sub_size: DEFAULT_SUB_SIZE,
@@ -323,6 +384,10 @@ impl IRefCounted for HpaGraph {
             last_query_ignored_threats: Cell::new(false),
             last_fail_stage: Cell::new(fail_stage::FAIL_NONE),
             last_find_stats: Cell::new((0, 0, 0)),
+            stage_us: Cell::new([0.0; STAGES.len()]),
+            stage_n: Cell::new([0; STAGES.len()]),
+            debug_legs: Cell::new(false),
+            cell_scratch: RefCell::new(Default::default()),
         }
     }
 }
@@ -485,6 +550,31 @@ impl HpaGraph {
         let (max, mean) = field.bind_mut().cluster_exposure_stats(team_id, radius, self.cluster_size, self.ncx, self.ncz, true);
         let sub = field.bind_mut().cluster_exposure_stats(team_id, radius, self.sub_size, self.nsubx, self.nsubz, false).0;
         self.stamp_threat_costs(&max, &mean, &sub, gain, true);
+    }
+
+    #[func]
+    fn set_visibility(&mut self, vis: Option<Gd<VisibilityGrid>>) {
+        self.vis = vis;
+    }
+
+    /// Debug: stamp (x, z, radius) circles as a navigator with intent circles would.
+    #[func]
+    fn debug_stamp_circles(&mut self, circles: PackedVector3Array) {
+        let c: Vec<ThreatCircle> = circles.as_slice().iter()
+            .map(|v| ThreatCircle { origin: Vector2::new(v.x, v.y), radius: v.z, ..Default::default() })
+            .collect();
+        self.stamp_threats(&c);
+    }
+
+    #[func]
+    fn set_debug_legs(&self, on: bool) {
+        self.debug_legs.set(on);
+    }
+
+    /// Stage timings of the last find_path.
+    #[func]
+    fn get_last_find_stages(&self) -> VarDictionary {
+        self.stage_dict()
     }
 
     #[func]

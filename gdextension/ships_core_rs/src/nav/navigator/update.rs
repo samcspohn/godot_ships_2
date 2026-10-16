@@ -774,6 +774,9 @@ impl ShipNavigator {
                 d.set("fail", &g.get_last_fail_stage_name());
                 d.set("waypoints", pr.waypoints.len() as i64);
                 d.set("dist", self.state.position.distance_to(self.target.position));
+                d.set("stages", &g.stage_dict());
+                d.set("bias", &PackedVector2Array::from(bias_path.as_slice()));
+                d.set("hug_clearance", hug_clearance);
             }
             if pr.valid && !pr.waypoints.is_empty() {
                 // Always end at the exact destination — HPA* snaps to grid nodes

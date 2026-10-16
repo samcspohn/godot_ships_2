@@ -404,6 +404,23 @@ impl ShipNavigator {
     }
 
     #[func]
+    fn get_clearance(&self) -> f32 {
+        self.get_ship_clearance()
+    }
+
+    /// Builds the graph's water regions for this hull's clearance now, at
+    /// load, instead of inside its first plan. Needs the graph and ship params.
+    #[func]
+    fn prepare_regions(&self) {
+        if let Some(g) = &self.hpa_graph {
+            let g = g.bind();
+            if g.is_built() {
+                g.region_labels(self.get_ship_clearance());
+            }
+        }
+    }
+
+    #[func]
     fn get_hpa_graph(&self) -> Option<Gd<HpaGraph>> {
         self.hpa_graph.clone()
     }
