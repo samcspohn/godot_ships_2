@@ -30,6 +30,8 @@ var _count: int = 0
 var _mask: int = 0
 var _steps: int = 0
 var _trails: Array[PackedVector2Array] = []
+## With no station of its own, the walk starts here (the station another hold mode just held).
+var seed := Vector2.INF
 
 func reset() -> void:
 	release_claim()
@@ -90,8 +92,12 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
 	else:
 		opts.need = 1
-		opts.budget_m = 0.0
-		r = vis.hold_walk(danger, here, true, pos, opts)
+		if seed.is_finite():
+			opts.budget_m = REFINE_BUDGET_M
+			r = vis.hold_walk(seed, danger, false, pos, opts)
+		if not bool(r.get("found", false)):
+			opts.budget_m = 0.0
+			r = vis.hold_walk(danger, here, true, pos, opts)
 		if not bool(r.get("has_start", false)):
 			r = vis.hold_walk(_nearest(pos, here), here, true, pos, opts)
 	_steps = int(r.get("steps", 0))

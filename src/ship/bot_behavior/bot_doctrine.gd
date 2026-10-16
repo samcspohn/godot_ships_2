@@ -81,13 +81,6 @@ var duel_threat: float = 0.5
 ## A held Cover station outranks every arm until threat drops below this.
 var cover_release_threat: float = 0.4
 
-## Threat at which an open-water gun boat breaks off its push and kites, paired
-## with push_threat above, which is where it turns back in. The gap between the
-## two is the hysteresis that makes the pair an oscillation rather than a
-## chatter: one threshold would leave the boat alternating destinations every
-## tick while threat sat on it. See DDBehavior._open_water_kiting().
-var kite_threat: float = 0.6
-
 ## Whether this bot's escape route is concealment rather than manoeuvre. Set for
 ## a hull that can actually go dark and gain something by it: it stops shooting
 ## under pressure, routes around enemy detection zones, and holds fire whenever
@@ -236,10 +229,5 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	# range, the close arm should be reached only when something has genuinely
 	# closed.
 	d.close_arm_range_gated = true
-	# Threat opens the gunboat band instead; cover only hides it from its targets.
-	# The engaged arm swings between push and kite on these two (see
-	# DDBehavior._open_water_kiting). push_threat comes from for_destroyer() and
-	# is the turn-back-in edge; this is the break-off edge.
-	d.kite_threat = 0.6
 	# The gunboat fights lit; it still takes no more than a 1v1 on a station.
 	return d

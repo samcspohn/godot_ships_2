@@ -224,6 +224,10 @@ const GUNBOAT_HOLD_THREAT := 0.5
 const GUNBOAT_FRAC_POW := 8.0
 ## How far along the band a gunboat rides either way of its station: speed is its armour.
 const GUNBOAT_PATROL_M := 2500.0
+const GUNBOAT_KITE_M := 1000.0
+const GUNBOAT_DISENGAGE_THREAT := 0.95
+## Spotting, a gunboat at any HP keeps its guns free below this threat.
+const GUNBOAT_SPOT_FIRE_THREAT := 0.7
 
 func _gunboating() -> bool:
 	if not _is_gunboat(_ship):
@@ -263,8 +267,9 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var ship := ctx.ship
 	var intent: NavIntent = null
 
-	if not d.trades_on_concealment:
-		return _select_gunboat_engaged_skill(ctx, sit)
+	# A gunboat's ladder is its committed intent; nothing is left to try here.
+	if _is_gunboat(ship):
+		return null
 
 	# The one case that is not scouting: something is lit, it is the best thing
 	# on offer, and the odds are good. Push, but only to the range our weapons
@@ -295,77 +300,60 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# and the push arm above declined on threat, the boat is already inside the
 	# band it launches from: break off rather than run at them.
 	if intent == null:
-		intent = _run_skill(&"Disengage" if sit.has_spotted else &"Chase", ctx)
+		intent = _run_skill(&"Disengage", ctx) if sit.has_spotted else _chase_or_break(ctx, sit)
 	if intent == null:
 		intent = _run_skill(&"Hunt", ctx)
 
 	return intent
 
 
-## Minimum seconds a kite leg runs before threat is allowed to turn the boat
-## back in. The hysteresis band alone already stops threshold chatter, but
-## threat can step discontinuously as well as slide - a shooter's window
-## expiring, a contact dying, an enemy passing out of its own gun range - and
-## with no floor on the leg the boat can reverse helm a tick after committing
-## and spend the engagement in a turn. Breaking off is deliberately not damped:
-## a boat that has started taking fire leaves immediately.
-const OPEN_WATER_KITE_DWELL: float = 3.0
-
-## Which way the open-water oscillation is currently swinging, and when this leg
-## began. Persist across ticks; _select_gunboat_engaged_skill() clears them when
-## the picture goes dark.
-var _ow_kiting: bool = false
-var _ow_leg_started: float = 0.0
-
-## True while the boat is on the kite half of the open-water swing.
-##
-## Threat already answers the question this arm is asking. get_threat_score()
-## halves the contribution of every contact that is not in
-## active_shooters_at_me, so the same geometry reads roughly twice as dangerous
-## with shells in the air as without - "am I being shot at" is a term in the
-## score, not a separate flag to go and consult.
-##
-## Two thresholds rather than one, because a single one is not an oscillation,
-## it is a chatter: threat parks on the boundary and the boat alternates
-## destinations every physics tick without ever sailing either leg. Kiting
-## starts at kite_threat and only ends back below push_threat. The gap between
-## them is crossed by range - range_pressure falls as (dist/enemy_range)^3 -
-## which is precisely what the two legs spend, so each leg has to actually be
-## sailed before it can end.
-func _open_water_kiting(sit: Dictionary) -> bool:
-	var d := _doc()
-	var now: float = SimClock.now()
-	# Kiting opens range under fire; dark, there is no fire to open range from.
-	var lit: bool = _ship.is_detected()
-	if _ow_kiting:
-		if (sit.threat <= d.push_threat or not lit) and now - _ow_leg_started >= OPEN_WATER_KITE_DWELL:
-			_ow_kiting = false
-			_ow_leg_started = now
-	elif lit and sit.threat >= d.kite_threat:
-		_ow_kiting = true
-		_ow_leg_started = now
-	return _ow_kiting
-
-
 ## Nothing spotted and the gunboat skill idle: spot and torpedo rather than gunboat.
 var _gb_stealth: bool = false
 
-## A healthy gunboat's job in every arm: walk the engagement band, spot and shoot.
-## Its band opens with threat, which is the push/kite swing.
+## The gunboat's whole ladder, in every arm: fight from the band whenever a
+## target is in reach, else spot its priorities. Lit, it breaks off at extreme
+## threat or when hurt; hurt and unseen, it spots.
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if _doc().trades_on_concealment or not sit.has_enemies:
+	if not _is_gunboat(_ship):
 		return null
-	var intent := _hold(ctx, SkillHold.Mode.FIGHT, _gunboat_params(ctx))
+	var hc := _ship.health_controller
+	var hurt: bool = hc.current_hp < hc.max_hp * GUNBOAT_TORPEDO_HP
+	var intent: NavIntent = null
+	if _ship.is_detected() and (hurt or sit.threat >= GUNBOAT_DISENGAGE_THREAT):
+		intent = _run_skill(&"Disengage", ctx)
+	if intent == null and not hurt and _has_shootable_contact(ctx):
+		intent = _hold(ctx, SkillHold.Mode.FIGHT, _gunboat_params(ctx))
+	if intent == null:
+		intent = _hold(ctx, SkillHold.Mode.SPOT)
+	if intent == null and not hurt:
+		intent = _chase_or_break(ctx, sit)
+	if intent == null:
+		intent = _run_skill(&"Hunt", ctx)
 	if intent != null:
 		sit["arm"] = &"engaged"
 	return intent
+
+## Nothing in sight: lit under this much threat, break off rather than run at a last-known position.
+const DARK_BREAK_THREAT := 0.7
+
+func _chase_or_break(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if not sit.has_spotted and _ship.is_detected() and sit.threat > DARK_BREAK_THREAT:
+		return _run_skill(&"Disengage", ctx)
+	return _run_skill(&"Chase", ctx)
 
 ## Hold FIGHT as a gunboat: its own band curve, a station that sees its
 ## target, the band ridden within GUNBOAT_PATROL_M of it, and the bow away from the danger.
 func _gunboat_params(ctx: SkillContext) -> Dictionary:
 	var gun_range: float = ctx.ship.artillery_controller.get_params()._range
-	return {"band_m": gun_range * gunboat_band_frac(clampf(get_threat_score(ctx), 0.0, 1.0)),
-		"needs_los": true, "radius": GUNBOAT_PATROL_M, "away": true}
+	var band: float = gun_range * gunboat_band_frac(clampf(get_threat_score(ctx), 0.0, 1.0))
+	# Under fire the band edge sits behind us, so the station is a kite heading.
+	var shot_from: float = INF
+	for s in active_shooters_at_me:
+		if is_instance_valid(s):
+			shot_from = minf(shot_from, ctx.ship.global_position.distance_to(s.global_position))
+	if is_finite(shot_from):
+		band = clampf(shot_from + GUNBOAT_KITE_M, band, gun_range * GUNBOAT_FRAC_MAX)
+	return {"band_m": band, "needs_los": true, "radius": GUNBOAT_PATROL_M, "away": true}
 
 ## Below 0.5 threat a gunboat closes in; above, it holds near 70% of gun range,
 ## since threat ignores how hard a destroyer is to hit, and only opens out near the top.
@@ -374,30 +362,6 @@ static func gunboat_band_frac(threat: float) -> float:
 		return lerpf(GUNBOAT_FRAC_PUSH, GUNBOAT_FRAC_HOLD, threat / GUNBOAT_HOLD_THREAT)
 	var u := clampf((threat - GUNBOAT_HOLD_THREAT) / (1.0 - GUNBOAT_HOLD_THREAT), 0.0, 1.0)
 	return GUNBOAT_FRAC_HOLD + (GUNBOAT_FRAC_MAX - GUNBOAT_FRAC_HOLD) * pow(u, GUNBOAT_FRAC_POW)
-
-
-## The engaged arm for a gunboat whose band walk found no cell that sees a
-## target: kite off when threat says the swing has turned, else make vision.
-func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var intent: NavIntent = null
-
-	if sit.has_spotted:
-		if _open_water_kiting(sit):
-			intent = _run_skill(&"Disengage", ctx)
-	else:
-		# Nothing lit: the swing has nothing to swing against, and a leg left
-		# latched here would decide the first tick of the next engagement on a
-		# threat reading from the last one.
-		_ow_kiting = false
-
-	if intent == null:
-		intent = _hold(ctx, SkillHold.Mode.SPOT)
-	if intent == null:
-		intent = _run_skill(&"Chase", ctx)
-	if intent == null:
-		intent = _run_skill(&"Hunt", ctx)
-
-	return intent
 
 
 ## The distance this destroyer wants to fight at.
@@ -470,6 +434,11 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 		wants_stealth = false
 		wants_to_be_concealed = false
 		_suppress_guns = false
+		return
+	if _is_gunboat(_ship) and _holding(SkillHold.Mode.SPOT) and sit.threat < GUNBOAT_SPOT_FIRE_THREAT:
+		_gb_stealth = false
+		_suppress_guns = false
+		wants_to_be_concealed = false
 		return
 	_gb_stealth = not d.trades_on_concealment and not sit.has_spotted
 	if _gb_stealth:
@@ -557,6 +526,7 @@ func engage_target(target: Ship):
 	# Torpedoes are always managed
 	update_torpedo_aim(target)
 	torpedo_fire_timer += 1.0 / Engine.physics_ticks_per_second
-	if torpedo_fire_timer >= torpedo_fire_interval:
+	# Stance turned the hull to bear these tubes: launch the moment they do.
+	if _skill_stance.wants_torpedoes() or torpedo_fire_timer >= torpedo_fire_interval:
 		torpedo_fire_timer = 0.0
 		try_fire_torpedoes(target)

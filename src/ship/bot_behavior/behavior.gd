@@ -604,36 +604,39 @@ func get_potential_target_weight(target: Ship) -> float:
 ## A newcomer takes over the priority only when this much nearer than the held one.
 const PRIORITY_SWITCH: float = 0.75
 
-## The enemy this bot answers for, held while dark: {ship, pos}, ship null for an
-## anonymous spawn reference. First pass: the nearest identified enemy or reference.
+## The enemy this bot answers for, held while dark: {ship, pos, ref}, ship null
+## for an anonymous spawn reference. The nearest of `priorities`.
 var priority: Dictionary = {}
+## Every enemy believed in, identified or still a spawn reference, nearest first.
+var priorities: Array[Dictionary] = []
+## The nearest this many priorities are the ones this ship answers for.
+const PRIORITY_COUNT: int = 3
 
 func update_priorities(server: GameServer) -> void:
 	if server == null or _ship.team == null:
 		return
 	var team_id: int = _ship.team.team_id
 	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
-	var cands: Array[Dictionary] = []
+	priorities = []
 	for b in server._team_belief(team_id):
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
-		cands.append({"ship": b.ship, "pos": b.pos})
+		priorities.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos)})
 	for r in server.anonymous_refs(team_id):
-		cands.append({"ship": null, "pos": r.pos, "ref": r.id})
-	var best: Dictionary = {}
-	var best_d: float = INF
-	var held_d: float = INF
-	var held_c: Dictionary = {}
-	for c in cands:
-		var d: float = here.distance_to(c.pos)
-		if d < best_d:
-			best_d = d
-			best = c
+		priorities.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos)})
+	priorities.sort_custom(func(x, y): return float(x.d) < float(y.d))
+	var held: Dictionary = {}
+	for c in priorities:
 		if not priority.is_empty() and c.ship == priority.ship and (c.ship != null or c.ref == priority.ref):
-			held_d = d
-			held_c = c
-	priority = held_c if is_finite(held_d) and best_d > held_d * PRIORITY_SWITCH else best
+			held = c
+			break
+	if priorities.is_empty():
+		priority = {}
+	elif not held.is_empty() and float(priorities[0].d) > float(held.d) * PRIORITY_SWITCH:
+		priority = held
+	else:
+		priority = priorities[0]
 
 func priority_target() -> Ship:
 	var p = priority.get("ship")
@@ -2285,7 +2288,10 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 		&"Chase":       intent = _skill_chase.execute(ctx, params)
 		&"Camp":        intent = _skill_camp.execute(ctx, params)
 		&"Engage":      intent = _skill_engage.execute(ctx, params)
-		&"Disengage":   intent = _skill_disengage.execute(ctx, params.merged({"cant_go_dark": cant_go_dark}))
+		&"Disengage":
+			# Unseen there is nothing to break contact with.
+			if ctx.ship.is_detected():
+				intent = _skill_disengage.execute(ctx, params.merged({"cant_go_dark": cant_go_dark}))
 		&"Hold":        intent = _skill_hold.execute(ctx, params)
 		&"Spot":
 			intent = _skill_hold.execute(ctx, params.merged({"hold": SkillHold.Mode.SPOT}))
@@ -2617,10 +2623,25 @@ func _post_process_allowed(ctx: SkillContext, intent: NavIntent) -> bool:
 	var off: float = absf(_normalize_angle(atan2(to_wp.x, to_wp.z) - _get_ship_heading()))
 	return off <= POST_PROCESS_MAX_WAYPOINT_OFFSET
 
+## Seconds in each skill (Hold by mode) since spawn, for the match metrics.
+var skill_time: Dictionary = {}
+var _skill_since: float = -1.0
+var _skill_key: String = ""
+
+func _log_skill_time(intent: NavIntent) -> void:
+	var now: float = SimClock.now()
+	if _skill_since >= 0.0:
+		skill_time[_skill_key] = float(skill_time.get(_skill_key, 0.0)) + now - _skill_since
+	_skill_since = now
+	_skill_key = "none" if intent == null else String(_active_skill_name)
+	if intent != null and _active_skill_name == &"Hold":
+		_skill_key += ":" + SkillHold.Mode.keys()[_skill_hold.mode]
+
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
 func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
 	var d := _doc()
+	_log_skill_time(intent)
 
 	# Camp holds a position lock; switching away has to drop it or the next
 	# activation reuses a stale spot.

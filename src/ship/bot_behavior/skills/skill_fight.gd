@@ -27,6 +27,8 @@ const PATROL_STEP_TURNS := 3.0
 const WALK_BUDGET_M := 6000.0
 ## A new station must beat the held one's score by this share.
 const SWITCH_GAIN := 0.1
+## A station on our own priority is worth this many on anyone else.
+const PRIORITY_GAIN := 2.0
 ## Aspect assumed for fire between ships whose heading over the hold is unknown.
 const TYPICAL_ASPECT_DEG := 45.0
 
@@ -96,7 +98,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		ids.append(e.get_instance_id())
 		var r: float = Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)
 		harm.append(maxf(SkillStance._expected(ship, e, r, TYPICAL_ASPECT_DEG).x, 0.0) / hp * float(b.weight))
-		value.append(_kill_rate(ship, e, friends) if is_live else 0.0)
+		var v: float = _kill_rate(ship, e, friends) if is_live else 0.0
+		value.append(v * PRIORITY_GAIN if e == ctx.behavior.priority_target() else v)
 	var danger := flank if pp.is_finite() else _belief_centre(ctx, belief, here)
 	_hull_key = NavigationMapManager.reach_hull_key(g)
 	var opts := {"det_r": band, "spot_r": reach, "shootable": live, "reach_field": field, "team": team_id,
@@ -128,7 +131,10 @@ func _walk_engage(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pack
 	if _has_station:
 		r = vis.engage_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
 	else:
-		r = vis.engage_walk(danger, here, true, pos, opts)
+		if seed.is_finite():
+			r = vis.engage_walk(seed, danger, false, pos, opts)
+		if not bool(r.get("found", false)):
+			r = vis.engage_walk(danger, here, true, pos, opts)
 		if not bool(r.get("has_start", false)):
 			r = vis.engage_walk(_nearest(pos, here), here, true, pos, opts)
 	_steps = int(r.get("steps", 0))

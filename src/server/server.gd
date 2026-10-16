@@ -1281,6 +1281,9 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		row["torpedo_taken"] = ship.stats.torpedo_taken
 		row["survival_time"] = _sunk_at.get(ship, match_elapsed)
 		row["won"] = ship.team.team_id == winning_team
+		var bc := ship.get_node_or_null("Modules/BotController")
+		if bc != null and bc.behavior != null:
+			row["skill_time"] = bc.behavior.skill_time
 		row["spawn_position"] = team_info["team"].get(entry["player_name"], {}).get("spawn_position", -1)
 		row["team_size"] = team_info["team"].values().filter(func(v): return int(v["team"]) == ship.team.team_id).size()
 		ships.append(row)

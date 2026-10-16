@@ -68,6 +68,9 @@ pub(crate) struct Expected {
     /// Shares of ap_dps / he_dps a repair party can win back.
     pub ap_heal: f32,
     pub he_heal: f32,
+    /// Shares of ap_dps / he_dps that are citadel hits.
+    pub ap_cit: f32,
+    pub he_cit: f32,
 }
 
 impl Expected {
@@ -142,6 +145,7 @@ impl DamageModel {
         let (hd_h, hd_v) = (at(4), at(5));
         let mut value = [0.0f32; 2];
         let mut heal = [h.repair[1]; 2];
+        let mut cit = [0.0f32; 2];
         let mut landed_he = 0.0f32;
         for (k, ammo) in s.ammo.iter().enumerate() {
             let Some(a) = ammo else { continue };
@@ -156,6 +160,7 @@ impl DamageModel {
             if let Some((heavy, medium)) = ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, hd_h, hd_v) {
                 let light = (1.0 - heavy - medium).max(0.0);
                 heal[k] = light * h.repair[0] + medium * h.repair[1] + heavy * h.repair[2];
+                cit[k] = heavy;
             }
             if k == 1 {
                 landed_he = l;
@@ -172,7 +177,7 @@ impl DamageModel {
         let he_ev = value[1] + fire_ev;
         let he_heal = if he_ev > 0.0 { (value[1] * heal[1] + fire_ev * h.repair[0]) / he_ev } else { heal[1] };
         Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate,
-            ap_heal: heal[0], he_heal })
+            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 } })
     }
 }
 
@@ -251,7 +256,7 @@ impl DamageModel {
         self.grids.retain(|k, _| k.0 != id && k.1 != id);
     }
 
-    /// {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps, ap_heal, he_heal}, or empty when either side is unknown.
+    /// {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps, ap_heal, he_heal, ap_cit, he_cit}, or empty when either side is unknown.
     #[func]
     fn get_expected(&self, shooter: i64, hull: i64, range: f32, aspect_deg: f32) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -263,6 +268,8 @@ impl DamageModel {
             d.set("he_dps", e.he_dps);
             d.set("ap_heal", e.ap_heal);
             d.set("he_heal", e.he_heal);
+            d.set("ap_cit", e.ap_cit);
+            d.set("he_cit", e.he_cit);
         }
         d
     }

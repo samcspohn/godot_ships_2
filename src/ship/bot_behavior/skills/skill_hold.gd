@@ -13,6 +13,10 @@ var mode: int = Mode.FIGHT
 var spot := SkillSpot.new()
 var fight := SkillFight.new()
 var cover := SkillCover.new()
+## The last SPOT or FIGHT station, so switching between them sweeps from where the other left off.
+var _seed := Vector2.INF
+var _seed_at: float = -INF
+const SEED_TTL_S := 30.0
 
 func reset() -> void:
 	spot.reset()
@@ -30,4 +34,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if m != mode:
 		current().reset()
 		mode = m
-	return current().execute(ctx, params)
+	var now: float = SimClock.now()
+	var pos := current()
+	pos.seed = _seed if m != Mode.COVER and now - _seed_at <= SEED_TTL_S else Vector2.INF
+	var intent := pos.execute(ctx, params)
+	if m != Mode.COVER and pos.has_station():
+		var st: Vector3 = pos.station_position()
+		_seed = Vector2(st.x, st.z)
+		_seed_at = now
+	return intent
