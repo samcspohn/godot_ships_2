@@ -7,6 +7,11 @@ const MIN_DIST: float = 60.0
 const MAX_DIST: float = 4000.0
 const FREE_SPEED: float = 400.0
 const FOLLOW_LOST_DELAY: float = 3.0
+const TAG_W: float = 100.0
+const DAMAGE_SEGMENT_S: float = 1.0
+const DAMAGE_DROP_RATE: float = 200.0
+const SPOT_COLOR := Color(1.0, 0.85, 0.0)
+const TEAM_COLORS: Array[Color] = [Color(0.2, 0.9, 0.4), Color(0.9, 0.2, 0.2)]
 
 ## -1 shows every ship; otherwise only this team's.
 var team_filter: int = -1
@@ -24,6 +29,9 @@ var _hud: Label
 var _listener: AudioListener3D
 var _looking: bool = false
 var _look_anchor: Vector2
+var _layer: CanvasLayer
+var _minimap: Minimap
+var _tags: Dictionary = {}
 
 
 func _ready() -> void:
@@ -40,6 +48,16 @@ func _ready() -> void:
 
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	_layer = layer
+	var panel := Control.new()
+	panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	panel.offset_left = -10.0
+	panel.offset_top = -10.0
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(panel)
+	_minimap = Minimap.new()
+	_minimap.spectator = true
+	panel.add_child(_minimap)
 	_hud = Label.new()
 	_hud.position = Vector2(20, 20)
 	_hud.add_theme_font_size_override("font_size", 18)
@@ -152,6 +170,127 @@ func _process(delta: float) -> void:
 	if dbg != null:
 		dbg.set_follow_ship(follow_ship if is_instance_valid(follow_ship) else null, owner_ship)
 	_hud.text = _hud_text()
+	_update_tags()
+
+
+# The world is only complete once the server has spawned ships into it; earlier snapshots miss the islands.
+func _snapshot_map() -> void:
+	await get_tree().process_frame
+	_minimap.take_map_snapshot(get_viewport())
+
+
+func _update_tags() -> void:
+	var players := get_tree().root.get_node_or_null("Server/GameWorld/Players")
+	if players != null:
+		for s in players.get_children():
+			if s is Ship and not _tags.has(s):
+				if _tags.is_empty():
+					_snapshot_map()
+				_tags[s] = _make_tag(s)
+				_minimap.register_ship(s)
+	_minimap.set_followed(follow_ship if is_instance_valid(follow_ship) else null)
+	var rect := get_viewport().get_visible_rect()
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var dt: float = get_process_delta_time()
+	for s in _tags.keys():
+		var tag: Dictionary = _tags[s]
+		if not is_instance_valid(s):
+			tag.root.queue_free()
+			_tags.erase(s)
+			continue
+		var hc: HPManager = s.health_controller
+		var hp: float = hc.current_hp
+		var at: Vector3 = s.global_position + Vector3(0, 20, 0)
+		var shown: bool = s.is_alive() and not is_position_behind(at)
+		var p := unproject_position(at) if shown else Vector2.ZERO
+		shown = shown and rect.has_point(p)
+		tag.root.visible = shown
+		var segs: Array = tag.segs
+		if not shown:
+			tag.prev = hp
+			segs.clear()
+			continue
+		tag.root.position = p - Vector2(TAG_W / 2.0, 40.0)
+		tag.bar.value = 100.0 * hp / maxf(hc.max_hp, 1.0)
+		tag.hp.text = "%d/%d" % [int(hp), int(hc.max_hp)]
+		tag.spot.visible = s.visible_to_enemy
+		# Same trailing damage strip as the game UI: one segment per 1 s window of hits.
+		if hp < tag.prev and (segs.is_empty() or now >= segs[-1].expire):
+			segs.append({"hp": tag.prev, "expire": now + DAMAGE_SEGMENT_S})
+		tag.prev = hp
+		while not segs.is_empty() and segs[0].expire <= now:
+			segs.pop_front()
+		if not segs.is_empty() and hp >= segs[0].hp:
+			segs.clear()
+		var want: float = 100.0 * (segs[0].hp if not segs.is_empty() else hp) / maxf(hc.max_hp, 1.0)
+		tag.dmg.value = want if want >= tag.dmg.value else maxf(want, tag.dmg.value - DAMAGE_DROP_RATE * dt)
+
+
+func _make_tag(s: Ship) -> Dictionary:
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.z_index = -1
+	root.size = Vector2(TAG_W, 50)
+	_layer.add_child(root)
+	var name_label := Label.new()
+	name_label.text = s.name
+	name_label.size = Vector2(TAG_W, 15)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 12)
+	name_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	outline(name_label)
+	root.add_child(name_label)
+	var dmg := _tag_bar(root, _rounded(Color(0.09, 0.09, 0.12, 0.9), Color(0.5, 0.5, 0.5)),
+		_rounded(Color(0.95, 0.95, 0.95, 0.9)))
+	var transparent := StyleBoxFlat.new()
+	transparent.bg_color = Color(0, 0, 0, 0)
+	var bar := _tag_bar(root, transparent, _rounded(TEAM_COLORS[clampi(s.team.team_id, 0, 1)]))
+	var hp := Label.new()
+	hp.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hp.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hp.grow_vertical = Control.GROW_DIRECTION_BOTH
+	hp.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp.add_theme_font_size_override("font_size", 10)
+	hp.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	outline(hp)
+	bar.add_child(hp)
+	var spot := ColorRect.new()
+	spot.color = SPOT_COLOR
+	spot.position = Vector2(-12, 25)
+	spot.size = Vector2(10, 10)
+	spot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(spot)
+	var full: float = s.health_controller.current_hp
+	return {"root": root, "bar": bar, "dmg": dmg, "hp": hp, "spot": spot, "prev": full, "segs": []}
+
+
+static func outline(l: Label) -> void:
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 2)
+
+
+func _tag_bar(root: Control, bg: StyleBox, fill: StyleBox) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.show_percentage = false
+	bar.value = 100.0
+	bar.position = Vector2(0, 25)
+	bar.size = Vector2(TAG_W, 10)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(bar)
+	return bar
+
+
+func _rounded(color: Color, border := Color(0, 0, 0, 0)) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = color
+	sb.set_corner_radius_all(5)
+	if border.a > 0.0:
+		sb.border_color = border
+		sb.set_border_width_all(2)
+	return sb
 
 
 func _orbit(delta: float) -> void:

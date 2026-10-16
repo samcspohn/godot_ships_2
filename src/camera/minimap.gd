@@ -53,6 +53,8 @@ var draw_circles: bool = true
 # F10 A/B: Rust MinimapCanvas vs the GDScript draw path below.
 var use_native: bool = true
 var native_canvas: MinimapCanvas
+## No own ship: both teams drawn as friendlies, the followed ship as the player.
+var spectator: bool = false
 
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
@@ -108,6 +110,7 @@ func setup_minimap():
 	native_canvas.map_size = minimap_sizes[mm_idx]
 	native_canvas.max_size = minimap_sizes.back()
 	native_canvas.world_rect = world_rect
+	native_canvas.spectator = spectator
 	add_child(native_canvas)
 	if is_instance_valid(player_ship):
 		native_canvas.set_player_ship(player_ship)
@@ -198,7 +201,7 @@ func take_map_snapshot(viewport: Viewport) -> void:
 	# Only take a snapshot if we're on the server and don't have one already
 	if map_texture == null:
 		server_take_map_snapshot(viewport)
-		background.texture = map_texture
+	background.texture = map_texture
 
 # Update world_to_minimap_position to ensure correct scaling
 func world_to_minimap_position(world_pos: Vector3) -> Vector2:
@@ -219,6 +222,10 @@ func register_player_ship(ship: Node3D) -> void:
 	player_ship = ship
 	native_canvas.set_player_ship(ship)
 	print("Player ship registered at: ", ship.global_position) # Debug info
+
+func set_followed(ship: Node3D) -> void:
+	player_ship = ship
+	native_canvas.set_player_ship(ship)
 
 func register_ship(ship: Node3D) -> void:
 	if tracked_ships.find_custom(func (a): return a.ship == ship) == -1:
@@ -345,7 +352,7 @@ func _input(_event: InputEvent) -> void:
 		Ship.native_sync = not Ship.native_sync
 		print("[sync] parser: %s" % ("rust" if Ship.native_sync else "gdscript"))
 		return
-	if key != null and key.pressed and not key.echo and key.keycode == KEY_F10:
+	if key != null and key.pressed and not key.echo and key.keycode == KEY_F10 and not spectator:
 		use_native = not use_native
 		print("[minimap] renderer: %s" % ("rust" if use_native else "gdscript"))
 		_apply_native_toggle()

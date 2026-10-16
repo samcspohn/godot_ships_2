@@ -1036,6 +1036,7 @@ func setup_ship_ui(ship):
 	var ship_hp_label: Label
 	var target_indicator: ColorRect
 	var status_indicator: HBoxContainer
+	var spot_indicator: ColorRect
 
 	if is_enemy:
 		name_label = ship_container.get_node("EnemyNameLabel")
@@ -1052,6 +1053,17 @@ func setup_ship_ui(ship):
 		target_indicator = ship_container.get_node("FriendlyTargetIndicator")
 		status_indicator = ship_container.get_node("FriendlyStatus")
 		status_indicator.get_child(0).queue_free()
+		spot_indicator = ColorRect.new()
+		spot_indicator.color = SpectatorCamera.SPOT_COLOR
+		spot_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		spot_indicator.anchor_top = 1.0
+		spot_indicator.anchor_bottom = 1.0
+		spot_indicator.offset_left = -12.0
+		spot_indicator.offset_right = -2.0
+		spot_indicator.offset_top = -25.0
+		spot_indicator.offset_bottom = -15.0
+		spot_indicator.visible = false
+		ship_container.add_child(spot_indicator)
 
 	# Pre-build consumable status widgets once at registration so update_ship_ui
 	# only needs to toggle .visible and write label text — never add/remove nodes.
@@ -1097,6 +1109,8 @@ func setup_ship_ui(ship):
 				"timer": widget.get_node("Box/TimerLabel") as Label,
 			})
 
+	SpectatorCamera.outline(name_label)
+	SpectatorCamera.outline(ship_hp_label)
 	# Set the ship name
 	name_label.text = ship.name
 	ship_hp_label.text = "%d/%d" % [ship.health_controller.current_hp, ship.health_controller.max_hp]
@@ -1120,6 +1134,7 @@ func setup_ship_ui(ship):
 		"hp_label": ship_hp_label,
 		"target_indicator": target_indicator,
 		"status": status_indicator,
+		"spot": spot_indicator,
 		"normal_icons": normal_icons,
 		"alt_widgets": alt_widgets,
 		"alt_refs": alt_refs,
@@ -1258,6 +1273,7 @@ func update_ship_ui(delta: float = 0.0):
 						bar.value = max(target, bar.value - DAMAGE_BAR_DROP_RATE * delta)
 
 			if ship.team.team_id == own_team_id: # friendly
+				ui.spot.visible = ship.visible_to_enemy
 				var current_mode: String = ui.get("consumable_mode", "")
 				var normal_icons: Array = ui["normal_icons"]
 				var alt_widgets: Array = ui["alt_widgets"]

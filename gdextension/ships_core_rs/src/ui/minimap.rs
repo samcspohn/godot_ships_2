@@ -1,7 +1,9 @@
 use std::f32::consts::{PI, TAU};
 
 use godot::builtin::{AnyArray, AnyDictionary};
-use godot::classes::{Control, Font, IControl, Node3D, Object, Resource, Script, Texture2D, ThemeDb};
+use godot::classes::{
+    Control, Font, IControl, Node3D, Object, Resource, Script, Texture2D, ThemeDb,
+};
 use godot::global::HorizontalAlignment;
 use godot::prelude::*;
 
@@ -13,6 +15,8 @@ use crate::variant_cast::VariantCast;
 const SHIP_MARKER_SIZE: f32 = 35.0;
 const CONSUMABLE_ICON_SIZE: f32 = 28.0;
 const SHIP_NAME_FONT_SIZE: f32 = 10.0;
+const HP_BAR_W: f32 = 70.0;
+const HP_BAR_H: f32 = 3.0;
 const TORPEDO_MARKER_SIZE: f32 = 6.0;
 const AIRCRAFT_MARKER_SIZE: f32 = 25.0;
 const FOV_ARC_SEGMENTS: usize = 32;
@@ -35,7 +39,7 @@ const SQUADRON_WAYPOINT_COLOR: Color = Color::from_rgba(1.0, 1.0, 1.0, 1.0);
 const SQUADRON_ATTACK_COLOR: Color = Color::from_rgba(1.0, 0.35, 0.0, 1.0);
 
 names!(
-    health_controller, is_alive, is_dead, team, team_id, visible_to_enemy, hydro_detected,
+    health_controller, current_hp, max_hp, is_alive, is_dead, team, team_id, visible_to_enemy, hydro_detected,
     radar_detected, air_detected, det_los, det_hydro, det_radar, det_air, consumable_manager,
     get_active_icons, equipped_consumables, short_name, ship_name, artillery_controller, guns,
     get_params, _range, torpedo_controller, secondary_controller, sub_controllers,
@@ -81,6 +85,7 @@ struct ShipEntry {
     name: GString,
     locked: bool,
     dead: bool,
+    hp: Option<f32>,
 }
 
 #[derive(GodotClass)]
@@ -96,6 +101,9 @@ pub struct MinimapCanvas {
     aim_point: Vector3,
     #[var]
     draw_circles: bool,
+    /// Both teams' view: team 0 green, team 1 red, nothing greyed, every ship's spotted aura.
+    #[var]
+    spectator: bool,
     player: Option<Gd<Node3D>>,
     tracked: Vec<Tracked>,
     planes: Vec<Plane>,
@@ -111,9 +119,13 @@ impl IControl for MinimapCanvas {
         Self {
             map_size: 300.0,
             max_size: 1600.0,
-            world_rect: Rect2::new(Vector2::new(-17500.0, -17500.0), Vector2::new(35000.0, 35000.0)),
+            world_rect: Rect2::new(
+                Vector2::new(-17500.0, -17500.0),
+                Vector2::new(35000.0, 35000.0),
+            ),
             aim_point: Vector3::ZERO,
             draw_circles: true,
+            spectator: false,
             player: None,
             tracked: Vec::new(),
             planes: Vec::new(),
@@ -142,7 +154,12 @@ impl MinimapCanvas {
             return;
         }
         let (pos, rot) = (ship.get_global_position(), ship.get_rotation().y);
-        self.tracked.push(Tracked { ship, init: false, pos, rot });
+        self.tracked.push(Tracked {
+            ship,
+            init: false,
+            pos,
+            rot,
+        });
     }
 
     #[func]
@@ -157,8 +174,14 @@ impl MinimapCanvas {
     }
 }
 
+fn hp_frac(h: &Gd<Object>, n: &Names) -> f32 {
+    h.get(&n.current_hp).to_f32() / h.get(&n.max_hp).to_f32().max(1.0)
+}
+
 fn obj(v: Variant) -> Option<Gd<Object>> {
-    v.try_to::<Gd<Object>>().ok().filter(|o| o.is_instance_valid())
+    v.try_to::<Gd<Object>>()
+        .ok()
+        .filter(|o| o.is_instance_valid())
 }
 
 fn call0(o: &Gd<Object>, m: &StringName) -> Variant {
@@ -189,7 +212,9 @@ fn params_range(o: &Gd<Object>, n: &Names) -> f32 {
 }
 
 fn active_consumable(ship: &Gd<Object>, class: &StringName, field: &StringName, n: &Names) -> f32 {
-    let Some(cm) = sub(ship, &n.consumable_manager) else { return -1.0 };
+    let Some(cm) = sub(ship, &n.consumable_manager) else {
+        return -1.0;
+    };
     for item in cm.get(&n.equipped_consumables).to_any_array().iter_shared() {
         if let Some(item) = obj(item) {
             if script_is(&item, class, n) {
@@ -201,10 +226,17 @@ fn active_consumable(ship: &Gd<Object>, class: &StringName, field: &StringName, 
 }
 
 fn gather_aviation(
-    n: &Names, s: &Gd<Node3D>, is_player: bool, friendly: bool,
-    planes: &mut Vec<Plane>, orbits: &mut Vec<Orbit>, paths: &mut Vec<SquadronPath>,
+    n: &Names,
+    s: &Gd<Node3D>,
+    is_player: bool,
+    friendly: bool,
+    planes: &mut Vec<Plane>,
+    orbits: &mut Vec<Orbit>,
+    paths: &mut Vec<SquadronPath>,
 ) {
-    let Some(av) = sub(&s.clone().upcast(), &n.aviation_controller) else { return };
+    let Some(av) = sub(&s.clone().upcast(), &n.aviation_controller) else {
+        return;
+    };
     let color = if is_player {
         PLAYER_COLOR
     } else if friendly {
@@ -212,7 +244,9 @@ fn gather_aviation(
     } else {
         ENEMY_COLOR.lightened(AVIATION_COLOR_LIGHTEN)
     };
-    let Ok(active) = av.get(&n.active_squadrons).try_to::<AnyDictionary>() else { return };
+    let Ok(active) = av.get(&n.active_squadrons).try_to::<AnyDictionary>() else {
+        return;
+    };
     let squadrons = av.get(&n.squadrons).to_any_array();
     let params = av.get(&n.params).to_any_array();
 
@@ -222,20 +256,36 @@ fn gather_aviation(
             continue;
         }
         let idx = idx as usize;
-        let Some(sq) = squadrons.get(idx).and_then(obj) else { continue };
+        let Some(sq) = squadrons.get(idx).and_then(obj) else {
+            continue;
+        };
         let aircraft = sq.get(&n.aircraft).to_any_array();
         let attack_point = sq.get(&n.attack_point).try_to::<Vector2>().ok();
 
         let mut orbit: Option<(Vector3, f32)> = None;
-        if let Some(sp) = params.get(idx).and_then(obj).and_then(|pw| obj(call0(&pw, &n.p))) {
-            let holds_station = aircraft.get(0).and_then(obj).is_some_and(|a| script_is(&a, &n.cls_spotter, n));
+        if let Some(sp) = params
+            .get(idx)
+            .and_then(obj)
+            .and_then(|pw| obj(call0(&pw, &n.p)))
+        {
+            let holds_station = aircraft
+                .get(0)
+                .and_then(obj)
+                .is_some_and(|a| script_is(&a, &n.cls_spotter, n));
             if let Some(ap) = attack_point {
                 if holds_station {
-                    orbit = Some((Vector3::new(ap.x, 0.0, ap.y), sp.get(&n.circle_range).to_f32()));
+                    orbit = Some((
+                        Vector3::new(ap.x, 0.0, ap.y),
+                        sp.get(&n.circle_range).to_f32(),
+                    ));
                 }
             } else if !sq.get(&n.returning).to_bool() {
                 let idle = sq.get(&n.idle_pos).try_to::<Vector2>().unwrap_or_default();
-                let r = if sq.get(&n.holding_attack).to_bool() { &n.circle_range } else { &n.idle_radius };
+                let r = if sq.get(&n.holding_attack).to_bool() {
+                    &n.circle_range
+                } else {
+                    &n.idle_radius
+                };
                 orbit = Some((Vector3::new(idle.x, 0.0, idle.y), sp.get(r).to_f32()));
             }
         }
@@ -247,24 +297,41 @@ fn gather_aviation(
                     let p = nd.get_global_position();
                     Vector2::new(p.x, p.z)
                 });
-            let waypoints = sq.get(&n.waypoints).to_any_array().iter_shared()
+            let waypoints = sq
+                .get(&n.waypoints)
+                .to_any_array()
+                .iter_shared()
                 .filter_map(|v| v.try_to::<Vector2>().ok())
                 .collect();
-            paths.push(SquadronPath { base, waypoints, attack_point });
+            paths.push(SquadronPath {
+                base,
+                waypoints,
+                attack_point,
+            });
         }
 
         let mut any_plane_shown = false;
         for v in aircraft.iter_shared() {
-            let Some(plane) = obj(v).and_then(|o| o.try_cast::<Node3D>().ok()) else { continue };
+            let Some(plane) = obj(v).and_then(|o| o.try_cast::<Node3D>().ok()) else {
+                continue;
+            };
             if !plane.is_visible() {
                 continue;
             }
             any_plane_shown = true;
-            planes.push(Plane { pos: plane.get_global_position(), rot: plane.get_rotation().y, color });
+            planes.push(Plane {
+                pos: plane.get_global_position(),
+                rot: plane.get_rotation().y,
+                color,
+            });
         }
         if let Some((center, radius)) = orbit {
             if any_plane_shown && radius > 0.0 {
-                orbits.push(Orbit { center, radius, color });
+                orbits.push(Orbit {
+                    center,
+                    radius,
+                    color,
+                });
             }
         }
     }
@@ -301,10 +368,21 @@ impl Painter {
             return;
         }
         let (c, r) = (self.to_mm(at), range * self.scale);
-        self.c.draw_arc_ex(c, r, 0.0, TAU, 64, color).width(2.0).done();
+        self.c
+            .draw_arc_ex(c, r, 0.0, TAU, 64, color)
+            .width(2.0)
+            .done();
     }
 
-    fn dashed_circle(&mut self, at: Vector3, range: f32, color: Color, dash: f32, gap: f32, width: f32) {
+    fn dashed_circle(
+        &mut self,
+        at: Vector3,
+        range: f32,
+        color: Color,
+        dash: f32,
+        gap: f32,
+        width: f32,
+    ) {
         if !self.circles {
             return;
         }
@@ -328,7 +406,7 @@ impl Painter {
         self.c.draw_multiline_ex(&pts, color).width(width).done();
     }
 
-    fn ship(&mut self, at: Vector3, rot: f32, color: Color, name: &GString) {
+    fn ship(&mut self, at: Vector3, rot: f32, color: Color, name: &GString, hp: Option<f32>) {
         let p = self.to_mm(at);
         if self.outside(p) {
             return;
@@ -343,15 +421,30 @@ impl Painter {
         .map(|v| v.rotated(rot) + p)
         .collect();
         self.c.draw_colored_polygon(&pts, color);
+        let mut below = p.y + m / 2.0 + 2.0;
         if !name.is_empty() {
-            self.ship_name(p, name, color);
+            below = self.ship_name(p, name, color);
+        }
+        if let Some(hp) = hp {
+            let (w, h) = (HP_BAR_W * self.unit, (HP_BAR_H * self.unit).max(2.0));
+            let r = Rect2::new(Vector2::new(p.x - w / 2.0, below + 1.0), Vector2::new(w, h));
+            self.c.draw_rect(r, Color::from_rgba(0.0, 0.0, 0.0, 0.6));
+            self.c.draw_rect(
+                Rect2::new(r.position, Vector2::new(w * hp.clamp(0.0, 1.0), h)),
+                color,
+            );
         }
     }
 
-    fn ship_name(&mut self, p: Vector2, name: &GString, color: Color) {
-        let Some(font) = self.font.clone() else { return };
+    /// Returns the y just below the drawn name.
+    fn ship_name(&mut self, p: Vector2, name: &GString, color: Color) -> f32 {
+        let below = p.y + self.marker_size() / 2.0 + 8.0;
+        let Some(font) = self.font.clone() else {
+            return below;
+        };
         let font_size = ((SHIP_NAME_FONT_SIZE * self.unit) as i32).max(8);
-        let size = font.get_string_size_ex(name)
+        let size = font
+            .get_string_size_ex(name)
             .alignment(HorizontalAlignment::CENTER)
             .width(-1.0)
             .font_size(font_size)
@@ -359,12 +452,14 @@ impl Painter {
         let pos = Vector2::new(p.x - size.x / 2.0, p.y + self.marker_size() / 2.0 + 6.0);
         let mut text_color = color.lerp(Color::WHITE, 0.7);
         text_color.a = 0.9;
-        self.c.draw_string_ex(&font, pos, name)
+        self.c
+            .draw_string_ex(&font, pos, name)
             .alignment(HorizontalAlignment::LEFT)
             .width(-1.0)
             .font_size(font_size)
             .modulate(text_color)
             .done();
+        pos.y + font.get_descent_ex().font_size(font_size).done()
     }
 
     fn tracked_ship(&mut self, e: &ShipEntry) {
@@ -372,12 +467,19 @@ impl Painter {
         if e.locked {
             let m = self.marker_size();
             if self.circles {
-                self.c.draw_arc_ex(p, m * 0.9, 0.0, TAU, 32, HALF_WHITE).width(1.0).antialiased(true).done();
+                self.c
+                    .draw_arc_ex(p, m * 0.9, 0.0, TAU, 32, HALF_WHITE)
+                    .width(1.0)
+                    .antialiased(true)
+                    .done();
             }
             let fwd = Vector2::new(0.0, -1.0).rotated(e.rot);
-            self.c.draw_line_ex(p, p + fwd * m * 5.0, HALF_WHITE).width(1.0).done();
+            self.c
+                .draw_line_ex(p, p + fwd * m * 5.0, HALF_WHITE)
+                .width(1.0)
+                .done();
         }
-        self.ship(e.pos, e.rot, e.color, &e.name);
+        self.ship(e.pos, e.rot, e.color, &e.name, e.hp);
     }
 
     fn aura(&mut self, at: Vector3, color: Color) {
@@ -402,7 +504,11 @@ impl Painter {
         for (i, v) in icons.iter_shared().enumerate() {
             if let Ok(tex) = v.try_to::<Gd<Texture2D>>() {
                 let x = start_x + i as f32 * (icon_size + spacing);
-                self.c.draw_texture_rect(&tex, Rect2::new(Vector2::new(x, y), Vector2::new(icon_size, icon_size)), false);
+                self.c.draw_texture_rect(
+                    &tex,
+                    Rect2::new(Vector2::new(x, y), Vector2::new(icon_size, icon_size)),
+                    false,
+                );
             }
         }
     }
@@ -432,15 +538,22 @@ impl Painter {
         let mut prev = base;
         for wp in &path.waypoints {
             let w = self.to_mm(Vector3::new(wp.x, 0.0, wp.y));
-            self.c.draw_line_ex(prev, w, SQUADRON_WAYPOINT_COLOR).width(PATH_LINE_WIDTH).done();
+            self.c
+                .draw_line_ex(prev, w, SQUADRON_WAYPOINT_COLOR)
+                .width(PATH_LINE_WIDTH)
+                .done();
             if self.circles {
-                self.c.draw_circle(w, WAYPOINT_MARKER_RADIUS, SQUADRON_WAYPOINT_COLOR);
+                self.c
+                    .draw_circle(w, WAYPOINT_MARKER_RADIUS, SQUADRON_WAYPOINT_COLOR);
             }
             prev = w;
         }
         if let (true, Some(ap)) = (path.waypoints.is_empty(), path.attack_point) {
             let a = self.to_mm(Vector3::new(ap.x, 0.0, ap.y));
-            self.c.draw_line_ex(base, a, SQUADRON_ATTACK_COLOR).width(PATH_LINE_WIDTH).done();
+            self.c
+                .draw_line_ex(base, a, SQUADRON_ATTACK_COLOR)
+                .width(PATH_LINE_WIDTH)
+                .done();
         }
     }
 
@@ -458,7 +571,10 @@ impl Painter {
         self.c.draw_colored_polygon(&pts, FOV_ARC_COLOR);
         let outline = Color::from_rgba(FOV_ARC_COLOR.r, FOV_ARC_COLOR.g, FOV_ARC_COLOR.b, 0.5);
         if self.circles {
-            self.c.draw_arc_ex(center, r, a0, a1, FOV_ARC_SEGMENTS as i32, outline).width(1.5).done();
+            self.c
+                .draw_arc_ex(center, r, a0, a1, FOV_ARC_SEGMENTS as i32, outline)
+                .width(1.5)
+                .done();
         }
         let e0 = center + Vector2::new(a0.cos(), a0.sin()) * r;
         let e1 = center + Vector2::new(a1.cos(), a1.sin()) * r;
@@ -470,9 +586,11 @@ impl Painter {
 impl MinimapCanvas {
     fn tick_inner(&mut self) {
         let n = &self.n;
-        self.tracked.retain(|t| t.ship.is_instance_valid() && t.ship.is_inside_tree());
+        self.tracked
+            .retain(|t| t.ship.is_instance_valid() && t.ship.is_inside_tree());
         for t in &mut self.tracked {
-            let alive = sub(&t.ship.clone().upcast(), &n.health_controller).is_some_and(|h| call0(&h, &n.is_alive).to_bool());
+            let alive = sub(&t.ship.clone().upcast(), &n.health_controller)
+                .is_some_and(|h| call0(&h, &n.is_alive).to_bool());
             if alive {
                 t.pos = t.ship.get_global_position();
                 t.rot = t.ship.get_rotation().y;
@@ -483,13 +601,28 @@ impl MinimapCanvas {
         self.orbits.clear();
         self.paths.clear();
         let player = self.player.clone().filter(|p| p.is_instance_valid());
-        let player_team = player.as_ref().and_then(|p| team_id(&p.clone().upcast(), n));
+        let player_team = player
+            .as_ref()
+            .and_then(|p| team_id(&p.clone().upcast(), n));
         let mut ships: Vec<Gd<Node3D>> = self.tracked.iter().map(|t| t.ship.clone()).collect();
         ships.extend(player.clone());
         for s in &ships {
             let is_player = player.as_ref() == Some(s);
-            let friendly = player_team.is_some() && team_id(&s.clone().upcast(), n) == player_team;
-            gather_aviation(n, s, is_player, friendly, &mut self.planes, &mut self.orbits, &mut self.paths);
+            let tid = team_id(&s.clone().upcast(), n);
+            let friendly = if self.spectator {
+                tid == Some(0)
+            } else {
+                player_team.is_some() && tid == player_team
+            };
+            gather_aviation(
+                n,
+                s,
+                is_player,
+                friendly,
+                &mut self.planes,
+                &mut self.orbits,
+                &mut self.paths,
+            );
         }
         self.base_mut().queue_redraw();
     }
@@ -505,36 +638,69 @@ impl MinimapCanvas {
             circles: self.draw_circles,
             font: ThemeDb::singleton().get_fallback_font(),
         };
-        pt.c.draw_rect_ex(Rect2::new(Vector2::ZERO, Vector2::new(mm, mm)), HALF_WHITE).filled(false).width(2.0).done();
+        pt.c.draw_rect_ex(Rect2::new(Vector2::ZERO, Vector2::new(mm, mm)), HALF_WHITE)
+            .filled(false)
+            .width(2.0)
+            .done();
 
         let n = &self.n;
-        let Some(player) = self.player.clone().filter(|p| p.is_instance_valid()) else { return };
-        let ship: Gd<Object> = player.clone().upcast();
-        let player_pos = player.get_global_position();
-        let player_team = team_id(&ship, n);
+        let spec = self.spectator;
+        let player = self.player.clone().filter(|p| p.is_instance_valid());
+        if player.is_none() && !spec {
+            return;
+        }
+        let player_team = player
+            .as_ref()
+            .and_then(|p| team_id(&p.clone().upcast(), n));
 
         let viewport = self.base().get_viewport();
         let cam = viewport.as_ref().and_then(|v| v.get_camera_3d());
-        let bc = cam.clone().filter(|c| script_is(&c.clone().upcast(), &n.cls_battle_camera, n));
+        let bc = cam
+            .clone()
+            .filter(|c| script_is(&c.clone().upcast(), &n.cls_battle_camera, n));
         let bc_obj: Option<Gd<Object>> = bc.clone().map(|c| c.upcast());
         let follow = bc_obj.as_ref().and_then(|b| sub(b, &n.follow_ship));
-        let arc_ship = follow.clone().unwrap_or_else(|| ship.clone());
-        let arc_range = sub(&arc_ship, &n.artillery_controller).map_or(0.0, |a| params_range(&a, n));
+        let arc_ship = follow
+            .clone()
+            .or_else(|| player.clone().map(|p| p.upcast()));
+        let arc_range = arc_ship
+            .as_ref()
+            .and_then(|s| sub(s, &n.artillery_controller))
+            .map_or(0.0, |a| params_range(&a, n));
 
-        if let (Some(bc), Some(b)) = (&bc, &bc_obj) {
-            let free = b.get(&n.spectate_free).to_bool();
-            let center = if free {
-                Some(bc.get_global_position())
+        let arc_cam = if spec { cam.clone() } else { bc.clone() };
+        if let Some(c) = &arc_cam {
+            let center = if spec {
+                Some(
+                    player
+                        .as_ref()
+                        .map_or(c.get_global_position(), |p| p.get_global_position()),
+                )
+            } else if bc_obj
+                .as_ref()
+                .is_some_and(|b| b.get(&n.spectate_free).to_bool())
+            {
+                Some(c.get_global_position())
             } else {
-                follow.clone().and_then(|f| f.try_cast::<Node3D>().ok()).map(|f| f.get_global_position())
+                follow
+                    .clone()
+                    .and_then(|f| f.try_cast::<Node3D>().ok())
+                    .map(|f| f.get_global_position())
             };
             if let (Some(center), Some(vp)) = (center, &viewport) {
                 let size = vp.get_visible_rect().size;
-                pt.fov_arc(pt.to_mm(center), arc_range, bc.get_rotation().y, bc.get_fov(), size.x / size.y);
+                pt.fov_arc(
+                    pt.to_mm(center),
+                    arc_range,
+                    c.get_rotation().y,
+                    c.get_fov(),
+                    size.x / size.y,
+                );
             }
         }
 
-        let locked_id = bc_obj.as_ref()
+        let locked_id = bc_obj
+            .as_ref()
             .filter(|b| b.get(&n.target_lock_enabled).to_bool())
             .and_then(|b| sub(b, &n.locked_target))
             .map(|t| t.instance_id());
@@ -551,7 +717,7 @@ impl MinimapCanvas {
             let hydro = o.get(&n.hydro_detected).to_bool();
             let air = o.get(&n.air_detected).to_bool();
             let tid = team_id(&o, n);
-            let enemy = tid != player_team;
+            let enemy = !spec && tid != player_team;
             if enemy && (visible || hydro || radar || air) {
                 t.init = true;
             }
@@ -559,9 +725,17 @@ impl MinimapCanvas {
                 continue;
             }
             let friendly = !enemy && tid.is_some();
-            let dead = sub(&o, &n.health_controller).is_some_and(|h| call0(&h, &n.is_dead).to_bool());
+            let hc = sub(&o, &n.health_controller);
+            let dead = hc.as_ref().is_some_and(|h| call0(h, &n.is_dead).to_bool());
+            let hp = hc.as_ref().filter(|_| !dead).map(|h| hp_frac(h, n));
             let color = if dead {
                 Color::from_rgba(0.2, 0.2, 0.2, 1.0)
+            } else if spec {
+                if tid == Some(0) {
+                    FRIENDLY_COLOR
+                } else {
+                    ENEMY_COLOR
+                }
             } else if friendly {
                 FRIENDLY_COLOR
             } else if visible {
@@ -577,7 +751,7 @@ impl MinimapCanvas {
             };
 
             let mut icons = VarArray::new().upcast_any_array();
-            if friendly {
+            if friendly && !dead {
                 let det = if o.get(&n.det_radar).to_bool() {
                     Some(RADAR_RANGE_COLOR)
                 } else if o.get(&n.det_hydro).to_bool() {
@@ -597,7 +771,11 @@ impl MinimapCanvas {
                 }
             }
             let short: GString = o.get(&n.short_name).try_to().unwrap_or_default();
-            let name = if short.is_empty() { o.get(&n.ship_name).try_to().unwrap_or_default() } else { short };
+            let name = if short.is_empty() {
+                o.get(&n.ship_name).try_to().unwrap_or_default()
+            } else {
+                short
+            };
             entries.push(ShipEntry {
                 pos: t.pos,
                 rot: -t.rot,
@@ -606,60 +784,12 @@ impl MinimapCanvas {
                 name,
                 locked: locked_id == Some(o.instance_id()),
                 dead,
+                hp,
             });
         }
 
-        if let Some(art) = sub(&ship, &n.artillery_controller) {
-            if art.get(&n.guns).to_any_array().len() > 0 {
-                pt.range_circle(player_pos, params_range(&art, n), HALF_WHITE);
-            }
-        }
-        if let Some(tc) = sub(&ship, &n.torpedo_controller) {
-            pt.range_circle(player_pos, params_range(&tc, n), HALF_WHITE);
-        }
-        if let Some(sc) = sub(&ship, &n.secondary_controller) {
-            for c in sc.get(&n.sub_controllers).to_any_array().iter_shared().filter_map(obj) {
-                pt.range_circle(player_pos, params_range(&c, n), DARK_KHAKI);
-            }
-        }
-        if let Some(av) = sub(&ship, &n.aviation_controller) {
-            let mut seen: Vec<f32> = Vec::new();
-            for p in av.get(&n.params).to_any_array().iter_shared().filter_map(obj) {
-                let r = p.get(&n._range).to_f32();
-                if !seen.contains(&r) {
-                    seen.push(r);
-                    pt.range_circle(player_pos, r, AIR_CIRCLE_COLOR);
-                }
-            }
-        }
-        if let Some(aa) = sub(&ship, &n.aaa_controller).and_then(|a| obj(call0(&a, &n.get_params))) {
-            let r = aa.get(&n._range).to_f32();
-            if r > 0.0 && aa.get(&n.dps).to_f32() > 0.0 {
-                pt.range_circle(player_pos, r, AIR_RANGE_COLOR);
-            }
-        }
-
-        if let Some(conc) = sub(&ship, &n.concealment) {
-            pt.dashed_circle(player_pos, call0(&conc, &n.get_concealment).to_f32(), HALF_WHITE, 8.0, 4.0, 2.0);
-            let air = sub(&conc, &n.params).and_then(|p| obj(call0(&p, &n.p))).map_or(0.0, |p| p.get(&n.air_radius).to_f32());
-            if air > 0.0 {
-                pt.dashed_circle(player_pos, air, HALF_WHITE, 8.0, 4.0, 3.0);
-            }
-        }
-
-        let torp_range = active_consumable(&ship, &n.cls_hydro, &n.torpedo_detection_range, n);
-        if torp_range > 0.0 && pt.circles {
-            let fill = HYDRO_RANGE_COLOR.with_alpha(0.2);
-            let c = pt.to_mm(player_pos);
-            pt.c.draw_circle(c, torp_range * pt.scale, fill);
-        }
-        let hydro_range = active_consumable(&ship, &n.cls_hydro, &n.spotting_range, n);
-        if hydro_range > 0.0 {
-            pt.dashed_circle(player_pos, hydro_range, HYDRO_RANGE_COLOR, 3.0, 4.0, 3.0);
-        }
-        let radar_range = active_consumable(&ship, &n.cls_radar, &n.spotting_range, n);
-        if radar_range > 0.0 {
-            pt.dashed_circle(player_pos, radar_range, RADAR_RANGE_COLOR, 3.0, 4.0, 3.0);
+        if let Some(p) = &player {
+            Self::own_rings(&mut pt, n, &p.clone().upcast(), p.get_global_position());
         }
 
         for (pos, color) in &auras {
@@ -671,16 +801,28 @@ impl MinimapCanvas {
         for e in entries.iter().filter(|e| !e.dead) {
             pt.tracked_ship(e);
         }
-        let player_name: GString = ship.get(&n.ship_name).try_to().unwrap_or_default();
-        pt.ship(player_pos, -player.get_rotation().y, PLAYER_COLOR, &player_name);
+        if let Some(p) = &player {
+            let ship: Gd<Object> = p.clone().upcast();
+            let player_name: GString = ship.get(&n.ship_name).try_to().unwrap_or_default();
+            let hp = sub(&ship, &n.health_controller).map(|h| hp_frac(&h, n));
+            pt.ship(
+                p.get_global_position(),
+                -p.get_rotation().y,
+                PLAYER_COLOR,
+                &player_name,
+                hp,
+            );
+        }
 
         for e in entries.iter().filter(|e| e.icons.len() > 0) {
             pt.consumables(e.pos, &e.icons);
         }
-        if let Some(cm) = sub(&ship, &n.consumable_manager) {
-            let icons = call0(&cm, &n.get_active_icons).to_any_array();
-            if icons.len() > 0 {
-                pt.consumables(player_pos, &icons);
+        if let Some(p) = player.as_ref().filter(|_| !spec) {
+            if let Some(cm) = sub(&p.clone().upcast(), &n.consumable_manager) {
+                let icons = call0(&cm, &n.get_active_icons).to_any_array();
+                if icons.len() > 0 {
+                    pt.consumables(p.get_global_position(), &icons);
+                }
             }
         }
 
@@ -688,7 +830,9 @@ impl MinimapCanvas {
             for o in &self.orbits {
                 let (c, r) = (pt.to_mm(o.center), o.radius * pt.scale);
                 pt.c.draw_circle(c, r, o.color.with_alpha(0.08));
-                pt.c.draw_arc_ex(c, r, 0.0, TAU, 48, o.color.with_alpha(0.45)).width(1.0).done();
+                pt.c.draw_arc_ex(c, r, 0.0, TAU, 48, o.color.with_alpha(0.45))
+                    .width(1.0)
+                    .done();
             }
         }
         for a in &self.planes {
@@ -698,37 +842,147 @@ impl MinimapCanvas {
             pt.squadron_path(p);
         }
 
-        self.draw_torpedoes(&mut pt, &player, player_team);
+        self.draw_torpedoes(
+            &mut pt,
+            player.as_ref().map(|p| p.instance_id()),
+            if spec { Some(0) } else { player_team },
+        );
 
-        if bc_obj.as_ref().is_some_and(|b| b.get(&n.spectating).to_bool()) {
+        let Some(player) = player.filter(|_| !spec) else {
+            return;
+        };
+        if bc_obj
+            .as_ref()
+            .is_some_and(|b| b.get(&n.spectating).to_bool())
+        {
             return;
         }
-        let shell = player.get_node_or_null("Modules/PlayerControl")
+        let player_pos = player.get_global_position();
+        let shell = player
+            .get_node_or_null("Modules/PlayerControl")
             .map(|pc| pc.upcast::<Object>())
             .and_then(|pc| sub(&pc, &n.current_weapon_controller))
-            .and_then(|wc| call0(&wc, &n.get_shell_params).try_to::<Gd<Resource>>().ok());
+            .and_then(|wc| {
+                call0(&wc, &n.get_shell_params)
+                    .try_to::<Gd<Resource>>()
+                    .ok()
+            });
         let mut aim = self.aim_point;
         if let Some(shell) = shell {
-            let lv = ProjectilePhysicsWithDragV2::calculate_launch_vector_impl(player_pos, aim, &shell);
+            let lv =
+                ProjectilePhysicsWithDragV2::calculate_launch_vector_impl(player_pos, aim, &shell);
             if let Some(v) = lv.get(0).and_then(|v| v.try_to::<Vector3>().ok()) {
-                aim = ProjectilePhysicsWithDragV2::calculate_impact_position_impl(player_pos, v, &shell);
+                aim = ProjectilePhysicsWithDragV2::calculate_impact_position_impl(
+                    player_pos, v, &shell,
+                );
             }
         }
         let p = pt.to_mm(aim);
         if !pt.outside(p) && pt.circles {
-            pt.c.draw_circle_ex(p, 2.0, Color::WHITE).filled(false).done();
+            pt.c.draw_circle_ex(p, 2.0, Color::WHITE)
+                .filled(false)
+                .done();
         }
     }
 
-    fn draw_torpedoes(&self, pt: &mut Painter, player: &Gd<Node3D>, player_team: Option<i64>) {
+    fn own_rings(pt: &mut Painter, n: &Names, ship: &Gd<Object>, player_pos: Vector3) {
+        if let Some(art) = sub(ship, &n.artillery_controller) {
+            if art.get(&n.guns).to_any_array().len() > 0 {
+                pt.range_circle(player_pos, params_range(&art, n), HALF_WHITE);
+            }
+        }
+        if let Some(tc) = sub(ship, &n.torpedo_controller) {
+            pt.range_circle(player_pos, params_range(&tc, n), HALF_WHITE);
+        }
+        if let Some(sc) = sub(ship, &n.secondary_controller) {
+            for c in sc
+                .get(&n.sub_controllers)
+                .to_any_array()
+                .iter_shared()
+                .filter_map(obj)
+            {
+                pt.range_circle(player_pos, params_range(&c, n), DARK_KHAKI);
+            }
+        }
+        if let Some(av) = sub(ship, &n.aviation_controller) {
+            let mut seen: Vec<f32> = Vec::new();
+            for p in av
+                .get(&n.params)
+                .to_any_array()
+                .iter_shared()
+                .filter_map(obj)
+            {
+                let r = p.get(&n._range).to_f32();
+                if !seen.contains(&r) {
+                    seen.push(r);
+                    pt.range_circle(player_pos, r, AIR_CIRCLE_COLOR);
+                }
+            }
+        }
+        if let Some(aa) = sub(ship, &n.aaa_controller).and_then(|a| obj(call0(&a, &n.get_params))) {
+            let r = aa.get(&n._range).to_f32();
+            if r > 0.0 && aa.get(&n.dps).to_f32() > 0.0 {
+                pt.range_circle(player_pos, r, AIR_RANGE_COLOR);
+            }
+        }
+
+        if let Some(conc) = sub(ship, &n.concealment) {
+            pt.dashed_circle(
+                player_pos,
+                call0(&conc, &n.get_concealment).to_f32(),
+                HALF_WHITE,
+                8.0,
+                4.0,
+                2.0,
+            );
+            let air = sub(&conc, &n.params)
+                .and_then(|p| obj(call0(&p, &n.p)))
+                .map_or(0.0, |p| p.get(&n.air_radius).to_f32());
+            if air > 0.0 {
+                pt.dashed_circle(player_pos, air, HALF_WHITE, 8.0, 4.0, 3.0);
+            }
+        }
+
+        let torp_range = active_consumable(ship, &n.cls_hydro, &n.torpedo_detection_range, n);
+        if torp_range > 0.0 && pt.circles {
+            let fill = HYDRO_RANGE_COLOR.with_alpha(0.2);
+            let c = pt.to_mm(player_pos);
+            pt.c.draw_circle(c, torp_range * pt.scale, fill);
+        }
+        let hydro_range = active_consumable(ship, &n.cls_hydro, &n.spotting_range, n);
+        if hydro_range > 0.0 {
+            pt.dashed_circle(player_pos, hydro_range, HYDRO_RANGE_COLOR, 3.0, 4.0, 3.0);
+        }
+        let radar_range = active_consumable(ship, &n.cls_radar, &n.spotting_range, n);
+        if radar_range > 0.0 {
+            pt.dashed_circle(player_pos, radar_range, RADAR_RANGE_COLOR, 3.0, 4.0, 3.0);
+        }
+    }
+
+    fn draw_torpedoes(
+        &self,
+        pt: &mut Painter,
+        player_id: Option<InstanceId>,
+        player_team: Option<i64>,
+    ) {
         if !pt.circles {
             return;
         }
         let n = &self.n;
-        let Some(tm) = self.base().get_node_or_null("/root/TorpedoManager").map(|t| t.upcast::<Object>()) else { return };
+        let Some(tm) = self
+            .base()
+            .get_node_or_null("/root/TorpedoManager")
+            .map(|t| t.upcast::<Object>())
+        else {
+            return;
+        };
         let r = TORPEDO_MARKER_SIZE * pt.unit / 2.0;
-        let player_id = player.instance_id();
-        for t in tm.get(&n.torpedos).to_any_array().iter_shared().filter_map(obj) {
+        for t in tm
+            .get(&n.torpedos)
+            .to_any_array()
+            .iter_shared()
+            .filter_map(obj)
+        {
             if !t.get(&n.armed).to_bool() {
                 continue;
             }
@@ -738,7 +992,7 @@ impl MinimapCanvas {
             }
             let color = match obj(t.get(&n.owner)) {
                 None => PLAYER_COLOR,
-                Some(o) if o.instance_id() == player_id => PLAYER_COLOR,
+                Some(o) if Some(o.instance_id()) == player_id => PLAYER_COLOR,
                 Some(o) if player_team.is_some() && team_id(&o, n) == player_team => FRIENDLY_COLOR,
                 Some(_) => ENEMY_COLOR,
             };
