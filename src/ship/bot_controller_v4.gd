@@ -190,6 +190,7 @@ func _ready() -> void:
 
 	# Initialize the profiled GDScript wrapper around the C++ ShipNavigator
 	navigator = ProfiledShipNavigatorScript.new()
+	navigator.label = String(owner.name) if owner != null else String(get_parent().get_parent().name)
 
 	# Connect to the shared NavigationMap (built by NavigationMapManager autoload)
 	var nav_map = NavigationMapManager.get_map()

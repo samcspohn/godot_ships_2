@@ -663,13 +663,16 @@ impl ShipNavigator {
             (g.cluster_size, g.ncx, g.ncz, g.sub_size, g.nsubx, g.nsubz)
         };
         let version = field.bind().detect_version(self.detect_team) as i64;
+        self.last_exposure_us = 0.0;
         if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
+            let t0 = Instant::now();
             let mut f = field.bind_mut();
             let (max, mean) = f.cluster_exposure_stats(self.detect_team, self.detect_radius, cluster_size, ncx, ncz, true);
             self.detect_exposure = max;
             self.detect_exposure_mean = mean;
             self.detect_sub_exposure = f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz, false).0;
             self.detect_synced_version = version;
+            self.last_exposure_us = t0.elapsed().as_secs_f32() * 1.0e6;
         }
         let mut g = self.hpa_graph.as_mut().unwrap().bind_mut();
         g.stamp_threat_costs(&self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain, true);
@@ -698,19 +701,24 @@ impl ShipNavigator {
         // immediately before each query so the correct threats are stamped.
         // -----------------------------------------------------------------------
         if planner_ready {
+            let t_stamp = Instant::now();
             self.refresh_threats();
 
-            if self.manual_threats.as_ref().is_some_and(|m| !m.is_empty()) {
+            let mode = if self.manual_threats.as_ref().is_some_and(|m| !m.is_empty()) {
                 let circles = self.threats.borrow().clone();
                 self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threats(&circles);
+                "intent"
             } else if self.stamp_detection_field() {
-                // stamped from the detection field
+                "detection"
             } else if !self.threats.borrow().is_empty() {
                 let circles = self.threats.borrow().clone();
                 self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threats(&circles);
+                "registry"
             } else {
                 self.hpa_graph.as_mut().unwrap().bind_mut().clear_threats();
-            }
+                "none"
+            };
+            let stamp_us = t_stamp.elapsed().as_secs_f32() * 1.0e6;
 
             // Bias the search toward the near field of the route already being
             // followed.  Two clips, and both matter.  Dropping the legs already
@@ -731,6 +739,7 @@ impl ShipNavigator {
             }
             let bias_opt = if bias_path.len() >= 2 { Some(&bias_path) } else { None };
 
+            let t_find = Instant::now();
             let mut pr = {
                 let g = self.hpa_graph.as_ref().unwrap().bind();
                 g.find_path(
@@ -741,10 +750,31 @@ impl ShipNavigator {
                     bias_opt,
                 )
             };
+            let find_us = t_find.elapsed().as_secs_f32() * 1.0e6;
             self.path_threat_relaxed = pr.valid && {
                 let g = self.hpa_graph.as_ref().unwrap().bind();
                 g.did_last_query_ignore_threats()
             };
+            {
+                let g = self.hpa_graph.as_ref().unwrap().bind();
+                let (queries, grid, local) = g.last_find_stats.get();
+                let d = &mut self.last_plan_breakdown;
+                d.clear();
+                d.set("mode", mode);
+                d.set("circles", self.threats.borrow().len() as i64);
+                d.set("blocked", g.threat_blocked_count as i64);
+                d.set("stamp_us", stamp_us);
+                d.set("exposure_us", if mode == "detection" { self.last_exposure_us } else { 0.0 });
+                d.set("find_us", find_us);
+                d.set("queries", queries as i64);
+                d.set("grid_fallbacks", grid as i64);
+                d.set("local_searches", local as i64);
+                d.set("valid", pr.valid);
+                d.set("relaxed", self.path_threat_relaxed);
+                d.set("fail", &g.get_last_fail_stage_name());
+                d.set("waypoints", pr.waypoints.len() as i64);
+                d.set("dist", self.state.position.distance_to(self.target.position));
+            }
             if pr.valid && !pr.waypoints.is_empty() {
                 // Always end at the exact destination — HPA* snaps to grid nodes
                 // so the final grid node may not be target.position.

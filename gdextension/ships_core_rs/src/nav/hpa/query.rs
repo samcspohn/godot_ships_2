@@ -50,6 +50,7 @@ impl HpaGraph {
         bias_path: Option<&Vec<Vector2>>,
     ) -> PathResult {
         self.last_query_ignored_threats.set(false);
+        self.last_find_stats.set((0, 0, 0));
 
         let mut bias = PathBias::default();
         if let Some(p) = bias_path {
@@ -87,6 +88,8 @@ impl HpaGraph {
     }
 
     fn finalize_query(&self, r: PathResult, m: &QueryMetrics, t0: Instant) -> PathResult {
+        let (q, g, l) = self.last_find_stats.get();
+        self.last_find_stats.set((q + 1, g + m.grid_fallbacks, l + m.local_search_runs));
         if !self.perf_tracking_enabled {
             return r;
         }

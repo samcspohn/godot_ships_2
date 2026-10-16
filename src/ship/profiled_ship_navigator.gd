@@ -5,7 +5,9 @@ class_name ProfiledShipNavigator
 ## Thin GDScript proxy around the native ShipNavigator.
 ## Purpose: make navigator work visible as named GDScript calls in the profiler.
 
+const SPIKE_US := 10000
 var _impl: ShipNavigator = ShipNavigator.new()
+var label := ""
 
 
 func get_raw() -> ShipNavigator:
@@ -91,6 +93,7 @@ func navigate_to(
 	force_reverse: bool = false,
 	forbid_reverse: bool = false
 ) -> void:
+	var t0 := Time.get_ticks_usec()
 	_impl.navigate_to(
 		target_position,
 		target_heading,
@@ -100,6 +103,9 @@ func navigate_to(
 		force_reverse,
 		forbid_reverse
 	)
+	var us := Time.get_ticks_usec() - t0
+	if us >= SPIKE_US:
+		print("[nav spike] %s %.1f ms %s" % [label, us / 1000.0, _impl.get_last_plan_breakdown()])
 
 
 func clear_obstacles() -> void:

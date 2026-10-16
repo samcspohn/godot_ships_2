@@ -277,6 +277,8 @@ pub struct HpaGraph {
     pub(crate) walls_muted: Cell<bool>,
     pub(crate) last_query_ignored_threats: Cell<bool>,
     pub(crate) last_fail_stage: Cell<i32>,
+    /// find_path's queries, grid fallbacks and local searches, summed over its retries.
+    pub(crate) last_find_stats: Cell<(i32, i32, i32)>,
 }
 
 #[godot_api]
@@ -320,6 +322,7 @@ impl IRefCounted for HpaGraph {
             walls_muted: Cell::new(false),
             last_query_ignored_threats: Cell::new(false),
             last_fail_stage: Cell::new(fail_stage::FAIL_NONE),
+            last_find_stats: Cell::new((0, 0, 0)),
         }
     }
 }

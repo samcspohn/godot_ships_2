@@ -150,6 +150,8 @@ pub struct ShipNavigator {
     pub(crate) timing_update_us: f32,
     pub(crate) timing_avoidance_us: f32,
     pub(crate) timing_plan_us: f32,
+    pub(crate) last_plan_breakdown: VarDictionary,
+    pub(crate) last_exposure_us: f32,
     pub(crate) timing_steering_us: f32,
     /// 0 = none (all non-zero codes currently unused).
     pub(crate) timing_replan_reason: i32,
@@ -295,6 +297,8 @@ impl IRefCounted for ShipNavigator {
             timing_update_us: 0.0,
             timing_avoidance_us: 0.0,
             timing_plan_us: 0.0,
+            last_plan_breakdown: VarDictionary::new(),
+            last_exposure_us: 0.0,
             timing_steering_us: 0.0,
             timing_replan_reason: 0,
             timing_plan_phase_val: 0,
@@ -487,6 +491,12 @@ impl ShipNavigator {
     #[func]
     fn get_timing_plan_us(&self) -> f32 {
         self.timing_plan_us
+    }
+
+    /// Where the last navigate_to's time went.
+    #[func]
+    fn get_last_plan_breakdown(&self) -> VarDictionary {
+        self.last_plan_breakdown.clone()
     }
 
     #[func]
