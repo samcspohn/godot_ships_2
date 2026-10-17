@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": []}
+              "reasons": defaultdict(int), "margin": [], "nav": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -47,6 +47,8 @@ def load(d):
         health["draws"] += bool(m.get("time_limit"))
         health["duration"].append(m["duration"])
         health["reasons"][m.get("win_reason", "?")] += 1
+        if "nav" in m:
+            health["nav"].append(m["nav"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -71,6 +73,24 @@ for label, (h, _) in data.items():
 for label, (h, _) in data.items():
     for k, n in sorted(h["error_kinds"].items(), key=lambda kv: -kv[1])[:5]:
         print(f"  {label}: {n}x {k}")
+
+if any(h["nav"] for h, _ in data.values()):
+    print("\n== navigator (navigate_to per match; counts per 1000 calls)")
+    print(f'{"build":>12} {"calls":>7} {"mean_ms":>13} {"p50":>6} {"p99":>13} {"p99.9":>13} {"max":>7} '
+          f'{">=3ms":>8} {"relaxed":>8} {"invalid":>8}')
+    for label, (h, _) in data.items():
+        nv = h["nav"]
+        if not nv:
+            continue
+        calls = sum(n["calls"] for n in nv)
+        per_k = lambda k: 1000.0 * sum(n[k] for n in nv) / max(calls, 1)
+        mm, mc = ci([n["mean_ms"] for n in nv])
+        pm, pc = ci([n["p99_ms"] for n in nv])
+        qm, qc = ci([n["p999_ms"] for n in nv])
+        p50, _ = ci([n["p50_ms"] for n in nv])
+        print(f'{label:>12} {calls / len(nv):>7.0f} {mm:>7.3f}±{mc:<5.3f} {p50:>6.2f} {pm:>7.2f}±{pc:<5.2f} '
+              f'{qm:>7.2f}±{qc:<5.2f} {max(n["max_ms"] for n in nv):>7.2f} {per_k("over_3ms"):>8.2f} '
+              f'{per_k("relaxed"):>8.2f} {per_k("invalid"):>8.2f}')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

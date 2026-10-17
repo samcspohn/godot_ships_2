@@ -10,6 +10,16 @@ var _impl: ShipNavigator = ShipNavigator.new()
 var label := ""
 ## (us: int, target: Vector3), after a navigate_to of SPIKE_US or more.
 var on_spike: Callable
+const HIST_STEP_US := 50
+const HIST_BINS := 400
+## Every navigate_to this process, for the botmatch metrics.
+static var _calls := 0
+static var _sum_us := 0
+static var _max_us := 0
+static var _over_3ms := 0
+static var _relaxed := 0
+static var _invalid := 0
+static var _hist := PackedInt32Array()
 
 
 func get_raw() -> ShipNavigator:
@@ -110,6 +120,7 @@ func navigate_to(
 		forbid_reverse
 	)
 	var us := Time.get_ticks_usec() - t0
+	_record(us)
 	if us >= SPIKE_US:
 		print("[nav spike] %s %.1f ms %s" % [label, us / 1000.0, _impl.get_last_plan_breakdown()])
 		if on_spike.is_valid():
@@ -249,3 +260,30 @@ func get_last_path_failure_reason_name() -> String:
 
 func clear_path_failures() -> void:
 	_impl.clear_path_failures()
+
+
+func _record(us: int) -> void:
+	if _hist.is_empty():
+		_hist.resize(HIST_BINS)
+	_calls += 1
+	_sum_us += us
+	_max_us = maxi(_max_us, us)
+	_over_3ms += int(us >= 3000)
+	_hist[mini(us / HIST_STEP_US, HIST_BINS - 1)] += 1
+	var plan: Dictionary = _impl.get_last_plan_breakdown()
+	_relaxed += int(plan.get("relaxed", false))
+	_invalid += int(not plan.get("valid", true))
+
+
+static func nav_summary() -> Dictionary:
+	var pct := func(q: float) -> float:
+		var need := ceili(_calls * q)
+		var seen := 0
+		for i in _hist.size():
+			seen += _hist[i]
+			if seen >= need:
+				return (i + 1) * HIST_STEP_US / 1000.0
+		return _max_us / 1000.0
+	return {"calls": _calls, "mean_ms": _sum_us / 1000.0 / maxi(_calls, 1), "p50_ms": pct.call(0.5),
+		"p99_ms": pct.call(0.99), "p999_ms": pct.call(0.999), "max_ms": _max_us / 1000.0,
+		"over_3ms": _over_3ms, "relaxed": _relaxed, "invalid": _invalid}

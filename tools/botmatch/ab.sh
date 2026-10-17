@@ -7,7 +7,7 @@ OUT=$(realpath -m "$1") N=${2:-50} A=${3:-HEAD} B=${4:-WORKTREE}
 GODOT=${GODOT:-$HOME/.local/share/godot/app_userdata/Godots/versions/Godot_v4_7_1-stable_linux_x86_64/Godot_v4.7.1-stable_linux.x86_64}
 SIM_ROOT=${SIM_ROOT:-$HOME/Documents/ships_sim}
 LINEUP=${LINEUP:-res://tools/botmatch/lineup_12v12_t10.json}
-CPUS=${CPUS:-0-127}
+CPUS=${CPUS:-0-$(($(nproc) - 1))}
 TIMEOUT=${TIMEOUT:-3600}
 SRC=$(git rev-parse --show-toplevel)
 cd "$SRC"

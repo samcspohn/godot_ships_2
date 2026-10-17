@@ -20,71 +20,9 @@ impl HpaGraph {
         }
         let vis = self.vis.clone();
         let vis = vis.as_ref().map(|v| v.bind()).filter(|v| v.is_ready());
-        self.circles = threats.iter().map(|t| (*t, vis.as_ref().and_then(|v| v.cell_of(t.origin)))).collect();
-
-        let map = self.nav_map.as_ref().unwrap().bind();
-
-        for t in threats {
-            if t.radius <= 0.0 {
-                continue;
-            }
-
-            let mut gx_t = ((t.origin.x - self.min_x) / self.cell_size) as i32;
-            let mut gz_t = ((t.origin.y - self.min_z) / self.cell_size) as i32;
-            gx_t = gx_t.max(0).min(self.grid_w - 1);
-            gz_t = gz_t.max(0).min(self.grid_h - 1);
-
-            let r2 = t.radius * t.radius;
-
-            // Only candidate clusters whose AABB overlaps the threat circle are
-            // worth testing — avoids the previous O(clusters × threats) sweep.
-            let candidates = self.clusters_in_radius(t.origin, t.radius);
-            for cid in candidates {
-                let cidx = cid as usize;
-                if self.cluster_threat_blocked[cidx] != 0 {
-                    continue; // already blocked by another threat
-                }
-                let c = self.clusters[cidx];
-                if !c.navigable {
-                    continue;
-                }
-
-                // Grid coords of the 4 cluster corner cells.
-                // Testing all corners (rather than just the centre) conservatively marks
-                // clusters where the threat has line-of-sight to any part of the boundary.
-                let corner_gx = [c.x0, c.x1, c.x0, c.x1];
-                let corner_gz = [c.z0, c.z0, c.z1, c.z1];
-
-                let mut threatened = false;
-                for i in 0..4 {
-                    if threatened {
-                        break;
-                    }
-                    let (wx, wz) = self.grid_to_world(corner_gx[i], corner_gz[i]);
-                    let dx = wx - t.origin.x;
-                    let dz = wz - t.origin.y;
-                    let d2 = dx * dx + dz * dz;
-                    if d2 > r2 {
-                        continue;
-                    }
-
-                    let seen = match (&vis, vis.as_ref().and_then(|v| v.cell_of(t.origin))) {
-                        (Some(v), Some(oc)) => v.cell_of(Vector2::new(wx, wz)).is_none_or(|k| v.visible_idx(oc, k)),
-                        _ => map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0),
-                    };
-                    if d2 < t.force_spot * t.force_spot || seen {
-                        threatened = true;
-                    }
-                }
-
-                if threatened {
-                    self.cluster_threat_blocked[cidx] = 1;
-                    self.threat_blocked_cids.push(cid);
-                }
-            }
-        }
-
-        self.threat_blocked_count = self.threat_blocked_cids.len() as i32;
+        self.circles = threats.iter().filter(|t| t.radius > 0.0)
+            .map(|t| (*t, vis.as_ref().and_then(|v| v.cell_of(t.origin)))).collect();
+        self.threat_blocked_count = self.circles.len() as i32;
     }
 
     /// True when the macro cluster containing `point` would be marked blocked
@@ -170,6 +108,7 @@ impl HpaGraph {
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
         self.circles.clear();
+        self.threat_gen.set(self.threat_gen.get().wrapping_add(1));
         if self.sub_layer_active.get() {
             for b in self.sub_threat_blocked.iter_mut() {
                 *b = 0;

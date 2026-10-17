@@ -301,6 +301,10 @@ pub struct HpaGraph {
     pub(crate) stage_n: Cell<[u32; STAGES.len()]>,
     pub(crate) debug_legs: Cell<bool>,
     pub(crate) cell_scratch: RefCell<astar::CellScratch>,
+    /// Bumped per stamp; memo entries from older stamps are stale.
+    pub(crate) threat_gen: Cell<u32>,
+    pub(crate) cluster_threat_memo: RefCell<Vec<(u32, bool)>>,
+    pub(crate) sub_threat_memo: RefCell<Vec<(u32, bool)>>,
 }
 
 pub const STAGES: [&str; 5] = ["cluster_astar", "sub_astar", "cell_astar", "string_pull", "region_labels"];
@@ -388,6 +392,9 @@ impl IRefCounted for HpaGraph {
             stage_n: Cell::new([0; STAGES.len()]),
             debug_legs: Cell::new(false),
             cell_scratch: RefCell::new(Default::default()),
+            threat_gen: Cell::new(1),
+            cluster_threat_memo: RefCell::new(Vec::new()),
+            sub_threat_memo: RefCell::new(Vec::new()),
         }
     }
 }
@@ -464,6 +471,9 @@ impl HpaGraph {
         if self.threats_muted.get() || self.walls_muted.get() {
             return false;
         }
+        if !self.circles.is_empty() {
+            return self.sub_threatened(sid);
+        }
         if self.sub_layer_active.get() {
             self.sub_threat_blocked[sid as usize] != 0
         } else {
@@ -488,7 +498,7 @@ impl HpaGraph {
         if self.cluster_block_count[cid as usize] > 0 {
             return true;
         }
-        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_threat_blocked[cid as usize] != 0
+        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_walled(cid)
     }
 
     pub(crate) fn cluster_blocked(&self, cid: i32) -> bool {
@@ -499,7 +509,51 @@ impl HpaGraph {
             return true;
         }
         // threats_muted is set for the relaxed retry in find_path().
-        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_threat_blocked[cid as usize] != 0
+        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_walled(cid)
+    }
+
+    fn cluster_walled(&self, cid: i32) -> bool {
+        if self.circles.is_empty() {
+            return self.cluster_threat_blocked[cid as usize] != 0;
+        }
+        // Only a cluster threatened throughout: the corridor needs some safe
+        // water in it, and the sub and cell searches hold the exact circles.
+        self.memo(&self.cluster_threat_memo, self.clusters.len(), cid as usize, || {
+            let c = self.clusters[cid as usize];
+            let vis = self.vis.as_ref().map(|v| v.bind());
+            let vis = vis.as_deref().filter(|v| v.is_ready());
+            [(c.x0, c.z0), (c.x1, c.z0), (c.x0, c.z1), (c.x1, c.z1), ((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2)]
+                .iter()
+                .all(|&(gx, gz)| {
+                    let (wx, wz) = self.grid_to_world(gx, gz);
+                    self.point_threatened(Vector2::new(wx, wz), vis)
+                })
+        })
+    }
+
+    fn sub_threatened(&self, sid: i32) -> bool {
+        self.memo(&self.sub_threat_memo, self.sub_clusters.len(), sid as usize, || {
+            let s = self.sub_clusters[sid as usize];
+            let vis = self.vis.as_ref().map(|v| v.bind());
+            let vis = vis.as_deref().filter(|v| v.is_ready());
+            self.point_threatened(Vector2::new(s.wx_center, s.wz_center), vis)
+        })
+    }
+
+    fn memo(&self, cache: &RefCell<Vec<(u32, bool)>>, n: usize, i: usize, f: impl FnOnce() -> bool) -> bool {
+        let gen = self.threat_gen.get();
+        {
+            let mut c = cache.borrow_mut();
+            if c.len() != n {
+                *c = vec![(0, false); n];
+            }
+            if c[i].0 == gen {
+                return c[i].1;
+            }
+        }
+        let v = f();
+        cache.borrow_mut()[i] = (gen, v);
+        v
     }
 
     pub(crate) fn fail_stage_name(stage: i32) -> &'static str {

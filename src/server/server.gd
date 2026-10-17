@@ -1296,6 +1296,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"lineup": CmdArgs.value("--botmatch", team_file_path),
 		"seed": CmdArgs.value("--seed"),
 		"ships": ships,
+		"nav": ProfiledShipNavigator.nav_summary(),
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())

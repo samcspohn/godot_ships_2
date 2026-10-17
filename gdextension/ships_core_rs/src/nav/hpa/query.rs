@@ -93,21 +93,19 @@ impl HpaGraph {
     /// Cell A* inside `mask`; a leg threat walls sever is retried with them
     /// muted, as the sub A* does: one leg's exposure, not the whole route's.
     fn bridge_leg(&self, a: Vector2, b: Vector2, q_cl: f32, mask: &[u8], threat_active: bool) -> PathResult {
-        // A leg the walls really cut costs a search of the whole corridor to
-        // prove it; one that clears them finds it within a few cells per cell of leg.
-        let budget = if threat_active {
-            WALLED_EXPAND_BASE + WALLED_EXPAND_PER_CELL * (a.distance_to(b) / self.cell_size) as u32
-        } else {
-            u32::MAX
-        };
-        let r = self.constrained_cell_astar(a, b, q_cl, mask, budget);
-        if r.valid && r.waypoints.len() >= 2 || !threat_active {
-            return r;
+        if threat_active {
+            // A leg the walls really cut costs a search of the whole corridor to
+            // prove it; one that clears them finds it within a few cells per cell of leg.
+            let budget = WALLED_EXPAND_BASE + WALLED_EXPAND_PER_CELL * (a.distance_to(b) / self.cell_size) as u32;
+            let r = self.constrained_cell_astar(a, b, q_cl, mask, budget);
+            if r.valid && r.waypoints.len() >= 2 {
+                return r;
+            }
         }
         let flag = if self.threat_cost_mode.get() { &self.walls_muted } else { &self.threats_muted };
-        flag.set(true);
+        let was = flag.replace(true);
         let r = self.constrained_cell_astar(a, b, q_cl, mask, u32::MAX);
-        flag.set(false);
+        flag.set(was);
         r
     }
 
@@ -157,6 +155,22 @@ impl HpaGraph {
         let labels = std::rc::Rc::new(labels);
         self.regions.borrow_mut().insert(q_cl.to_bits(), labels.clone());
         labels
+    }
+
+    fn dilate(&self, mask: &[u8], ring: i32) -> Vec<u8> {
+        let mut out = vec![0u8; mask.len()];
+        for cid in 0..mask.len().min(self.clusters.len()) {
+            if mask[cid] == 0 {
+                continue;
+            }
+            let c = self.clusters[cid];
+            for z in (c.cz - ring).max(0)..=(c.cz + ring).min(self.ncz - 1) {
+                for x in (c.cx - ring).max(0)..=(c.cx + ring).min(self.ncx - 1) {
+                    out[self.cluster_id(x, z) as usize] = 1;
+                }
+            }
+        }
+        out
     }
 
     fn ring_mask(&self, cid: i32, ring: i32) -> Vec<u8> {
@@ -684,7 +698,13 @@ impl HpaGraph {
 
         let merge_eps = self.cell_size * 0.1;
 
+        // Set once a leg failed even round a widened corridor: further guide
+        // points from the same anchor would only repeat the same search.
+        let mut to_goal = false;
         for i in 1..guide.len() {
+            if to_goal && i + 1 < guide.len() {
+                continue;
+            }
             let a = *waypoints.last().unwrap();
             let b = guide[i];
 
@@ -834,14 +854,20 @@ impl HpaGraph {
             // fails here is a corridor or threat matter, never a reason to
             // search the whole map.
             m.local_search_runs += 1;
-            let local = if walls_cut {
-                self.threats_muted.set(true);
-                let r = self.constrained_cell_astar(a, b, q_cl, &allowed_macros, u32::MAX);
-                self.threats_muted.set(false);
-                r
-            } else {
-                self.bridge_leg(a, b, q_cl, &allowed_macros, threat_layer_active)
-            };
+            let leg_threats = threat_layer_active && !walls_cut;
+            let mut local = self.bridge_leg(a, b, q_cl, &allowed_macros, leg_threats);
+            // Cluster A* links clusters that each hold water, not water that
+            // joins inside them: a leg boxed in by the corridor gets wider ones.
+            for ring in [SAME_MACRO_RING, SAME_MACRO_RING_WIDE] {
+                if local.valid && local.waypoints.len() >= 2 {
+                    break;
+                }
+                let wider = self.dilate(&allowed_macros, ring);
+                local = self.bridge_leg(a, b, q_cl, &wider, leg_threats);
+                if local.valid && local.waypoints.len() >= 2 {
+                    allowed_macros = wider;
+                }
+            }
 
             if local.valid && local.waypoints.len() >= 2 {
                 for j in 1..local.waypoints.len() {
@@ -852,8 +878,8 @@ impl HpaGraph {
             } else if i + 1 < guide.len() {
                 // B is an intermediate guide point. The guide is advisory — a
                 // sub centre picked near the chord can land on the far side of
-                // an island — so drop it and let the next iteration route from
-                // A to the following guide point instead.
+                // an island — so drop it and route from A to the goal instead.
+                to_goal = true;
                 continue;
             } else {
                 self.last_fail_stage.set(FAIL_CONNECTOR_ASTAR);
