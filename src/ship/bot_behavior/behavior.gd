@@ -601,15 +601,17 @@ func get_potential_target_weight(target: Ship) -> float:
 	potential_target_weight_cache[target] = weight
 	return weight
 
-## An enemy passes one ranked ahead of it only when this much nearer: order
-## holds against small changes in range, so stations chosen on it hold too.
-const PRIORITY_SWITCH: float = 0.75
+## An enemy passes one ranked ahead of it only when its score is this much
+## higher: order holds against small changes, so stations chosen on it hold too.
+const PRIORITY_SWITCH: float = 1.25
+## Guns taking less than this share of our HP a second are no threat to rank on.
+const PRIORITY_MIN_THREAT: float = 0.001
 
 ## The enemy this bot answers for, held while dark: {ship, pos, ref}, ship null
 ## for an anonymous spawn reference. The first of `priorities`.
 var priority: Dictionary = {}
-## Every enemy believed in, identified or still a spawn reference, nearest first
-## except where PRIORITY_SWITCH keeps an earlier order.
+## Every enemy believed in, identified or still a spawn reference, by
+## priority_score, except where PRIORITY_SWITCH keeps an earlier order.
 var priorities: Array[Dictionary] = []
 ## The first this many priorities are the ones this ship answers for.
 const PRIORITY_COUNT: int = 4
@@ -627,9 +629,11 @@ func update_priorities(server: GameServer) -> void:
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
-		fresh.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos)})
+		fresh.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos), "score": priority_score(b.ship, b.pos)})
 	for r in server.anonymous_refs(team_id):
-		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos)})
+		var proxy := _ref_proxy(server, int(r.id))
+		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos),
+			"score": priority_score(proxy, r.pos, REF_ASPECT_DEG) if proxy != null else 0.0})
 	# First sight retires the reference nearest the ship: it takes that reference's place, it is not new.
 	var gone: Array[Dictionary] = []
 	var keys := {}
@@ -648,20 +652,58 @@ func update_priorities(server: GameServer) -> void:
 				best = g
 		rank[_priority_key(c)] = rank[_priority_key(gone[best])]
 		gone.remove_at(best)
-	# Last order first, newcomers by range behind it; then each passes those ahead it is PRIORITY_SWITCH nearer than.
+	# Last order first, newcomers by score behind it; then each passes those ahead it out-scores by
+	# PRIORITY_SWITCH. Between two that score nothing (out of reach both ways), range decides the same way.
 	fresh.sort_custom(func(x, y):
 		var rx: int = rank.get(_priority_key(x), 1 << 30)
 		var ry: int = rank.get(_priority_key(y), 1 << 30)
-		return rx < ry if rx != ry else float(x.d) < float(y.d))
+		if rx != ry:
+			return rx < ry
+		return float(x.score) > float(y.score) if float(x.score) != float(y.score) else float(x.d) < float(y.d))
+	var passes := func(a: Dictionary, b: Dictionary) -> bool:
+		if float(a.score) <= 0.0 and float(b.score) <= 0.0:
+			return float(a.d) < float(b.d) * (2.0 - PRIORITY_SWITCH)
+		return float(a.score) > float(b.score) * PRIORITY_SWITCH
 	for k in range(1, fresh.size()):
 		var m := k
-		while m > 0 and float(fresh[m].d) < float(fresh[m - 1].d) * PRIORITY_SWITCH:
+		while m > 0 and passes.call(fresh[m], fresh[m - 1]):
 			var t: Dictionary = fresh[m]
 			fresh[m] = fresh[m - 1]
 			fresh[m - 1] = t
 			m -= 1
 	priorities = fresh
 	priority = priorities[0] if not priorities.is_empty() else {}
+
+## What `enemy` (believed `at`) is worth attending to now: the share of our HP
+## its guns take a second at the aspect we show it, citadels, fires and dodging
+## counted (nothing below PRIORITY_MIN_THREAT), plus the share of its HP ours
+## take at the aspect it shows us: a battleship turning broadside is a target.
+## `aspect`, when given, stands for both aspects: an unseen ship's heading is unknown.
+func priority_score(enemy: Ship, at: Vector2, aspect: float = NAN) -> float:
+	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
+		return 0.0
+	var at3 := Vector3(at.x, 0.0, at.y)
+	var r: float = at3.distance_to(Vector3(_ship.global_position.x, 0.0, _ship.global_position.z))
+	var ours: float = BotGunnery.aspect_from(_ship, at3)
+	var theirs: float = aspect if not is_nan(aspect) else BotGunnery.aspect_from(enemy, _ship.global_position)
+	var threat: float = (maxf(SkillStance._effective(_ship, enemy, r, ours), 0.0) * dodge(enemy, r)
+		+ _secondary_dps(enemy, _ship, r, ours)) / maxf(_ship.health_controller.current_hp, 1.0)
+	if threat < PRIORITY_MIN_THREAT:
+		threat = 0.0
+	var chance: float = (maxf(SkillStance._effective(enemy, _ship, r, theirs), 0.0)
+		+ _secondary_dps(_ship, enemy, r, theirs)) / maxf(enemy.health_controller.current_hp, 1.0)
+	return threat + chance
+
+## A spawn reference is scored as a ship of our own fleet of the class dealt it
+## (GameServer.ref_class), at the reference, seen at REF_ASPECT_DEG.
+const REF_ASPECT_DEG: float = 45.0
+
+func _ref_proxy(server: GameServer, ref: int) -> Ship:
+	var cls: int = server.ref_class(_ship.team.team_id, ref)
+	for s: Ship in server.get_team_ships(_ship.team.team_id):
+		if is_instance_valid(s) and s.ship_class == cls and s.artillery_controller != null:
+			return s
+	return null
 
 static func _priority_key(c: Dictionary) -> String:
 	return "s%d" % c.ship.get_instance_id() if c.ship != null and is_instance_valid(c.ship) else "r%s" % str(c.get("ref", ""))
@@ -2329,8 +2371,12 @@ const BOW_ASPECT_DEG: float = 10.0
 const DODGE_MAX: float = 0.6
 const SEC_RANGE_BUCKET_M: float = 500.0
 const SEC_ASPECT_BUCKET_DEG: float = 15.0
-## A screened ring is this share of the range from the enemy to the friend it is busy with.
-const SCREEN_RATIO: float = 0.9
+## A screened ring sits this share of the range from the enemy to the friend it
+## is busy with, at most SCREEN_CAP_M behind them: just short of becoming its priority.
+const SCREEN_RATIO: float = 1.075
+const SCREEN_CAP_M: float = 900.0
+## Never inside an enemy's secondary range plus this, unless out-trading it there.
+const SCREEN_SECONDARY_MARGIN_M: float = 500.0
 ## Bisection steps for optimal_engagement_range: gun range / 2^n of precision.
 const OPTIMAL_RANGE_STEPS: int = 10
 var _range_held: float = -1.0
@@ -2818,13 +2864,12 @@ func _fleet_profile(server: GameServer) -> Dictionary:
 	_unknown_cache = {"by_class": by_class, "classes": classes, "all": all}
 	return _unknown_cache
 
-## The class an unseen enemy is taken for, fixed per reference: {range, hp, class_w}.
+## The class an unseen enemy is taken for (GameServer.ref_class): {range, hp, class_w}.
 func _unknown_class(server: GameServer, ref: int) -> Dictionary:
 	var f := _fleet_profile(server)
 	if f.is_empty():
 		return {"range": 15000.0, "hp": 60000.0, "class_w": 1.0}
-	var classes: Array = f.classes
-	return f.by_class[classes[posmod(ref, classes.size())]]
+	return f.by_class.get(server.ref_class(_ship.team.team_id, ref), f.all)
 
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
@@ -2986,7 +3031,7 @@ func enemy_radius(enemy: Ship) -> float:
 
 ## enemy_radius, unless `enemy` (believed `at`) is not shooting at us and a
 ## lit friend is nearer it: that friend is ahead of us in its priorities, so
-## its ring shrinks to SCREEN_RATIO of the friend's range from it.
+## its ring shrinks to just behind the friend's range from it, never inside its secondaries.
 func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
 	var full := enemy_radius(enemy)
 	if active_shooters_at_me.has(enemy) or _ship.team == null or ctx.server == null:
@@ -2998,7 +3043,14 @@ func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
 			front = minf(front, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
 	if front >= mine:
 		return full
-	return minf(full, front * SCREEN_RATIO)
+	var screened: float = front + minf(front * (SCREEN_RATIO - 1.0), SCREEN_CAP_M)
+	return minf(full, maxf(screened, secondary_reach(enemy)))
+
+## How far out of `enemy`'s secondaries a ship that does not out-trade it keeps: their range plus a margin; 0 without.
+static func secondary_reach(enemy: Ship) -> float:
+	if not is_instance_valid(enemy) or not is_instance_valid(enemy.secondary_controller):
+		return 0.0
+	return enemy.secondary_controller.get_max_range() + SCREEN_SECONDARY_MARGIN_M
 
 ## Whether `enemy` out-trades us by TRADE_MARGIN at every range: Fight keeps
 ## out of its fire where it can.
@@ -3028,7 +3080,8 @@ func _trade(enemy: Ship) -> Vector2:
 		if ratio > best.y:
 			best = Vector2(r, ratio)
 		r += RADIUS_STEP_M
-	var result := Vector2(push if push >= 0.0 else best.x, best.y)
+	# Short of out-trading it there, never inside its secondaries.
+	var result := Vector2(push if push >= 0.0 else maxf(best.x, secondary_reach(enemy)), best.y)
 	_radius_cache[enemy.get_instance_id()] = [now, result]
 	return result
 

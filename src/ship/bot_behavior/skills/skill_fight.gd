@@ -17,11 +17,9 @@ const SHADOW_MARGIN_M := 200.0
 ## Patrol leg along the band edge, at least, and in turning circles.
 const PATROL_STEP_M := 1500.0
 const PATROL_STEP_TURNS := 3.0
-## A held station is settled this far outside the ring of the nearest band it rides.
-const SETTLE_MARGIN_M := 100.0
 ## A free station further than this outside that ring is pulled back in to it.
 const SETTLE_SLACK_M := 400.0
-## How far past the ring a settle looks for allowed water.
+## How far past the station a settle looks for water no enemy can shoot.
 const SETTLE_REACH_M := 4000.0
 
 var band_m: float = 0.0
@@ -166,9 +164,10 @@ func _walk_fight(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Packe
 				return
 	opts.avoid = base
 
-## When the bands move, the held station follows the nearest one's ring:
-## out of it when it grew over the station, back in when it shrank away.
-## A station in an island's shadow inside the ring is allowed and stays.
+## When the bands move, the held station follows the nearest one along the ray
+## from it, a cell at a time: out until no enemy can shoot it when a band grew
+## over it, in for as long as none can when the band drew back. Where shells
+## cannot land (an island's shadow) counts as out, whatever the ring says.
 func _settle(vis: VisibilityGrid, pos: PackedVector2Array, opts: Dictionary) -> void:
 	var st := Vector2(_station.x, _station.z)
 	var radii: PackedFloat32Array = opts.det_r
@@ -179,12 +178,15 @@ func _settle(vis: VisibilityGrid, pos: PackedVector2Array, opts: Dictionary) -> 
 	if best < 0:
 		return
 	var c: Vector2 = pos[best]
-	var want: float = radii[best] + SETTLE_MARGIN_M
-	var free: bool = bool(vis.hold_eval(st, pos, opts).free)
-	if free and st.distance_to(c) - want <= SETTLE_SLACK_M:
-		return
-	var r: Dictionary = vis.ray_free(c, st, want, want + SETTLE_REACH_M, pos, opts)
-	if not bool(r.found):
+	var d0: float = st.distance_to(c)
+	var r: Dictionary
+	if not bool(vis.hold_eval(st, pos, opts).free):
+		# Its fire reaches the station now: out along the ray to the first cell it cannot shoot.
+		r = vis.ray_free(c, st, d0, d0 + SETTLE_REACH_M, pos, opts)
+	elif d0 - radii[best] > SETTLE_SLACK_M:
+		# Its ring drew back: in along the ray for as long as it still cannot shoot us.
+		r = vis.ray_last_free(st, c, d0, pos, opts)
+	if r.is_empty() or not bool(r.found):
 		return
 	var p: Vector2 = r.pos
 	if p.distance_to(st) > 1.0:

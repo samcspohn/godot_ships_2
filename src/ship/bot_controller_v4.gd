@@ -1327,7 +1327,8 @@ func _emit_debug_draws() -> void:
 			for i in behavior.priorities.size():
 				var c: Dictionary = behavior.priorities[i]
 				var top: bool = i < BotBehavior.PRIORITY_COUNT
-				Debug.draw_label(Vector3(c.pos.x, 180.0, c.pos.y), "P%d%s" % [i + 1, "" if c.ship != null else "?"],
+				# Score as % of HP a second, theirs on us plus ours on them.
+				Debug.draw_label(Vector3(c.pos.x, 180.0, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0)) * 100.0],
 					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 20 if top else 14)
 
 		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness

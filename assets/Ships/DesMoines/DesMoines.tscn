@@ -111,7 +111,7 @@ shell2 = SubResource("Resource_yupck")
 dispersion = ExtResource("6_40mw7")
 reload_time = 6.0
 traverse_speed = 6.0
-_range = 13800.0
+_range = 13000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_mvdm"]

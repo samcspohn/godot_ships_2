@@ -8,5 +8,5 @@ _sound = ExtResource("2_5fkeh")
 pitch = 3.6
 glb_path = "uid://cva3s0hxkbke4"
 
-[node name="Turret_col" parent="." index="1" unique_id=1181346898]
+[node name="Turret_col" parent="." index="1" unique_id=1849133933]
 layers = 0

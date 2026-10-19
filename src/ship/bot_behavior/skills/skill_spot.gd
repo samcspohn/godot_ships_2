@@ -98,7 +98,8 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 	for b in belief:
 		var e: Ship = b.ship
 		out.pos.append(b.pos)
-		out.det.append(maxf(conceal, float(b.force_spot)) * margin + float(b.spread))
+		# A spotter is no match for a battleship's secondaries: kept out of them as out of its sight.
+		out.det.append(maxf(maxf(conceal, float(b.force_spot)) * margin, BotBehavior.secondary_reach(e)) + float(b.spread))
 		# Radar and hydro see through islands.
 		out.always.append(float(b.force_spot) * margin + float(b.spread) if float(b.force_spot) > 0.0 else 0.0)
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null

@@ -22,6 +22,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 config/name="ships3"
 run/main_scene="res://scenes/root.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
+run/max_fps=24
 config/icon="res://icon.svg"
 
 [audio]
@@ -164,7 +165,7 @@ set_waypoint={
 
 [physics]
 
-common/physics_ticks_per_second=16
+common/physics_ticks_per_second=12
 common/max_physics_steps_per_frame=1
 3d/physics_engine="GodotPhysics3D"
 jolt_physics_3d/simulation/velocity_steps=2

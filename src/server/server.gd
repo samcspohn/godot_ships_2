@@ -940,6 +940,43 @@ func _ref_pos(team_id: int, spawn: Vector2) -> Vector2:
 		_ref_lanes[spawn] = lane
 	return spawn + (lane.dir as Vector2) * minf(match_elapsed * EnemyPresumption.ADVANCE_SPEED, float(lane.stop))
 
+## team_id -> {reference id: ship class}: what that team takes each unseen enemy
+## for. Dealt as the matchmaker deals spawns, each class spread evenly down the
+## enemy line from its own random phase, so no class bunches on one flank; the
+## mix is the team's own fleet, and the draw is its own, not the real one.
+var _ref_classes: Dictionary = {}
+
+func ref_class(team_id: int, ref: int) -> int:
+	# A reference not yet dealt can only be a ship still spawning: deal the line again.
+	if not (_ref_classes.get(team_id, {}) as Dictionary).has(ref):
+		_ref_classes[team_id] = _deal_ref_classes(team_id)
+	return (_ref_classes[team_id] as Dictionary).get(ref, -1)
+
+func _deal_ref_classes(team_id: int) -> Dictionary:
+	var spawns: Array = Array(spawn_refs.get(1 - team_id, PackedVector2Array()))
+	var sp := get_team_spawn_position(1 - team_id)
+	# The line runs across the team's spawn axis (right_of_spawn in spawn placement).
+	var across := Vector2(sp.z, -sp.x)
+	spawns.sort_custom(func(a: Vector2, b: Vector2): return a.dot(across) < b.dot(across))
+	var counts := {}
+	for s: Ship in get_team_ships(team_id):
+		if is_instance_valid(s) and s.artillery_controller != null:
+			counts[s.ship_class] = int(counts.get(s.ship_class, 0)) + 1
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var keyed: Array = []
+	for c in counts:
+		var phase := rng.randf()
+		for k in int(counts[c]):
+			keyed.append([(k + phase) / float(counts[c]), rng.randf(), c])
+	keyed.sort()
+	var dealt := {}
+	if keyed.is_empty():
+		return dealt
+	for i in spawns.size():
+		dealt[ref_id(spawns[i])] = keyed[mini(i * keyed.size() / spawns.size(), keyed.size() - 1)][2]
+	return dealt
+
 ## Anonymous references to the enemies `team_id` has never seen: [{id, pos}], marching.
 func anonymous_refs(team_id: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []

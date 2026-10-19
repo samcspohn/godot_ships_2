@@ -579,6 +579,34 @@ impl VisibilityGrid {
         d
     }
 
+    /// {found, pos}: from `from` toward `toward`, the last allowed point (hold_walk's
+    /// test) before the first that is not, at most `max_m` along; none when `from` itself is not.
+    #[func]
+    fn ray_last_free(&self, from: Vector2, toward: Vector2, max_m: f32, enemies: PackedVector2Array,
+        opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("found", false);
+        let Some(dir) = (toward - from).try_normalized().filter(|_| self.is_ready()) else { return d };
+        let inp = self.hold_inputs(&enemies, &opts);
+        let step = self.cell * 0.5;
+        let mut last = None;
+        let mut at = 0.0;
+        while at <= max_m {
+            let p = from + dir * at;
+            let (ix, iz) = self.grid_of(p);
+            if self.spot_free(ix, iz, &inp).is_none() {
+                break;
+            }
+            last = Some(p);
+            at += step;
+        }
+        if let Some(p) = last {
+            d.set("found", true);
+            d.set("pos", p);
+        }
+        d
+    }
+
     /// {free, mask, count} for the cell holding `pos`, under the same `opts`.
     #[func]
     fn hold_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
