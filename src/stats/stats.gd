@@ -53,7 +53,7 @@ const XP_DAMAGE: float = 5.0
 const XP_DAMAGE_TIER_STEP: float = 1.2
 const XP_KILL: float = 0.25
 const XP_SPOT: float = 0.5
-const XP_POTENTIAL: float = 0.0025
+const XP_POTENTIAL: float = 0.00125
 const XP_POTENTIAL_TIER_STEP: float = 1.1
 # Accumulated per event so each one uses the tiers involved at that moment.
 var xp_damage: float = 0

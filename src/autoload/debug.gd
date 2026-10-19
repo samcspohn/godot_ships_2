@@ -1406,6 +1406,11 @@ shader_type spatial;
 render_mode unshaded, blend_mix, cull_disabled, depth_draw_never, depth_test_disabled;
 uniform sampler2D mask : filter_nearest, repeat_disable;
 uniform int mode = 1;
+// Shooters per cell: 1 .. 8, past that white.
+const vec3 HOT[8] = vec3[8](vec3(1.0, 0.95, 0.3), vec3(1.0, 0.75, 0.15), vec3(1.0, 0.5, 0.05), vec3(1.0, 0.25, 0.05),
+	vec3(0.9, 0.05, 0.05), vec3(0.75, 0.0, 0.35), vec3(0.6, 0.0, 0.6), vec3(0.35, 0.0, 0.7));
+const vec3 COLD[8] = vec3[8](vec3(0.3, 1.0, 0.9), vec3(0.3, 0.8, 1.0), vec3(0.3, 0.55, 1.0), vec3(0.3, 0.3, 1.0),
+	vec3(0.5, 0.25, 1.0), vec3(0.75, 0.25, 1.0), vec3(1.0, 0.3, 0.85), vec3(1.0, 0.45, 0.6));
 void fragment() {
 	int c = int(round(texture(mask, UV).r * 255.0));
 	if (c == 0) {
@@ -1415,9 +1420,9 @@ void fragment() {
 	if (mode == 1) {
 		col = vec3(0.15, 1.0, 0.45);
 	} else if (mode == 2) {
-		col = c == 1 ? vec3(1.0, 0.9, 0.2) : (c == 2 ? vec3(1.0, 0.5, 0.1) : vec3(1.0, 0.1, 0.1));
+		col = c > 8 ? vec3(1.0) : HOT[c - 1];
 	} else if (mode == 3) {
-		col = c == 1 ? vec3(0.3, 0.9, 1.0) : (c == 2 ? vec3(0.3, 0.4, 1.0) : vec3(0.9, 0.3, 1.0));
+		col = c > 8 ? vec3(1.0) : COLD[c - 1];
 	} else if (mode == 4) {
 		col = c == 1 ? vec3(1.0, 0.15, 0.1) : c == 2 ? vec3(0.5, 0.05, 0.05) : c == 3 ? vec3(1.0, 0.55, 0.0)
 			: c == 4 ? vec3(0.2, 0.35, 1.0) : c == 5 ? vec3(0.1, 1.0, 0.3) : vec3(1.0, 0.95, 0.2);
@@ -1514,13 +1519,13 @@ func _reach_server_tick() -> void:
 				_clear_reach_client.rpc_id(_reach_peer_id)
 				return
 			var opts: Dictionary = cov.sweep.opts
-			bytes = vis.cover_debug_bytes(cov.sweep.here, opts.pos, opts)
+			bytes = vis.cover_debug_bytes(cov.sweep.here, float(cov.sweep.axis), opts.pos, opts)
 			info = vis_info
 			var counts := PackedInt32Array([0, 0, 0, 0, 0, 0, 0])
 			for b in bytes:
 				counts[b] += 1
-			note = "%s sweep %.1fs old | seen %d, margin %d, radar %d, hidden %d, station %d, hard %d" % [cov.name,
-				(Time.get_ticks_msec() - int(cov.sweep.ms)) / 1000.0, counts[1], counts[2], counts[3], counts[4], counts[5], counts[6]]
+			note = "%s search %.1fs old | unsafe %d, dark %d, hidden %d, hidden with target %d, shielded %d" % [cov.name,
+				(Time.get_ticks_msec() - int(cov.sweep.ms)) / 1000.0, counts[1], counts[3], counts[4], counts[5], counts[6]]
 			_reach_srv_draws = {"opts": opts, "cover": cov.skill, "team": team_id, "ms": int(cov.sweep.ms), "ship": ship}
 		ReachMode.DETECT:
 			var radius: float = NavigationMapManager.reach_conceal_radius(ship)
@@ -1647,23 +1652,15 @@ func _reach_server_draw() -> void:
 	for i in pos.size():
 		var at := Vector3(pos[i].x, 6.0, pos[i].y)
 		draw_im_sphere(at + Vector3(0, 24, 0), 40.0, Color(1.0, 0.2, 0.2, a))
-		draw_circle(at, float(opts.los_r[i]), Color(1.0, 0.2, 0.2, 0.8 * a), 96)
+		if float(opts.los_r[i]) > 0.0:
+			draw_circle(at, float(opts.los_r[i]), Color(1.0, 0.2, 0.2, 0.8 * a), 96)
 		if float(opts.det_r[i]) > 0.0:
 			draw_circle(at, float(opts.det_r[i]), Color(1.0, 0.55, 0.0, 0.9 * a), 64)
 	if stale:
 		var sh: Ship = _reach_srv_draws.ship
-		draw_label(sh.global_position + Vector3(0, 260, 0), "cover sweep %.0fs old" % age, Color(1.0, 0.55, 0.0), 16)
+		draw_label(sh.global_position + Vector3(0, 260, 0), "cover search %.0fs old" % age, Color(1.0, 0.55, 0.0), 16)
 	var cov: SkillCover = _reach_srv_draws.cover
 	var field: ReachField = NavigationMapManager.get_reach_field()
-	for mark in [["best", cov.best(), Color(0.1, 1.0, 0.3)], ["dark", cov.dark(), Color(0.3, 0.6, 1.0)]]:
-		var d: Dictionary = mark[1]
-		if d.is_empty():
-			continue
-		var p: Vector2 = d.pos
-		var at := Vector3(p.x, 0.0, p.y)
-		draw_circle(at + Vector3(0, 8, 0), 220.0, mark[2], 32)
-		draw_label(at + Vector3(0, 140, 0), "%s %.2f%s" % [mark[0], float(d.score), " hard" if bool(d.get("hard", false)) else ""], mark[2], 14)
-		_draw_fire_cone(field, int(_reach_srv_draws.team), p, mark[2])
 	if cov.has_station():
 		var st: Vector3 = cov.station_position()
 		_draw_fire_cone(field, int(_reach_srv_draws.team), Vector2(st.x, st.z), Color(1.0, 1.0, 1.0))

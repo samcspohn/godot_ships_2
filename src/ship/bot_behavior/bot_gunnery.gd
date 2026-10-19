@@ -796,7 +796,7 @@ static func _shell_table(shell: ShellParams) -> Dictionary:
 		return cached
 	var pm := _projectile_native()
 	var t := {"r": PackedFloat32Array(), "desc": PackedFloat32Array(),
-		"v": PackedFloat32Array(), "pen": PackedFloat32Array()}
+		"v": PackedFloat32Array(), "pen": PackedFloat32Array(), "tof": PackedFloat32Array()}
 	var r: float = SHELL_RANGE_STEP_M
 	while r <= RANGE_TOP_M:
 		var launch: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(
@@ -809,12 +809,30 @@ static func _shell_table(shell: ShellParams) -> Dictionary:
 		t["desc"].append(rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length())))
 		t["v"].append(v.length())
 		t["pen"].append(pm.walk_penetration(shell, v.length()) if pm != null else 0.0)
+		t["tof"].append(float(launch[1]))
 		r += SHELL_RANGE_STEP_M
 	_shell_tables[iid] = t
 	return t
 
 
 ## [descent deg, speed, penetration] at `range_m`, or empty past the shell's reach.
+## Seconds `shooter`'s main-battery shell flies to `range_m`; INF past its reach.
+static func flight_time(shooter: Ship, range_m: float) -> float:
+	var ac = shooter.artillery_controller
+	if ac == null or not is_instance_valid(ac):
+		return INF
+	var p = ac.get_params()
+	var shell: ShellParams = p.shell1 if p.shell1 != null else p.shell2
+	if shell == null:
+		return INF
+	var t := _shell_table(shell)
+	var rs: PackedFloat32Array = t["r"]
+	if rs.size() < 2 or range_m > rs[rs.size() - 1]:
+		return INF
+	var i: int = clampi(rs.bsearch(range_m), 1, rs.size() - 1)
+	return lerpf(t["tof"][i - 1], t["tof"][i], clampf((range_m - rs[i - 1]) / (rs[i] - rs[i - 1]), 0.0, 1.0))
+
+
 static func _shell_at(t: Dictionary, range_m: float) -> Array:
 	var rs: PackedFloat32Array = t["r"]
 	if rs.is_empty() or range_m > rs[rs.size() - 1] + SHELL_RANGE_STEP_M:

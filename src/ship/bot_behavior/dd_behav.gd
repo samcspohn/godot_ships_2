@@ -216,15 +216,8 @@ func doctrine() -> BotDoctrine:
 
 ## Below this HP fraction a gun-armed hull fights as a torpedo boat.
 const GUNBOAT_TORPEDO_HP := 0.35
-const GUNBOAT_FRAC_PUSH := 0.5
-const GUNBOAT_FRAC_HOLD := 0.7
-const GUNBOAT_FRAC_MAX := 0.99
-const GUNBOAT_HOLD_THREAT := 0.5
-## Above GUNBOAT_HOLD_THREAT the band stays near GUNBOAT_FRAC_HOLD until threat is extreme.
-const GUNBOAT_FRAC_POW := 8.0
 ## How far along the band a gunboat rides either way of its station: speed is its armour.
 const GUNBOAT_PATROL_M := 2500.0
-const GUNBOAT_KITE_M := 1000.0
 const GUNBOAT_DISENGAGE_THREAT := 0.95
 ## Spotting, a gunboat at any HP keeps its guns free below this threat.
 const GUNBOAT_SPOT_FIRE_THREAT := 0.7
@@ -341,27 +334,10 @@ func _chase_or_break(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		return _run_skill(&"Disengage", ctx)
 	return _run_skill(&"Chase", ctx)
 
-## Hold FIGHT as a gunboat: its own band curve, a station that sees its
-## target, the band ridden within GUNBOAT_PATROL_M of it, and the bow away from the danger.
-func _gunboat_params(ctx: SkillContext) -> Dictionary:
-	var gun_range: float = ctx.ship.artillery_controller.get_params()._range
-	var band: float = gun_range * gunboat_band_frac(clampf(get_threat_score(ctx), 0.0, 1.0))
-	# Under fire the band edge sits behind us, so the station is a kite heading.
-	var shot_from: float = INF
-	for s in active_shooters_at_me:
-		if is_instance_valid(s):
-			shot_from = minf(shot_from, ctx.ship.global_position.distance_to(s.global_position))
-	if is_finite(shot_from):
-		band = clampf(shot_from + GUNBOAT_KITE_M, band, gun_range * GUNBOAT_FRAC_MAX)
-	return {"band_m": band, "needs_los": true, "radius": GUNBOAT_PATROL_M, "away": true}
-
-## Below 0.5 threat a gunboat closes in; above, it holds near 70% of gun range,
-## since threat ignores how hard a destroyer is to hit, and only opens out near the top.
-static func gunboat_band_frac(threat: float) -> float:
-	if threat < GUNBOAT_HOLD_THREAT:
-		return lerpf(GUNBOAT_FRAC_PUSH, GUNBOAT_FRAC_HOLD, threat / GUNBOAT_HOLD_THREAT)
-	var u := clampf((threat - GUNBOAT_HOLD_THREAT) / (1.0 - GUNBOAT_HOLD_THREAT), 0.0, 1.0)
-	return GUNBOAT_FRAC_HOLD + (GUNBOAT_FRAC_MAX - GUNBOAT_FRAC_HOLD) * pow(u, GUNBOAT_FRAC_POW)
+## Hold FIGHT as a gunboat: a station that sees its target, the band ridden
+## within GUNBOAT_PATROL_M of it, and the bow away from the danger.
+func _gunboat_params(_ctx: SkillContext) -> Dictionary:
+	return {"needs_los": true, "radius": GUNBOAT_PATROL_M, "away": true}
 
 
 ## The distance this destroyer wants to fight at.

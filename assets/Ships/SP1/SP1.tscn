@@ -121,7 +121,7 @@ shell2 = SubResource("Resource_lyw5o")
 dispersion = SubResource("Resource_disp_eirte")
 reload_time = 6.0
 traverse_speed = 8.0
-_range = 10900.0
+_range = 10200.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_disp_klw4b"]

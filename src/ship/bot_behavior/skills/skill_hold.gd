@@ -29,6 +29,10 @@ func current() -> SkillPosition:
 func debug_text() -> String:
 	return current().debug_text()
 
+## The last SPOT or FIGHT station while it is fresh, else INF: where cover is sought toward.
+func fresh_seed() -> Vector2:
+	return _seed if SimClock.now() - _seed_at <= SEED_TTL_S else Vector2.INF
+
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var m: int = params.get("hold", Mode.FIGHT)
 	if m != mode:
@@ -36,7 +40,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		mode = m
 	var now: float = SimClock.now()
 	var pos := current()
-	pos.seed = _seed if m != Mode.COVER and now - _seed_at <= SEED_TTL_S else Vector2.INF
+	pos.seed = fresh_seed()
 	var intent := pos.execute(ctx, params)
 	if m != Mode.COVER and pos.has_station():
 		var st: Vector3 = pos.station_position()

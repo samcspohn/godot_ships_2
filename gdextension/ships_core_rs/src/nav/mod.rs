@@ -1,4 +1,4 @@
-pub mod cover_sweep;
+pub mod cover_search;
 pub mod gun_matrix;
 pub mod hpa;
 pub mod map;

@@ -30,8 +30,14 @@ var _count: int = 0
 var _mask: int = 0
 var _steps: int = 0
 var _trails: Array[PackedVector2Array] = []
+## Per trail cell, the targets the walk counted there; for the debug overlay.
+var _trail_counts: Array[PackedInt32Array] = []
 ## With no station of its own, the walk starts here (the station another hold mode just held).
 var seed := Vector2.INF
+## Label -> metres between each newly adopted station and the one before it, this process.
+static var moves: Dictionary = {}
+## Survives _drop and reset, so a fresh search's jump counts too.
+var _last_adopted := Vector2.INF
 
 func reset() -> void:
 	release_claim()
@@ -41,6 +47,7 @@ func reset() -> void:
 	_refined = false
 	_count = 0
 	_trails = []
+	_trail_counts = []
 
 func station_position() -> Vector3:
 	return _station
@@ -54,6 +61,9 @@ func score() -> float:
 func terms() -> Dictionary:
 	return _terms
 
+func trail_counts() -> Array[PackedInt32Array]:
+	return _trail_counts
+
 func trails() -> Array[PackedVector2Array]:
 	return _trails
 
@@ -66,10 +76,25 @@ func _label() -> String:
 	return "Position"
 
 func _adopt(dest: Vector3, best_score: float, best_terms: Dictionary) -> void:
+	var p := Vector2(dest.x, dest.z)
+	if _last_adopted.is_finite() and _last_adopted.distance_to(p) > 1.0:
+		moves.get_or_add(_label(), []).append(_last_adopted.distance_to(p))
+	_last_adopted = p
 	_station = dest
 	_has_station = true
 	_station_score = best_score
 	_terms = best_terms
+
+static func move_summary() -> Dictionary:
+	var out := {}
+	for label in moves:
+		var d: Array = moves[label].duplicate()
+		d.sort()
+		var at := func(q: float) -> float: return d[mini(int(d.size() * q), d.size() - 1)]
+		out[label] = {"n": d.size(), "mean_m": d.reduce(func(a, x): return a + x, 0.0) / d.size(),
+			"p50_m": at.call(0.5), "p90_m": at.call(0.9),
+			"over_1km": d.filter(func(x): return x > 1000.0).size(), "over_3km": d.filter(func(x): return x > 3000.0).size()}
+	return out
 
 func _drop() -> void:
 	release_claim()
@@ -91,17 +116,19 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
 		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
 	else:
+		# From the last station either hold mode held (the shared seed), else here; never from the enemy's side.
 		opts.need = 1
-		if seed.is_finite():
-			opts.budget_m = REFINE_BUDGET_M
-			r = vis.hold_walk(seed, danger, false, pos, opts)
-		if not bool(r.get("found", false)):
-			opts.budget_m = 0.0
-			r = vis.hold_walk(danger, here, true, pos, opts)
+		opts.budget_m = REFINE_BUDGET_M
+		for from in [seed, here]:
+			if from.is_finite():
+				r = vis.hold_walk(from, danger, false, pos, opts)
+				if bool(r.get("has_start", false)):
+					break
 		if not bool(r.get("has_start", false)):
-			r = vis.hold_walk(_nearest(pos, here), here, true, pos, opts)
+			r = vis.hold_walk(danger, here, true, pos, opts)
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
+	_trail_counts = [r.get("trail_a_n", PackedInt32Array()), r.get("trail_b_n", PackedInt32Array())]
 	if bool(r.get("found", false)):
 		var p: Vector2 = r.pos
 		_count = int(r.count)

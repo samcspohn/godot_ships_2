@@ -146,10 +146,14 @@ func update_cooldowns(delta: float):
 				if item and item.id == item_id:
 					consumable_ready.emit(item)
 
+## Sim seconds since the last effect tick; tick counts drift from sim time under --time-scale.
+var _effect_clock := 0.0
+
 func update_active_effects(delta: float):
-	# t += delta
-	if Engine.get_physics_frames() % Engine.physics_ticks_per_second != 0:
+	_effect_clock += delta
+	if _effect_clock < 1.0:
 		return
+	_effect_clock -= 1.0
 
 	for item_id in active_effects:
 		active_effects[item_id] -= 1.0 / equipped_consumables[item_id].p().duration

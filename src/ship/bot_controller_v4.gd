@@ -1095,12 +1095,14 @@ func _emit_debug_draws() -> void:
 			Debug.draw_arrow(ship_pos + Vector3(0.0, 170.0, 0.0), Vector3(sin(away), 0.0, cos(away)), 400.0, Color.RED, 12.0)
 		if behavior._active_skill_name == &"Disengage" and _last_intent != null:
 			Debug.draw_line(ship_pos + lift, Vector3(_last_intent.target_position.x, 0.0, _last_intent.target_position.z) + lift, Color.GREEN)
-			var axis: float = behavior._skill_disengage.cone_axis
+			var axis: float = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis))
 			if is_finite(axis):
+				# The cone searched toward runs AWAY_RATIO times as far as the one away.
 				for end in [0.0, PI]:
 					for side in [-1.0, 1.0]:
 						var b: float = axis + end + side * SkillDisengage.CONE
-						Debug.draw_line(ship_pos + lift, ship_pos + lift + Vector3(sin(b), 0.0, cos(b)) * SkillCover.SWEEP_BOX_M,
+						var reach: float = SkillCover.REACH_M if end == 0.0 else SkillCover.REACH_M / SkillCover.AWAY_RATIO
+						Debug.draw_line(ship_pos + lift, ship_pos + lift + Vector3(sin(b), 0.0, cos(b)) * reach,
 							Color(0.0, 1.0, 0.0, 0.5))
 
 	# --- b) Heading + rudder arrow (CYAN) ---
@@ -1263,10 +1265,16 @@ func _emit_debug_draws() -> void:
 			Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), behavior._skill_disengage.debug_text(), Color(1.0, 0.8, 1.0), 14)
 		Debug.draw_label(ship_pos + Vector3(0.0, 160.0, 0.0), behavior._skill_stance.debug_text(), Color(1.0, 1.0, 0.6), 14)
 		if st_skill != null:
-			for trail in st_skill.trails():
-				for i in range(1, trail.size()):
-					Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
-						Color(0.4, 0.8, 1.0, 0.6))
+			var counts := st_skill.trail_counts()
+			for t in st_skill.trails().size():
+				var trail: PackedVector2Array = st_skill.trails()[t]
+				var n: PackedInt32Array = counts[t] if t < counts.size() else PackedInt32Array()
+				for i in trail.size():
+					if i > 0:
+						Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
+							Color(0.4, 0.8, 1.0, 0.6))
+					if i < n.size() and n[i] > 0:
+						Debug.draw_label(Vector3(trail[i].x, 40.0, trail[i].y), str(n[i]), Color(0.6, 0.9, 1.0), 14)
 		if st_skill != null and st_skill.has_station():
 			var st_pos: Vector3 = st_skill.station_position()
 			var st_col := Color(0.2, 1.0, 0.9)
@@ -1279,12 +1287,6 @@ func _emit_debug_draws() -> void:
 			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
 			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
 			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)
-		if st_skill is SkillFight and (st_skill as SkillFight).escape_point() != Vector2.INF:
-			var esc: Vector2 = (st_skill as SkillFight).escape_point()
-			var esc_col := Color(1.0, 0.2, 0.6)
-			Debug.draw_circle(Vector3(esc.x, 8.0, esc.y), 150.0, Color(esc_col, 0.8), 32)
-			Debug.draw_im_sphere(Vector3(esc.x, 30.0, esc.y), 20.0, esc_col)
-			Debug.draw_label(Vector3(esc.x, 90.0, esc.y), "Escape", Color(1.0, 0.7, 0.85), 14)
 
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:
@@ -1300,6 +1302,33 @@ func _emit_debug_draws() -> void:
 			var epos := Vector3(enemy.global_position.x, 20.0, enemy.global_position.z)
 			Debug.draw_im_sphere(epos, 30.0, Color(1.0, 0.1, 0.1, 0.9))
 			Debug.draw_circle(epos, 350.0, Color(1.0, 0.2, 0.2, 0.5), 16)
+
+		# Fight's ring round each enemy that shoots (shrunk while a lit friend nearer it screens us): green we push in, yellow we hold at our best trade, red we keep out of its fire.
+		if behavior != null:
+			for b in server_node._team_belief(my_team_id):
+				var e: Ship = b.ship
+				if not is_instance_valid(e) or not SkillFight.threatens(e):
+					continue
+				var trade: float = behavior._trade(e).y
+				var ring: float = behavior.ring(SkillContext.create(_ship, null, server_node, behavior), e, b.pos) + float(b.spread)
+				var col := Color(0.2, 1.0, 0.3, 0.7) if trade >= BotBehavior.TRADE_MARGIN \
+					else Color(1.0, 0.25, 0.2, 0.7) if behavior.dangerous(e) else Color(1.0, 0.85, 0.2, 0.7)
+				Debug.draw_circle(Vector3(b.pos.x, 12.0, b.pos.y), ring, col, 64)
+				Debug.draw_label(Vector3(b.pos.x, 140.0, b.pos.y), "%.1fk x%.2f" % [ring / 1000.0, trade], col, 14)
+
+		# How far each enemy spots us now, unbloomed: our concealment, or its radar/hydro while that reaches further.
+		if _ship.concealment != null:
+			var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
+			for b in server_node._team_belief(my_team_id):
+				Debug.draw_circle(Vector3(b.pos.x, 14.0, b.pos.y), maxf(conceal, float(b.force_spot)), Color(0.3, 0.7, 1.0, 0.6), 64)
+
+		# Priority order: the top BotBehavior.PRIORITY_COUNT are what Fight and Spot try for.
+		if behavior != null:
+			for i in behavior.priorities.size():
+				var c: Dictionary = behavior.priorities[i]
+				var top: bool = i < BotBehavior.PRIORITY_COUNT
+				Debug.draw_label(Vector3(c.pos.x, 180.0, c.pos.y), "P%d%s" % [i + 1, "" if c.ship != null else "?"],
+					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 20 if top else 14)
 
 		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness
 		var unspotted_enemies: Dictionary = server_node.get_unspotted_enemies(my_team_id)

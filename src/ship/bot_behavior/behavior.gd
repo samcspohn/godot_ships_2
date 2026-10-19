@@ -601,42 +601,70 @@ func get_potential_target_weight(target: Ship) -> float:
 	potential_target_weight_cache[target] = weight
 	return weight
 
-## A newcomer takes over the priority only when this much nearer than the held one.
+## An enemy passes one ranked ahead of it only when this much nearer: order
+## holds against small changes in range, so stations chosen on it hold too.
 const PRIORITY_SWITCH: float = 0.75
 
 ## The enemy this bot answers for, held while dark: {ship, pos, ref}, ship null
-## for an anonymous spawn reference. The nearest of `priorities`.
+## for an anonymous spawn reference. The first of `priorities`.
 var priority: Dictionary = {}
-## Every enemy believed in, identified or still a spawn reference, nearest first.
+## Every enemy believed in, identified or still a spawn reference, nearest first
+## except where PRIORITY_SWITCH keeps an earlier order.
 var priorities: Array[Dictionary] = []
-## The nearest this many priorities are the ones this ship answers for.
-const PRIORITY_COUNT: int = 3
+## The first this many priorities are the ones this ship answers for.
+const PRIORITY_COUNT: int = 4
 
 func update_priorities(server: GameServer) -> void:
 	if server == null or _ship.team == null:
 		return
 	var team_id: int = _ship.team.team_id
 	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
-	priorities = []
+	var rank := {}
+	for k in priorities.size():
+		rank[_priority_key(priorities[k])] = k
+	var fresh: Array[Dictionary] = []
 	for b in server._team_belief(team_id):
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
-		priorities.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos)})
+		fresh.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos)})
 	for r in server.anonymous_refs(team_id):
-		priorities.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos)})
-	priorities.sort_custom(func(x, y): return float(x.d) < float(y.d))
-	var held: Dictionary = {}
+		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos)})
+	# First sight retires the reference nearest the ship: it takes that reference's place, it is not new.
+	var gone: Array[Dictionary] = []
+	var keys := {}
+	for c in fresh:
+		keys[_priority_key(c)] = true
 	for c in priorities:
-		if not priority.is_empty() and c.ship == priority.ship and (c.ship != null or c.ref == priority.ref):
-			held = c
-			break
-	if priorities.is_empty():
-		priority = {}
-	elif not held.is_empty() and float(priorities[0].d) > float(held.d) * PRIORITY_SWITCH:
-		priority = held
-	else:
-		priority = priorities[0]
+		if c.ship == null and not keys.has(_priority_key(c)):
+			gone.append(c)
+	for c in fresh:
+		if gone.is_empty() or c.ship == null or rank.has(_priority_key(c)):
+			continue
+		var at: Vector2 = c.pos
+		var best := 0
+		for g in gone.size():
+			if (gone[g].pos as Vector2).distance_squared_to(at) < (gone[best].pos as Vector2).distance_squared_to(at):
+				best = g
+		rank[_priority_key(c)] = rank[_priority_key(gone[best])]
+		gone.remove_at(best)
+	# Last order first, newcomers by range behind it; then each passes those ahead it is PRIORITY_SWITCH nearer than.
+	fresh.sort_custom(func(x, y):
+		var rx: int = rank.get(_priority_key(x), 1 << 30)
+		var ry: int = rank.get(_priority_key(y), 1 << 30)
+		return rx < ry if rx != ry else float(x.d) < float(y.d))
+	for k in range(1, fresh.size()):
+		var m := k
+		while m > 0 and float(fresh[m].d) < float(fresh[m - 1].d) * PRIORITY_SWITCH:
+			var t: Dictionary = fresh[m]
+			fresh[m] = fresh[m - 1]
+			fresh[m - 1] = t
+			m -= 1
+	priorities = fresh
+	priority = priorities[0] if not priorities.is_empty() else {}
+
+static func _priority_key(c: Dictionary) -> String:
+	return "s%d" % c.ship.get_instance_id() if c.ship != null and is_instance_valid(c.ship) else "r%s" % str(c.get("ref", ""))
 
 func priority_target() -> Ship:
 	var p = priority.get("ship")
@@ -2279,6 +2307,54 @@ func engagement_range(ship: Ship, threat: float) -> float:
 	# close for, and this must not push it back out to arm's length.
 	return minf(sec_range * d.secondary_engage_ratio, gun_dist)
 
+## The engagement range follows engagement_range(threat) through a lag, so
+## threat flickering with who is firing at us settles on one distance, and no
+## faster than a ship could keep station with.
+const RANGE_TAU_S: float = 45.0
+const RANGE_RATE_SPEEDS: float = 2.0
+## Target changes under this share of gun range leave it where it is.
+const RANGE_DEADBAND: float = 0.03
+## Threat is 1 - exp(-this x share of HP lost per second): ~0.45 at 2%/s.
+const THREAT_HORIZON_S: float = 30.0
+## An enemy whose shells cannot land where we are keeps this share of its threat.
+const UNREACHABLE_THREAT: float = 0.1
+## A range is ours to fight at when we take this many times its HP share per second as it takes of ours.
+const TRADE_MARGIN: float = 1.5
+const RADIUS_STEP_M: float = 1000.0
+const RADIUS_TTL_S: float = 5.0
+## In a trade we angle to them, and they show us their bow: our AP gets no angled citadel.
+const ANGLED_ASPECT_DEG: float = 30.0
+const BOW_ASPECT_DEG: float = 10.0
+## The most of a main battery's fire a dodging ship sheds.
+const DODGE_MAX: float = 0.6
+const SEC_RANGE_BUCKET_M: float = 500.0
+const SEC_ASPECT_BUCKET_DEG: float = 15.0
+## A screened ring is this share of the range from the enemy to the friend it is busy with.
+const SCREEN_RATIO: float = 0.9
+## Bisection steps for optimal_engagement_range: gun range / 2^n of precision.
+const OPTIMAL_RANGE_STEPS: int = 10
+var _range_held: float = -1.0
+var _range_at: float = -INF
+
+## `snap`: no contact yet, so nothing to keep station on; follow the target outright.
+func smoothed_engagement_range(ctx: SkillContext, snap: bool = false) -> float:
+	var ship: Ship = ctx.ship
+	var target := optimal_engagement_range(ctx)
+	var now: float = SimClock.now()
+	if _range_held < 0.0 or snap:
+		_range_held = target
+		_range_at = now
+		return _range_held
+	var dt: float = now - _range_at
+	if dt <= 0.0:
+		return _range_held
+	_range_at = now
+	if absf(target - _range_held) < RANGE_DEADBAND * ship.artillery_controller.get_params()._range:
+		return _range_held
+	var eased: float = lerpf(_range_held, target, 1.0 - exp(-dt / RANGE_TAU_S))
+	_range_held = move_toward(_range_held, eased, RANGE_RATE_SPEEDS * ship.movement_controller.max_speed * dt)
+	return _range_held
+
 ## Dispatch a skill by name and record it as active. Returns null when the skill
 ## declines the situation, so callers can walk a fallback chain.
 func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
@@ -2364,7 +2440,7 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 		threat = threat,
 		# How close this ship wants to be, from its build. Computed once here so
 		# every arm that has to decide a distance reads the same answer.
-		engagement_range = engagement_range(ship, threat),
+		engagement_range = smoothed_engagement_range(ctx, spotted.is_empty()),
 		ra_threshold = ra_threshold,
 		arm = &"engaged",
 		forced = false,
@@ -2758,15 +2834,16 @@ func get_threat_score(ctx: SkillContext) -> float:
 	## approaches but never
 	## reaches 1. Calibrated by the reference engagement above; subclasses tune
 	## per-class fear via get_threat_class_weight().
-	var server: GameServer = ctx.server
 	var frame := Engine.get_physics_frames()
 	if frame == _threat_score_frame:
 		return _threat_score_cache
-	var my_hp  = _ship.health_controller.current_hp
-	var max_hp = _ship.health_controller.max_hp
-	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
-	var my_hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
+	_threat_score_cache = _threat_from(ctx, _threat_contacts(ctx), 0.0, false)
+	_threat_score_frame = frame
+	return _threat_score_cache
 
+## Every contact get_threat_score weighs: {ship, position, certainty[, stats]}.
+func _threat_contacts(ctx: SkillContext) -> Array[Dictionary]:
+	var server: GameServer = ctx.server
 	# What is out there and how sure we are of it: a spotted enemy is where it's
 	# seen, everything else is at its believed position with matching certainty
 	# (see EnemyPresumption). A never-seen ship still counts (it still shoots),
@@ -2787,15 +2864,29 @@ func get_threat_score(ctx: SkillContext) -> float:
 	for r in server.anonymous_refs(_ship.team.team_id):
 		contacts.append({ship = null, position = Vector3(r.pos.x, 0.0, r.pos.y), certainty = UNKNOWN_CERTAINTY,
 			stats = _unknown_class(server, int(r.id))})
-	if contacts.is_empty():
-		_threat_score_cache = my_hp_pressure * 0.3
-		_threat_score_frame = frame
-		return _threat_score_cache
+	return contacts
 
+## Threat from `contacts` with every distance moved by `shift`. `presume`: a
+## firing ship there is seen by every enemy inside our gun range (the bloom),
+## and seen, every enemy whose guns reach shoots; otherwise who is shooting now.
+func _threat_from(ctx: SkillContext, contacts: Array[Dictionary], shift: float, presume: bool) -> float:
+	var my_hp  = _ship.health_controller.current_hp
+	var max_hp = _ship.health_controller.max_hp
+	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
+	var my_hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
+	if contacts.is_empty():
+		return my_hp_pressure * 0.3
+	var spotted := false
+	if presume:
+		var seen_r: float = maxf(ctx.ship.artillery_controller.get_params()._range,
+			(_ship.concealment.params.p() as ConcealmentParams).radius if _ship.concealment != null else 0.0)
+		for contact in contacts:
+			spotted = spotted or (contact.position as Vector3).distance_to(_ship.global_position) + shift <= seen_r
 	var raw_threat: float = 1.0
-	var time_remaining: float = server.get_match_time_remaining()
-	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
+	var time_remaining: float = ctx.server.get_match_time_remaining()
+	var t_norm: float = clampf(1.0 - time_remaining / ctx.server.MATCH_DURATION, 0.0, 1.0)
 	var threat_scale: float = 1.0 - pow(t_norm, 4.0)
+	var reach := {} if presume else _reach_now(ctx)
 
 	for contact in contacts:
 		var enemy: Ship = contact.ship
@@ -2804,62 +2895,168 @@ func get_threat_score(ctx: SkillContext) -> float:
 				or enemy.artillery_controller == null):
 			continue
 		var believed: Vector3 = contact.position
-		var dist        = believed.distance_to(_ship.global_position)
-		var unknown: bool = not stats.is_empty()
-		var enemy_range = float(stats.range) if unknown else enemy.artillery_controller.get_params()._range
-		var enemy_hp    = float(stats.hp) if unknown else enemy.health_controller.current_hp
-		# Only count enemies whose guns can plausibly reach us
-		if enemy_range <= 0.0 or dist > enemy_range:
+		var dist: float = maxf(believed.distance_to(_ship.global_position) + shift, 0.0)
+		if not stats.is_empty():
+			raw_threat *= 1.0 - _unknown_threat(stats, dist, hp_ratio, max_hp) * threat_scale * float(contact.certainty)
 			continue
-		# 1.0 at point-blank → 0.0 at the range edge. This was inverted: it read
-		# pow(dist / enemy_range, 2.0), which is 0 in a knife fight and 1 at the
-		# horizon, so the closer a bot got the safer it believed itself to be.
-		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
-		# Class weight: each ship class has a different threat weight per subclass
-		var class_w = float(stats.class_w) if unknown else get_threat_class_weight(enemy.ship_class)
-		# How much ship is pointed at me, measured against my FULL bar rather than
-		# against what is left of it: parity is exactly 1.0, an enemy down to half
-		# its HP is 0.59, and no enemy however healthy is worth more than ~1.99 of
-		# me. This is the matchup, and it is the same fact whether or not I am
-		# hurt - a battleship outmasses a destroyer by the same multiple at either
-		# one's full health and at its last thousand points.
-		var matchup = _threat_sat(enemy_hp / maxf(max_hp, 1.0), THREAT_HP_FALLOFF)
-		# What being hurt has actually cost me, as its own term rather than as a
-		# denominator on the one above. Folding the two together is what left the
-		# destroyer unable to notice its own damage: divided by REMAINING HP, a
-		# hull whose bar is a fraction of every gun ship's is already past the
-		# knee of the saturating curve at full health, so the ratio is pinned near
-		# the ~1.99 ceiling from the first shell and losing HP cannot move it. A
-		# gunboat DD read 0.67 against a battleship at full health and 0.71 at 5%.
-		# Split out, each term is 1.0 at the reference engagement, so the 0.5
-		# calibration is unchanged and the own-damage axis comes back to life.
-		var condition = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
-		var raw_val = matchup * condition * range_pressure * class_w
-		if unknown or !ctx.behavior.active_shooters_at_me.has(enemy):
-			raw_val *= 0.5
-		raw_val *= threat_scale
-		var this_threat = 1.0 - exp(-THREAT_SATURATION * raw_val)
-		# Not knowing exactly where something is makes it less frightening, but on
-		# a sliding scale: a contact gone dark seconds ago is nearly as dangerous
-		# as one in plain sight, while a spawn-line rumour barely counts. Used to
-		# be a flat discount on everything unspotted, equating a fresh loss of
-		# contact with a ten-minute-old guess.
-		this_threat *= float(contact.certainty)
-		raw_threat *= (1.0 - this_threat)
+		if dist > enemy.artillery_controller.get_params()._range:
+			continue
+		# Share of our remaining HP its guns take per second at this range, off our real aspect to it.
+		var share: float = incoming_dps(enemy, dist, BotGunnery.aspect_from(_ship, believed)) / maxf(my_hp, 1.0)
+		if reach.get(enemy.get_instance_id(), true) == false:
+			share *= UNREACHABLE_THREAT
+		var shooting: bool = spotted if presume else active_shooters_at_me.has(enemy)
+		if not shooting:
+			share *= 0.5
+		raw_threat *= exp(-THREAT_HORIZON_S * share * threat_scale * float(contact.certainty))
+	return clampf(1.0 - raw_threat, 0.0, 1.0)
 
-	# Low HP multiplies the pressure: 1 - (1 - t)^k scales the summed pressure by k,
-	# so no enemy stays no threat while one stray shell's worth reads as maximal.
-	var safety: float = maxf(smoothstep(0.0, THREAT_LOW_HP, hp_ratio), 0.02)
-	var base_threat = clampf(1.0 - pow(raw_threat, 1.0 / safety), 0.0, 1.0)
+## A spawn reference has a class, not a hull: the old matchup x range curve, 0..1.
+func _unknown_threat(stats: Dictionary, dist: float, hp_ratio: float, max_hp: float) -> float:
+	var enemy_range := float(stats.range)
+	if enemy_range <= 0.0 or dist > enemy_range:
+		return 0.0
+	var range_pressure := clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
+	var matchup := _threat_sat(float(stats.hp) / maxf(max_hp, 1.0), THREAT_HP_FALLOFF)
+	var condition := _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
+	return 1.0 - exp(-THREAT_SATURATION * matchup * condition * range_pressure * float(stats.class_w) * 0.5)
 
-	# As the match timer runs out, reduce threat so bots play more aggressively.
-	# Uses 1 - t^4: stays near 1.0 for most of the match, drops sharply near the end.
-	# e.g. t=50% (10min) -> 0.94, t=75% (15min) -> 0.68, t=90% (18min) -> 0.34, t=100% -> 0.0
+## Enemy instance id -> whether its shells can land where we are; {} without a reach field.
+func _reach_now(ctx: SkillContext) -> Dictionary:
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	if field == null or not field.is_built() or _ship.team == null:
+		return {}
+	var team_id: int = _ship.team.team_id
+	var mask: int = field.exposure_mask(team_id, Vector2(_ship.global_position.x, _ship.global_position.z))
+	var out := {}
+	var ids: PackedInt64Array = field.get_team_enemy_ids(team_id)
+	for i in mini(ids.size(), 63):
+		out[ids[i]] = mask & (1 << i) != 0
+	return out
 
+## What `enemy`'s main and secondary batteries do to us per second at `range_m`,
+## seen `aspect_deg` off our bow, less the main-battery salvos we dodge.
+func incoming_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
+	return maxf(SkillStance._expected(_ship, enemy, range_m, aspect_deg).x, 0.0) * dodge(enemy, range_m) \
+		+ _secondary_dps(enemy, _ship, range_m, aspect_deg)
 
-	_threat_score_cache = base_threat
-	_threat_score_frame = frame
-	return _threat_score_cache
+## Share of `enemy`'s main-battery fire still landing once we dodge: a shell
+## that flies longer than our rudder takes to bite plus a hull length of turn
+## can be stepped away from, a salvo at a time while its reload outlasts the flight.
+func dodge(enemy: Ship, range_m: float) -> float:
+	var tof: float = BotGunnery.flight_time(enemy, range_m)
+	if not is_finite(tof):
+		return 1.0
+	var mc = _ship.movement_controller
+	var speed: float = maxf(mc.max_speed, 1.0)
+	# A turn of radius R at speed v moves the hull sideways v²t²/2R: a hull length takes sqrt(2RL)/v.
+	var shift_s: float = sqrt(2.0 * mc._p().turning_circle_radius * mc.ship_length) / speed
+	var reactable: float = clampf((tof - mc._p().rudder_response_time) / maxf(shift_s, 0.1), 0.0, 1.0)
+	var reload: float = enemy.artillery_controller.get_params().reload_time
+	return 1.0 - DODGE_MAX * reactable * reload / maxf(reload + tof, 0.1)
+
+## What our main and secondary batteries do to `enemy` per second at `range_m`, seen `aspect_deg` off its bow.
+func outgoing_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
+	return maxf(SkillStance._expected(enemy, _ship, range_m, aspect_deg).x, 0.0) \
+		+ _secondary_dps(_ship, enemy, range_m, aspect_deg)
+
+## [shooter id, target id, range bucket, aspect bucket] -> secondary dps; the
+## GDScript solve is too slow to run per contact per frame.
+static var _sec_dps_cache: Dictionary = {}
+
+static func _secondary_dps(shooter: Ship, target: Ship, range_m: float, aspect_deg: float) -> float:
+	if not is_instance_valid(shooter.secondary_controller) or range_m > shooter.secondary_controller.get_max_range():
+		return 0.0
+	var key := [shooter.get_instance_id(), target.get_instance_id(), int(range_m / SEC_RANGE_BUCKET_M), int(aspect_deg / SEC_ASPECT_BUCKET_DEG)]
+	if not _sec_dps_cache.has(key):
+		var e: Dictionary = BotGunnery.expected(shooter, target, range_m, aspect_deg, BotGunnery.KIND_SECONDARY)
+		_sec_dps_cache[key] = maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0)))
+	return _sec_dps_cache[key]
+
+## Enemy instance id -> [time, Vector2(radius, best trade ratio)].
+var _radius_cache: Dictionary = {}
+
+## How close this ship will fight `enemy`: in to the nearest range where it
+## out-trades it by TRADE_MARGIN (our share of its HP per second, it bow-in,
+## against its share of ours, us angled); short of that, wherever the trade is
+## best. Past its guns the trade is ours outright, so a ship that outranges it
+## stands just outside them.
+func enemy_radius(enemy: Ship) -> float:
+	return _trade(enemy).x
+
+## enemy_radius, unless `enemy` (believed `at`) is not shooting at us and a
+## lit friend is nearer it: that friend is ahead of us in its priorities, so
+## its ring shrinks to SCREEN_RATIO of the friend's range from it.
+func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
+	var full := enemy_radius(enemy)
+	if active_shooters_at_me.has(enemy) or _ship.team == null or ctx.server == null:
+		return full
+	var mine: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+	var front := INF
+	for f in ctx.server.get_team_ships(_ship.team.team_id):
+		if f != _ship and is_instance_valid(f) and f.is_alive() and f.visible_to_enemy:
+			front = minf(front, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
+	if front >= mine:
+		return full
+	return minf(full, front * SCREEN_RATIO)
+
+## Whether `enemy` out-trades us by TRADE_MARGIN at every range: Fight keeps
+## out of its fire where it can.
+func dangerous(enemy: Ship) -> bool:
+	return _trade(enemy).y < 1.0 / TRADE_MARGIN
+
+## (radius, best trade ratio) against `enemy`, cached RADIUS_TTL_S.
+func _trade(enemy: Ship) -> Vector2:
+	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
+		return Vector2(0.0, INF)
+	var now: float = SimClock.now()
+	var c: Array = _radius_cache.get(enemy.get_instance_id(), [])
+	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
+		return c[1]
+	var our_hp: float = maxf(_ship.health_controller.current_hp, 1.0)
+	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
+	var top: float = maxf(_ship.artillery_controller.get_params()._range, enemy.artillery_controller.get_params()._range)
+	var push := -1.0
+	var best := Vector2(top, -1.0)
+	var r := POINT_BLANK_M
+	while r <= top:
+		var out: float = outgoing_dps(enemy, r, BOW_ASPECT_DEG) / their_hp
+		var theirs: float = incoming_dps(enemy, r, ANGLED_ASPECT_DEG) / our_hp
+		var ratio: float = out / theirs if theirs > 0.0 else (INF if out > 0.0 else 0.0)
+		if push < 0.0 and ratio >= TRADE_MARGIN:
+			push = r
+		if ratio > best.y:
+			best = Vector2(r, ratio)
+		r += RADIUS_STEP_M
+	var result := Vector2(push if push >= 0.0 else best.x, best.y)
+	_radius_cache[enemy.get_instance_id()] = [now, result]
+	return result
+
+## The band radius the ship would choose if it sat on it: where
+## engagement_range(threat there, everyone in reach firing) meets the radius
+## itself. Threat falls with range, so the two cross once.
+func optimal_engagement_range(ctx: SkillContext) -> float:
+	var contacts := _threat_contacts(ctx)
+	var nearest := INF
+	for c in contacts:
+		nearest = minf(nearest, (c.position as Vector3).distance_to(_ship.global_position))
+	var lo: float = POINT_BLANK_M
+	var hi: float = max_engagement_range(_ship)
+	if not is_finite(nearest):
+		return engagement_range(_ship, _threat_from(ctx, contacts, 0.0, false))
+	var gap := func(r: float) -> float:
+		return engagement_range(_ship, _threat_from(ctx, contacts, r - nearest, true)) - r
+	if gap.call(lo) <= 0.0:
+		return lo
+	if gap.call(hi) >= 0.0:
+		return hi
+	for _i in OPTIMAL_RANGE_STEPS:
+		var mid := (lo + hi) * 0.5
+		if gap.call(mid) > 0.0:
+			lo = mid
+		else:
+			hi = mid
+	return (lo + hi) * 0.5
 
 
 

@@ -62,9 +62,15 @@ func _ready():
 	else:
 		set_physics_process(false)
 
+## Sim seconds since the last per-second tick; tick counts drift from sim time under --time-scale.
+var _sec_clock := 0.0
+
 func _physics_process(_delta: float) -> void:
 	if _Utils.authority():
-		var sec_tic = Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0
+		_sec_clock += _delta
+		var sec_tic := _sec_clock >= 1.0
+		if sec_tic:
+			_sec_clock -= 1.0
 		if lifetime > 0:
 			if sec_tic: # tick every second
 				_sync.rpc(lifetime)

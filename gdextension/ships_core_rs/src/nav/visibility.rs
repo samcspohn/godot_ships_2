@@ -5,9 +5,8 @@ use std::time::Instant;
 
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
-use crate::nav::cover_sweep::{pick_dict, sweep_args};
-use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET, AVOID_LOS};
-use crate::projectile::damage_model::DamageModel;
+use crate::nav::cover_search::{safety, CoverArgs};
+use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
 use crate::variant_cast::VariantCast;
 
 /// Matches the server's spotting ray, cast at y = 1 m on both ends.
@@ -404,103 +403,84 @@ impl VisibilityGrid {
         d.set("steps", r.steps as i64);
         d.set("trail_a", &PackedVector2Array::from(r.trails[0].as_slice()));
         d.set("trail_b", &PackedVector2Array::from(r.trails[1].as_slice()));
+        // Per trail cell, the shootable enemies it counts; for the debug overlay.
+        let counts = |t: &[Vector2]| -> PackedInt32Array {
+            t.iter().map(|&c| self.cell_of(c).map_or(0, |k| self.spotted_mask(k, &inp).count_ones() as i32)).collect()
+        };
+        d.set("trail_a_n", &counts(&r.trails[0]));
+        d.set("trail_b_n", &counts(&r.trails[1]));
         d
     }
 
-    /// Every water cell within `box_m` of `from`, reached by the cheapest path
-    /// priced by time and by lit enemies' fire at the aspect each step shows.
-    /// hold_walk's opts plus damage_model, me, prio and seen_r (per enemy), speed,
-    /// my_hp, box_m, pref_range, max_range, gun_range, hold_s, need, allow_hard, held and
-    /// weights w_gain, w_risk, w_time, w_range, w_hard.
-    /// {best, held, here, dark: {pos, score, gain, risk, time, mask, count, hard} or {}, cells, us}.
+    /// Nearest safe cell from `from`: hidden from or out of the fire of every
+    /// threat (`heavy`), or dark (`det_r` from each), in reach of `need`
+    /// shootable targets. Only the cones toward `axis` and away from it are
+    /// searched, away cells costing `away_ratio` times their distance, out to
+    /// `reach_m`. hold_walk's opts plus reach_m, away_ratio, cone_half,
+    /// allow_dark, need. {found, pos, dark, seen, mask, count, cells}.
     #[func]
-    fn cover_sweep(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+    fn cover_search(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
-        let Some(mut dm) = opts.get("damage_model").and_then(|v| v.try_to::<Gd<DamageModel>>().ok()) else { return d };
+        d.set("found", false);
         if !self.is_ready() {
             return d;
         }
-        let t0 = Instant::now();
-        crate::nav::reach::probe_take();
         let inp = self.hold_inputs(&enemies, &opts);
-        let t_inputs = t0.elapsed();
-        let args = sweep_args(from, &opts, &mut dm.bind_mut());
-        let t_args = t0.elapsed();
-        let r = self.cover_sweep_impl(&inp, &args, &dm.bind());
-        let t_walk = t0.elapsed();
-        pick_dict(&mut d, "best", r.best, &self.centres);
-        pick_dict(&mut d, "held", r.held, &self.centres);
-        pick_dict(&mut d, "here", r.here, &self.centres);
-        pick_dict(&mut d, "dark", r.dark, &self.centres);
-        d.set("cells", r.cells as i64);
-        d.set("us", t_walk.as_micros() as i64);
-        let p = crate::nav::reach::probe_take();
-        let mut st = VarDictionary::new();
-        st.set("inputs_us", t_inputs.as_micros() as i64);
-        st.set("args_us", (t_args - t_inputs).as_micros() as i64);
-        st.set("walk_us", (t_walk - t_args).as_micros() as i64);
-        st.set("ray_us", (p.ray_ns / 1000) as i64);
-        st.set("planes_new", p.planes_new as i64);
-        st.set("planes_us", (p.planes_ns / 1000) as i64);
-        st.set("masks", p.masks as i64);
-        st.set("misses", p.misses as i64);
-        st.set("out_of_range", p.out_of_range as i64);
-        st.set("los", p.los as i64);
-        st.set("rays", p.rays as i64);
-        st.set("ray_dist_avg", if p.rays > 0 { (p.ray_dist / p.rays as f64) as f32 } else { 0.0 });
-        st.set("ray_dist_max", p.ray_dist_max);
-        st.set("steps", p.steps as i64);
-        st.set("land", p.land as i64);
-        st.set("matrix", p.matrix as i64);
-        st.set("enemies", inp.enemies.len() as i64);
-        d.set("stats", &st);
+        let a = CoverArgs::from_opts(axis, &opts);
+        let (found, cells) = self.cover_search_impl(from, &inp, &a);
+        d.set("cells", cells.len() as i64);
+        if let Some((k, (dark, seen), mask)) = found {
+            d.set("found", true);
+            d.set("pos", self.centres[k]);
+            d.set("dark", dark);
+            d.set("seen", seen);
+            d.set("mask", mask as i64);
+            d.set("count", mask.count_ones() as i64);
+        }
         d
     }
 
-    /// Debug: cover_sweep's view of every cell in its box, one byte per grid cell
-    /// row-major by z. 0 outside the box, land or too shallow; 1 seen (LOS within
-    /// los_r), 2 seen only through the los_margin, 3 radar/hydro (det_r), 4 hidden
-    /// with no target in reach, 5 hidden with one (a candidate station), 6 seen
-    /// but out of every gun (hard cover). Same opts as cover_sweep.
+    /// cover_search's test for the cell holding `pos`: {ok, dark, seen, mask, count}.
     #[func]
-    fn cover_debug_bytes(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> PackedByteArray {
-        let n = (self.w.max(0) * self.h.max(0)) as usize;
-        let mut out = vec![0u8; n];
-        let Some(mut dm) = opts.get("damage_model").and_then(|v| v.try_to::<Gd<DamageModel>>().ok()) else { return PackedByteArray::new() };
+    fn cover_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("ok", false);
+        let (ix, iz) = self.grid_of(pos);
+        let Some(k) = self.water(ix, iz).filter(|_| self.is_ready()) else { return d };
+        let inp = self.hold_inputs(&enemies, &opts);
+        let a = CoverArgs::from_opts(f32::INFINITY, &opts);
+        if let Some(((dark, seen), mask)) = self.cover_ok(k, &inp, &a) {
+            d.set("ok", true);
+            d.set("dark", dark);
+            d.set("seen", seen);
+            d.set("mask", mask as i64);
+            d.set("count", mask.count_ones() as i64);
+        }
+        d
+    }
+
+    /// Debug: cover_search's view, one byte per grid cell row-major by z. 0 not
+    /// weighed; 1 in a cone but unsafe; 6 seen but out of fire; 4 hidden; 5 hidden with a target; 3 dark.
+    #[func]
+    fn cover_debug_bytes(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> PackedByteArray {
+        let mut out = vec![0u8; (self.w.max(0) * self.h.max(0)) as usize];
         if !self.is_ready() {
             return PackedByteArray::new();
         }
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = sweep_args(from, &opts, &mut dm.bind_mut());
-        let all = if inp.enemies.len() >= 64 { u64::MAX } else { (1u64 << inp.enemies.len()) - 1 };
-        let known = inp.fire.as_ref().map_or(0, |f| f.known_mask());
-        let half = a.box_m;
-        for iz in 0..self.h {
-            for ix in 0..self.w {
-                let Some(k) = self.water(ix, iz) else { continue };
-                let c = self.centres[k];
-                if (c.x - from.x).abs() > half || (c.y - from.y).abs() > half || self.sdf_c[k] < inp.clearance {
-                    continue;
-                }
-                let det = self.in_zone_of((ix, iz), &inp, AVOID_DET);
-                let seen = self.in_zone_of((ix, iz), &inp, AVOID_LOS);
-                let direct = inp.enemies.iter().any(|e| e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.los_r * e.los_r && self.visible_idx(k, ec)));
-                let out_of_fire = inp.fire.as_ref().is_some_and(|f| known == all && f.mask(c) == 0);
-                let in_range = inp.enemies.iter().enumerate().take(64)
-                    .filter(|(_, e)| a.max_range <= 0.0 || c.distance_to(e.pos) <= a.max_range)
-                    .fold(0u64, |m, (i, _)| m | 1 << i);
-                out[(iz * self.w + ix) as usize] = if !det && !seen {
-                    if a.in_cone(c) && self.spotted_mask(k, &inp) & a.live & in_range != 0 { 5 } else { 4 }
-                } else if out_of_fire {
-                    6
-                } else if det {
-                    3
-                } else if direct {
-                    1
-                } else {
-                    2
-                };
-            }
+        let a = CoverArgs::from_opts(axis, &opts);
+        // Every weighed cell: a search no cell can satisfy returns them all.
+        let (_, cells) = self.cover_search_impl(from, &inp, &CoverArgs { need: u32::MAX, ..a.clone() });
+        for (_, k) in cells {
+            let c = self.centres[k];
+            let (ix, iz) = self.grid_of(c);
+            out[(iz * self.w + ix) as usize] = match safety(self, k, &inp, a.allow_dark) {
+                None => 1,
+                Some((true, _)) => 3,
+                Some((false, true)) => 6,
+                Some((false, false)) if a.need > 0 && self.spotted_mask(k, &inp).count_ones() >= a.need => 5,
+                Some((false, false)) => 4,
+            };
         }
         PackedByteArray::from(out.as_slice())
     }
@@ -571,6 +551,30 @@ impl VisibilityGrid {
         if let Some((t, score)) = self.engage_score(k, &inp) {
             d.set("score", score);
             d.set("target", t as i64);
+        }
+        d
+    }
+
+    /// {found, pos}: along the ray from `centre` through `through`, the first
+    /// allowed point (hold_walk's test) from `r` out to `max_r` metres.
+    #[func]
+    fn ray_free(&self, centre: Vector2, through: Vector2, r: f32, max_r: f32, enemies: PackedVector2Array,
+        opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("found", false);
+        let Some(dir) = (through - centre).try_normalized().filter(|_| self.is_ready()) else { return d };
+        let inp = self.hold_inputs(&enemies, &opts);
+        let step = self.cell * 0.5;
+        let mut at = r.max(0.0);
+        while at <= max_r {
+            let p = centre + dir * at;
+            let (ix, iz) = self.grid_of(p);
+            if self.spot_free(ix, iz, &inp).is_some() {
+                d.set("found", true);
+                d.set("pos", p);
+                return d;
+            }
+            at += step;
         }
         d
     }

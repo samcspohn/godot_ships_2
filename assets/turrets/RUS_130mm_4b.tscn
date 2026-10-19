@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://d4lppccv45ox5"]
+
+[ext_resource type="PackedScene" uid="uid://cva3s0hxkbke4" path="res://assets/turrets/glb/RUS_130mm_4b.glb" id="1_glb"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://assets/audio/500mm_muzzle.wav" id="2_5fkeh"]
+
+[node name="RUS_130mm_4b" unique_id=974559960 instance=ExtResource("1_glb")]
+_sound = ExtResource("2_5fkeh")
+pitch = 3.6
+glb_path = "uid://cva3s0hxkbke4"
+
+[node name="Turret_col" parent="." index="1" unique_id=1181346898]
+layers = 0

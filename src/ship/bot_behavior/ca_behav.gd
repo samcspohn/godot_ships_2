@@ -106,10 +106,8 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		wants_stealth = wants_stealth or _skill_hold.cover.wants_concealment()
 	return hold
 
-func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
-	return {"mode": mode, "refs": cover_refs() if mode == SkillCover.Mode.OFFENSE else [], "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
-		"max_range": max_engagement_range(_ship) if mode == SkillCover.Mode.OFFENSE else 0.0,
-		"fire_en_route": cant_go_dark}
+func _hold_cover_params(mode: int, _sit: Dictionary) -> Dictionary:
+	return {"mode": mode, "refs": cover_refs() if mode == SkillCover.Mode.OFFENSE else [], "fire_en_route": cant_go_dark}
 
 ## The engaged arm: hold hidden island cover with a target in reach; without
 ## one, engage from the band while the odds allow, then get out.

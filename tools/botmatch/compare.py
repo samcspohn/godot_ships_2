@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": [], "nav": []}
+              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -49,6 +49,8 @@ def load(d):
         health["reasons"][m.get("win_reason", "?")] += 1
         if "nav" in m:
             health["nav"].append(m["nav"])
+        if "stations" in m:
+            health["stations"].append(m["stations"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -91,6 +93,16 @@ if any(h["nav"] for h, _ in data.values()):
         print(f'{label:>12} {calls / len(nv):>7.0f} {mm:>7.3f}±{mc:<5.3f} {p50:>6.2f} {pm:>7.2f}±{pc:<5.2f} '
               f'{qm:>7.2f}±{qc:<5.2f} {max(n["max_ms"] for n in nv):>7.2f} {per_k("over_3ms"):>8.2f} '
               f'{per_k("relaxed"):>8.2f} {per_k("invalid"):>8.2f}')
+
+if any(h["stations"] for h, _ in data.values()):
+    print("\n== station moves (metres from each newly adopted station to the one before; per match)")
+    print(f'{"build":>12} {"mode":>8} {"moves":>13} {"mean_m":>13} {"p50_m":>13} {"p90_m":>13} {">1km":>11} {">3km":>11}')
+    for label, (h, _) in data.items():
+        for mode in sorted({k for st in h["stations"] for k in st}):
+            ms = [st.get(mode, {"n": 0, "over_1km": 0, "over_3km": 0}) for st in h["stations"]]
+            cell = lambda k: "%7.0f±%-5.0f" % ci([x[k] for x in ms if x["n"] > 0 or k in ("n", "over_1km", "over_3km")])
+            print(f'{label:>12} {mode:>8} {cell("n"):>13} {cell("mean_m"):>13} {cell("p50_m"):>13} {cell("p90_m"):>13} '
+                  f'{"%5.1f±%-4.1f" % ci([x["over_1km"] for x in ms]):>11} {"%5.1f±%-4.1f" % ci([x["over_3km"] for x in ms]):>11}')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

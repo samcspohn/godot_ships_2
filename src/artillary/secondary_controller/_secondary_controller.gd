@@ -50,14 +50,6 @@ var weapons: Array[Turret]:
 
 var active: bool
 
-func _init() -> void:
-	# if sub_controllers.size() > 0:
-	button_names = ["APs", "HEs"]
-	tool_tips = [
-	 	Callable(_build_tooltip_text).bind(0),
-		Callable(_build_tooltip_text).bind(1)
-	]
-
 func _build_tooltip_text(_shell_index: int) -> String:
 	var shell_label := "AP" if _shell_index == 0 else "HE"
 	var lines := [
@@ -215,6 +207,12 @@ func _ready() -> void:
 	else:
 		set_physics_process(false)
 		set_process(true)
+		if sub_controllers.size() > 0:
+			button_names = ["APs", "HEs"]
+			tool_tips = [
+			 	Callable(_build_tooltip_text).bind(0),
+				Callable(_build_tooltip_text).bind(1)
+			]
 
 func to_dict() -> Dictionary:
 	var sub_list = []

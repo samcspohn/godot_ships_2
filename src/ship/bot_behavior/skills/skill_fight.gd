@@ -3,61 +3,50 @@ extends SkillPosition
 
 ## SkillHold's FIGHT mode: the firing station on the edge of the bands round
 ## every enemy that shoots (pulled in where an island blocks that enemy's
-## shells), at the cell that wins the best single fight: the
-## spotted target it reaches that dies fastest (our fire plus the friends
-## already on it, over its HP), less what every enemy whose fire covers the
-## cell does to us (over our HP). A 1v1 or a target the team already has under
-## fire beats a cell that sees more of them. The route is walled out of the
-## bands; from inside one the way out comes first. Declines with no such cell.
-## Params: band_m (else desired_range, else the engagement range), needs_los
-## (the station must see its target), radius (ride the band edge within this
-## of the chosen station instead of parking; 0 parks), away (bow away from the
-## danger on arrival).
+## shells), hitting as many of our top PRIORITY_COUNT priorities as it can.
+## Held while it still hits every one of them that is still a priority, however
+## their order shuffles; with none hittable anywhere, any lit enemy. The route is
+## walled out of the bands. Declines with
+## no such cell. Params: band_m (else desired_range, else each enemy's own radius),
+## needs_los (the station must see its target), radius (ride the band edge within
+## this of the chosen station instead of parking; 0 parks), away (bow away from
+## the danger on arrival).
 
-const EXIT_STEP_M := 200.0
-const EXIT_MAX_STEPS := 100
-const EXIT_MARGIN_M := 300.0
-const EXIT_DIRECTIONS := 36
 ## A station in an island's shadow pulls that enemy's route wall in to this short of it.
 const SHADOW_MARGIN_M := 200.0
 ## Patrol leg along the band edge, at least, and in turning circles.
 const PATROL_STEP_M := 1500.0
 const PATROL_STEP_TURNS := 3.0
-## Band edge walked each way when looking for a better fight.
-const WALK_BUDGET_M := 6000.0
-## A new station must beat the held one's score by this share.
-const SWITCH_GAIN := 0.1
-## A station on our own priority is worth this many on anyone else.
-const PRIORITY_GAIN := 2.0
-## Aspect assumed for fire between ships whose heading over the hold is unknown.
-const TYPICAL_ASPECT_DEG := 45.0
+## A held station is settled this far outside the ring of the nearest band it rides.
+const SETTLE_MARGIN_M := 100.0
+## A free station further than this outside that ring is pulled back in to it.
+const SETTLE_SLACK_M := 400.0
+## How far past the ring a settle looks for allowed water.
+const SETTLE_REACH_M := 4000.0
 
 var band_m: float = 0.0
 var _patrol_sign: float = 0.0
 var _target: Ship = null
+## Instance ids of the priorities the held station was chosen to hit.
+var _held: Dictionary = {}
+var _prio_lit: int = 0
 var _radius: float = 0.0
 ## The station the search chose; riding the band moves _station, not this.
 var _anchor: Vector2 = Vector2.ZERO
-## Where the route leaves the bands; INF while outside them.
-var _escape: Vector2 = Vector2.INF
 
 func reset() -> void:
 	super()
 	_patrol_sign = 0.0
-	_escape = Vector2.INF
-
-func escape_point() -> Vector2:
-	return _escape
+	_held = {}
 
 func _label() -> String:
 	return "Fight"
 
 func debug_text() -> String:
 	if not _has_station:
-		return "%s: none | band %.0f m" % [_label(), band_m]
-	return "%s on %s %.4f | band %.0f m | last walk %d cells%s" % [_label(),
-		_target.ship_name if is_instance_valid(_target) else "?", _station_score, band_m, _steps,
-		" | exiting" if _escape != Vector2.INF else ""]
+		return "%s: none | P1 band %.0f m" % [_label(), band_m]
+	return "%s on %s | hits %d/%d priorities | P1 band %.0f m | last walk %d cells" % [_label(),
+		_target.ship_name if is_instance_valid(_target) else "?", _held.size(), _prio_lit, band_m, _steps]
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
@@ -71,107 +60,196 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if belief.is_empty() or g.is_empty():
 		return _decline()
 	var gun_range: float = float(g.range)
-	band_m = _band(ctx, clampf(ctx.behavior.get_threat_score(ctx), 0.0, 1.0), params)
 	_radius = float(params.get("radius", 0.0))
 	var pos := PackedVector2Array()
 	var band := PackedFloat32Array()
 	var reach := PackedFloat32Array()
 	var live := PackedByteArray()
+	var prio := PackedByteArray()
 	var ids := PackedInt64Array()
-	var value := PackedFloat32Array()
-	var harm := PackedFloat32Array()
-	var friends: Array = ctx.server.get_team_ships(team_id)
-	var hp: float = maxf(ship.health_controller.current_hp, 1.0)
+	var heavy := PackedByteArray()
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var pp: Vector3 = ctx.behavior.priority_point()
 	var flank := Vector2(pp.x, pp.z) if pp.is_finite() else here
+	var top := {}
+	for c in ctx.behavior.priorities:
+		if top.size() >= BotBehavior.PRIORITY_COUNT:
+			break
+		if c.ship != null and is_instance_valid(c.ship):
+			top[c.ship] = true
 	for b in belief:
 		var e: Ship = b.ship
 		pos.append(b.pos)
-		band.append(band_m + float(b.spread) if threatens(e) else 0.0)
+		band.append(radius_for(ctx, e, b.pos, params) + float(b.spread) if threatens(e) else 0.0)
 		reach.append(gun_range)
 		# A remembered or presumed contact has nothing to shoot at: it is
 		# kept out of, never stationed on.
 		# Lit across the map is someone else's: only this flank's enemies make a station.
 		var is_live: bool = int(b.source) == 0 and (b.pos.distance_to(flank) <= gun_range or b.pos.distance_to(here) <= gun_range)
 		live.append(1 if is_live else 0)
+		prio.append(1 if is_live and top.has(e) else 0)
 		ids.append(e.get_instance_id())
-		var r: float = Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)
-		harm.append(maxf(SkillStance._expected(ship, e, r, TYPICAL_ASPECT_DEG).x, 0.0) / hp * float(b.weight))
-		var v: float = _kill_rate(ship, e, friends) if is_live else 0.0
-		value.append(v * PRIORITY_GAIN if e == ctx.behavior.priority_target() else v)
+		heavy.append(1 if threatens(e) and ctx.behavior.dangerous(e) else 0)
+	var pt: Ship = ctx.behavior.priority_target()
+	var pp2 := Vector2(pp.x, pp.z) if pp.is_finite() else here
+	band_m = radius_for(ctx, pt, pp2, params) if pt != null else 0.0
 	var danger := flank if pp.is_finite() else _belief_centre(ctx, belief, here)
 	_hull_key = NavigationMapManager.reach_hull_key(g)
 	var opts := {"det_r": band, "spot_r": reach, "shootable": live, "reach_field": field, "team": team_id,
 		"hull_key": _hull_key, "ids": ids, "reach_needs_los": bool(params.get("needs_los", false)),
 		"clearance": ctx.behavior._get_ship_clearance(), "flank": _flank_dir(ctx),
-		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SHOT,
-		"value": value, "harm": harm, "budget_m": WALK_BUDGET_M}
-	_walk_engage(vis, danger, here, pos, opts, belief)
+		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SHOT, "heavy": heavy}
+	_walk_fight(vis, danger, here, pos, opts, prio, live, belief)
 	if not _has_station:
 		return null
+	opts.shootable = _union(prio, live)
+	opts.prio_bits = _bits(prio)
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
 	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}) if bool(params.get("away", false)) else params)
 	_shape(intent, ctx, vis, here, pos, opts)
 	return intent
 
-## Keeps the held station unless the walk finds a better fight by SWITCH_GAIN.
-func _walk_engage(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array,
-		opts: Dictionary, belief: Array[Dictionary]) -> void:
-	var held := -INF
+## Holds the station while it hits every priority it was chosen for that is
+## still one; then looks for one more of them, else searches afresh: priorities
+## first, any lit enemy failing that.
+func _walk_fight(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array,
+		opts: Dictionary, prio: PackedByteArray, live: PackedByteArray, belief: Array[Dictionary]) -> void:
+	var prio_ids := _ids_in(belief, _bits(prio))
+	_prio_lit = prio_ids.size()
 	if _has_station:
-		var ev: Dictionary = vis.engage_eval(Vector2(_station.x, _station.z), pos, opts)
-		held = float(ev.score)
-		if not is_finite(held):
-			_drop()
+		opts.shootable = _union(prio, live)
+		_settle(vis, pos, opts)
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), pos, opts)
+		var hit := _ids_in(belief, int(ev.mask))
+		var keep: bool = bool(ev.free) and not hit.is_empty()
+		for id in _held:
+			keep = keep and (not prio_ids.has(id) or hit.has(id))
+		if keep:
+			_held = _ids_in(belief, int(ev.mask) & _bits(prio))
+			_count = _held.size() + 1
+			_set_target(belief, prio, int(ev.mask))
 		else:
-			_station_score = held
-			_set_target(belief, int(ev.target))
-	var r: Dictionary
+			_drop()
+	# Searches look first for cells out of the fire of enemies that out-trade us, then anywhere.
+	var base: int = opts.avoid
+	var tries: Array = [base | VisibilityGrid.AVOID_FIRE, base] if _bits(opts.heavy) != 0 else [base]
 	if _has_station:
-		r = vis.engage_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
-	else:
-		if seed.is_finite():
-			r = vis.engage_walk(seed, danger, false, pos, opts)
-		if not bool(r.get("found", false)):
-			r = vis.engage_walk(danger, here, true, pos, opts)
-		if not bool(r.get("has_start", false)):
-			r = vis.engage_walk(_nearest(pos, here), here, true, pos, opts)
-	_steps = int(r.get("steps", 0))
-	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
-	if not bool(r.get("found", false)):
+		if prio_ids.size() > _held.size():
+			opts.shootable = prio
+			opts.need = _held.size() + 1
+			opts.budget_m = REFINE_BUDGET_M
+			for avoid in tries:
+				opts.avoid = avoid
+				if _take(vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts), prio, belief):
+					break
+		opts.avoid = base
 		return
-	var score: float = r.score
-	if _has_station and score <= held + absf(held) * SWITCH_GAIN:
+	for shoot in [prio, live]:
+		if _bits(shoot) == 0:
+			continue
+		opts.shootable = shoot
+		opts.need = 1
+		for avoid in tries:
+			opts.avoid = avoid
+			# As Spot: from the shared seed, else here; never from the enemy's side.
+			opts.budget_m = REFINE_BUDGET_M
+			var r: Dictionary
+			for from in [seed, here]:
+				if from.is_finite():
+					r = vis.hold_walk(from, danger, false, pos, opts)
+					if bool(r.get("has_start", false)):
+						break
+			if not bool(r.get("has_start", false)):
+				r = vis.hold_walk(danger, here, true, pos, opts)
+			if _take(r, prio, belief):
+				opts.avoid = base
+				return
+	opts.avoid = base
+
+## When the bands move, the held station follows the nearest one's ring:
+## out of it when it grew over the station, back in when it shrank away.
+## A station in an island's shadow inside the ring is allowed and stays.
+func _settle(vis: VisibilityGrid, pos: PackedVector2Array, opts: Dictionary) -> void:
+	var st := Vector2(_station.x, _station.z)
+	var radii: PackedFloat32Array = opts.det_r
+	var best := -1
+	for i in pos.size():
+		if radii[i] > 0.0 and (best < 0 or st.distance_squared_to(pos[i]) < st.distance_squared_to(pos[best])):
+			best = i
+	if best < 0:
+		return
+	var c: Vector2 = pos[best]
+	var want: float = radii[best] + SETTLE_MARGIN_M
+	var free: bool = bool(vis.hold_eval(st, pos, opts).free)
+	if free and st.distance_to(c) - want <= SETTLE_SLACK_M:
+		return
+	var r: Dictionary = vis.ray_free(c, st, want, want + SETTLE_REACH_M, pos, opts)
+	if not bool(r.found):
 		return
 	var p: Vector2 = r.pos
-	_adopt(Vector3(p.x, 0.0, p.y), score, {})
+	if p.distance_to(st) > 1.0:
+		_adopt(Vector3(p.x, 0.0, p.y), _station_score, {})
+		_anchor = p
+
+func _take(r: Dictionary, prio: PackedByteArray, belief: Array[Dictionary]) -> bool:
+	_steps = int(r.get("steps", 0))
+	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
+	_trail_counts = [r.get("trail_a_n", PackedInt32Array()), r.get("trail_b_n", PackedInt32Array())]
+	if not bool(r.get("found", false)):
+		return false
+	var p: Vector2 = r.pos
+	var mask := int(r.mask)
+	_held = _ids_in(belief, mask & _bits(prio))
+	_adopt(Vector3(p.x, 0.0, p.y), _held.size() + 1, {})
+	_count = _held.size() + 1
 	_anchor = p
-	_set_target(belief, int(r.target))
+	_set_target(belief, prio, mask)
+	return true
 
-func _set_target(belief: Array[Dictionary], i: int) -> void:
-	_target = belief[i].ship if i >= 0 and i < belief.size() else null
+## The first priority the mask hits, else whatever it hits first.
+func _set_target(belief: Array[Dictionary], prio: PackedByteArray, mask: int) -> void:
+	_target = null
+	for i in mini(belief.size(), 64):
+		if mask & (1 << i) != 0 and (_target == null or prio[i] != 0):
+			_target = belief[i].ship
+			if prio[i] != 0:
+				return
 
-## How fast `target` dies with us on it as well as every friend in range of it: share of its HP per second.
-static func _kill_rate(ship: Ship, target: Ship, friends: Array) -> float:
-	var dps := 0.0
-	for f in friends:
-		if not is_instance_valid(f) or not f.is_alive() or f.artillery_controller == null:
-			continue
-		var r: float = f.global_position.distance_to(target.global_position)
-		if f != ship and r > f.artillery_controller.get_params()._range:
-			continue
-		dps += maxf(SkillStance._expected(target, f, r, TYPICAL_ASPECT_DEG).x, 0.0)
-	return dps / maxf(target.health_controller.current_hp, 1.0)
+static func _popcount(m: int) -> int:
+	var n := 0
+	while m != 0:
+		m &= m - 1
+		n += 1
+	return n
+
+static func _bits(flags: PackedByteArray) -> int:
+	var m := 0
+	for i in mini(flags.size(), 64):
+		if flags[i] != 0:
+			m |= 1 << i
+	return m
+
+static func _union(a: PackedByteArray, b: PackedByteArray) -> PackedByteArray:
+	var out := PackedByteArray(a)
+	for i in out.size():
+		out[i] = out[i] | b[i]
+	return out
+
+static func _ids_in(belief: Array[Dictionary], mask: int) -> Dictionary:
+	var out := {}
+	for i in mini(belief.size(), 64):
+		if mask & (1 << i) != 0:
+			out[belief[i].ship.get_instance_id()] = true
+	return out
 
 func _decline() -> NavIntent:
 	_drop()
 	return null
 
-## Standoff from every enemy that shoots.
-static func _band(ctx: SkillContext, threat: float, params: Dictionary) -> float:
+## How close to fight `e`, believed `at`: an explicit band_m or desired_range, else the ship's own ring for it.
+static func radius_for(ctx: SkillContext, e: Ship, at: Vector2, params: Dictionary) -> float:
 	var r: float = float(params.get("band_m", params.get("desired_range", 0.0)))
-	return r if r > 0.0 else ctx.behavior.engagement_range(ctx.ship, threat)
+	return r if r > 0.0 else ctx.behavior.ring(ctx, e, at)
 
 ## A destroyer out front spotting, guns quiet, is a target to close on, not a band to keep out of.
 static func threatens(e: Ship) -> bool:
@@ -182,15 +260,10 @@ static func threatens(e: Ship) -> bool:
 func _shape(intent: NavIntent, ctx: SkillContext, vis: VisibilityGrid, here: Vector2,
 		pos: PackedVector2Array, opts: Dictionary) -> void:
 	var radii := _walls(opts.det_r, pos)
+	if not ctx.ship.visible_to_enemy:
+		radii = _short_of(radii, pos, here)
 	intent.avoid_origins = pos
 	intent.avoid_radii = radii
-	_escape = Vector2.INF
-	if _has_station:
-		var out := _exit_toward(here, Vector2(_station.x, _station.z), pos, radii)
-		if out != here:
-			_escape = out
-			_point(intent, here, out)
-			return
 	if _radius <= 0.0 or not _has_station:
 		return
 	var tcr: float = ctx.ship.movement_controller._p().turning_circle_radius
@@ -203,8 +276,9 @@ func _shape(intent: NavIntent, ctx: SkillContext, vis: VisibilityGrid, here: Vec
 	for attempt in 2:
 		var next := _patrol_point(here, pos, radii, step * _patrol_sign)
 		var ev: Dictionary = vis.hold_eval(next, pos, opts)
+		var prio_hit := _popcount(int(ev.get("mask", 0)) & int(opts.prio_bits))
 		if next != here and next.distance_to(_anchor) <= _radius \
-				and bool(ev.get("free", false)) and int(ev.get("count", 0)) > 0:
+				and bool(ev.get("free", false)) and int(ev.get("count", 0)) > 0 and prio_hit >= _held.size():
 			_station = Vector3(next.x, 0.0, next.y)
 			_point(intent, here, next)
 			return
@@ -218,6 +292,13 @@ func _walls(bands: PackedFloat32Array, pos: PackedVector2Array) -> PackedFloat32
 	var st := Vector2(_station.x, _station.z)
 	for i in out.size():
 		out[i] = minf(out[i], maxf(st.distance_to(pos[i]) - SHADOW_MARGIN_M, 0.0))
+	return out
+
+## A band only matters to a ship they can see: unseen, each one holding `at` is pulled in short of it.
+static func _short_of(radii: PackedFloat32Array, pos: PackedVector2Array, at: Vector2) -> PackedFloat32Array:
+	var out := radii.duplicate()
+	for i in out.size():
+		out[i] = minf(out[i], maxf(at.distance_to(pos[i]) - SHADOW_MARGIN_M, 0.0))
 	return out
 
 static func _point(intent: NavIntent, here: Vector2, to: Vector2) -> void:
@@ -240,68 +321,3 @@ static func _patrol_point(here: Vector2, centres: PackedVector2Array, radii: Pac
 	var c: Vector2 = centres[best]
 	var r: float = maxf(radii[best], here.distance_to(c))
 	return c + (here - c).normalized().rotated(arc / r) * r
-
-## From inside the bands: `here` when outside or when the straight run to the
-## station never goes deeper into any band (it is on an edge), else the clear
-## point that makes the trip to the station shortest.
-static func _exit_toward(here: Vector2, station: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:
-	var depth := PackedFloat32Array()
-	var inside := false
-	for i in centres.size():
-		depth.append(maxf(radii[i] - here.distance_to(centres[i]), 0.0) if radii[i] > 0.0 else 0.0)
-		inside = inside or depth[i] > 0.0
-	if not inside or _never_deeper(here, station, centres, radii, depth):
-		return here
-	var best := _exit_point(here, centres, radii)
-	var best_cost: float = here.distance_to(best) + best.distance_to(station)
-	for k in EXIT_DIRECTIONS:
-		var dir := Vector2.RIGHT.rotated(TAU * k / EXIT_DIRECTIONS)
-		var p := here
-		for _step in EXIT_MAX_STEPS:
-			p += dir * EXIT_STEP_M
-			if _clear(p, centres, radii):
-				p += dir * EXIT_MARGIN_M
-				var cost: float = here.distance_to(p) + p.distance_to(station)
-				if cost < best_cost:
-					best_cost = cost
-					best = p
-				break
-	return best
-
-static func _never_deeper(a: Vector2, b: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array,
-		depth: PackedFloat32Array) -> bool:
-	var n: int = maxi(ceili(a.distance_to(b) / EXIT_STEP_M), 1)
-	for s in range(1, n + 1):
-		var p := a.lerp(b, float(s) / n)
-		for i in centres.size():
-			if radii[i] > 0.0 and radii[i] - p.distance_to(centres[i]) > depth[i] + 1.0:
-				return false
-	return true
-
-static func _clear(p: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> bool:
-	for i in centres.size():
-		if radii[i] > 0.0 and p.distance_to(centres[i]) < radii[i]:
-			return false
-	return true
-
-## Along the depth-weighted push of every band holding us, to clear water.
-static func _exit_point(here: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:
-	var push := Vector2.ZERO
-	for i in centres.size():
-		var d: float = here.distance_to(centres[i])
-		if radii[i] > 0.0 and d < radii[i]:
-			push += (here - centres[i]).normalized() * (radii[i] - d) if d > 1.0 else Vector2.RIGHT * radii[i]
-	if push == Vector2.ZERO:
-		return here
-	var dir := push.normalized()
-	var p := here
-	for _step in EXIT_MAX_STEPS:
-		p += dir * EXIT_STEP_M
-		var clear := true
-		for i in centres.size():
-			if radii[i] > 0.0 and p.distance_to(centres[i]) < radii[i]:
-				clear = false
-				break
-		if clear:
-			return p + dir * EXIT_MARGIN_M
-	return p

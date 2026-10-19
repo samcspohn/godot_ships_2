@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="DamageControl" format=3 uid="uid://c4pugpmhy6vjq"]
+
+[ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="1_wr6v8"]
+[ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="2_bmfkp"]
+[ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="3_tgg4m"]
+
+[resource]
+script = ExtResource("3_tgg4m")
+duration_reduction = 0.2
+damage_reduction = 0.45
+icon = ExtResource("2_bmfkp")
+disabled_icon = ExtResource("1_wr6v8")
+cooldown_time = 40.0
+duration = 15.0
+max_stack = -1
+metadata/_custom_type_script = "uid://cvrvionelmhv6"
