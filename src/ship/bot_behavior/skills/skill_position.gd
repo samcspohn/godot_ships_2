@@ -116,16 +116,9 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
 		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
 	else:
-		# From the last station either hold mode held (the shared seed), else here; never from the enemy's side.
 		opts.need = 1
 		opts.budget_m = REFINE_BUDGET_M
-		for from in [seed, here]:
-			if from.is_finite():
-				r = vis.hold_walk(from, danger, false, pos, opts)
-				if bool(r.get("has_start", false)):
-					break
-		if not bool(r.get("has_start", false)):
-			r = vis.hold_walk(danger, here, true, pos, opts)
+		r = _fresh_walk(vis, danger, here, pos, opts)
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
 	_trail_counts = [r.get("trail_a_n", PackedInt32Array()), r.get("trail_b_n", PackedInt32Array())]
@@ -134,6 +127,23 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 		_count = int(r.count)
 		_mask = int(r.get("mask", 0))
 		_adopt(Vector3(p.x, 0.0, p.y), _count, {})
+
+## A search with no station: from the last station either hold mode held (the
+## shared seed), moved along the ship-to-seed line onto the edge of the zones
+## (on past the seed when it is clear of them, back toward the ship when inside
+## one); else from here toward the danger; never from the enemy's side.
+func _fresh_walk(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array, opts: Dictionary) -> Dictionary:
+	var r: Dictionary
+	if seed.is_finite() and seed.distance_to(here) > 1.0:
+		if bool(vis.hold_eval(seed, pos, opts).free):
+			r = vis.hold_walk(seed, seed + (seed - here), false, pos, opts)
+		else:
+			r = vis.hold_walk(seed, here, true, pos, opts)
+	if not bool(r.get("has_start", false)):
+		r = vis.hold_walk(here, danger, false, pos, opts)
+	if not bool(r.get("has_start", false)):
+		r = vis.hold_walk(danger, here, true, pos, opts)
+	return r
 
 ## Walks the best cell out to the shoreline of the island it leans on, so the
 ## hull sits against the rock instead of at a cell centre 50 m off it.

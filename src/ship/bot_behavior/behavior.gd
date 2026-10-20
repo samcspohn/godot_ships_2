@@ -686,7 +686,7 @@ func priority_score(enemy: Ship, at: Vector2, aspect: float = NAN) -> float:
 	var r: float = at3.distance_to(Vector3(_ship.global_position.x, 0.0, _ship.global_position.z))
 	var ours: float = BotGunnery.aspect_from(_ship, at3)
 	var theirs: float = aspect if not is_nan(aspect) else BotGunnery.aspect_from(enemy, _ship.global_position)
-	var threat: float = (maxf(SkillStance._effective(_ship, enemy, r, ours), 0.0) * dodge(enemy, r)
+	var threat: float = (maxf(SkillStance._effective(_ship, enemy, r, ours), 0.0) * dodge(_ship, enemy, r)
 		+ _secondary_dps(enemy, _ship, r, ours)) / maxf(_ship.health_controller.current_hp, 1.0)
 	if threat < PRIORITY_MIN_THREAT:
 		threat = 0.0
@@ -2363,6 +2363,10 @@ const UNREACHABLE_THREAT: float = 0.1
 ## A range is ours to fight at when we take this many times its HP share per second as it takes of ours.
 const TRADE_MARGIN: float = 1.5
 const RADIUS_STEP_M: float = 1000.0
+## An enemy's ring moves no faster than this many times our top speed: a station on it can keep up.
+const RING_RATE_SPEEDS: float = 1.0
+## A push stands only while the trade holds at least this all the way in to it.
+const APPROACH_MIN_RATIO: float = 1.0
 const RADIUS_TTL_S: float = 5.0
 ## In a trade we angle to them, and they show us their bow: our AP gets no angled citadel.
 const ANGLED_ASPECT_DEG: float = 30.0
@@ -2982,27 +2986,28 @@ func _reach_now(ctx: SkillContext) -> Dictionary:
 ## What `enemy`'s main and secondary batteries do to us per second at `range_m`,
 ## seen `aspect_deg` off our bow, less the main-battery salvos we dodge.
 func incoming_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
-	return maxf(SkillStance._expected(_ship, enemy, range_m, aspect_deg).x, 0.0) * dodge(enemy, range_m) \
+	return maxf(SkillStance._expected(_ship, enemy, range_m, aspect_deg).x, 0.0) * dodge(_ship, enemy, range_m) \
 		+ _secondary_dps(enemy, _ship, range_m, aspect_deg)
 
-## Share of `enemy`'s main-battery fire still landing once we dodge: a shell
-## that flies longer than our rudder takes to bite plus a hull length of turn
-## can be stepped away from, a salvo at a time while its reload outlasts the flight.
-func dodge(enemy: Ship, range_m: float) -> float:
-	var tof: float = BotGunnery.flight_time(enemy, range_m)
+## Share of `shooter`'s main-battery fire still landing once `target` dodges:
+## a shell that flies longer than its rudder takes to bite plus a hull length of
+## turn can be stepped away from, a salvo at a time while the reload outlasts the flight.
+static func dodge(target: Ship, shooter: Ship, range_m: float) -> float:
+	var tof: float = BotGunnery.flight_time(shooter, range_m)
 	if not is_finite(tof):
 		return 1.0
-	var mc = _ship.movement_controller
+	var mc = target.movement_controller
 	var speed: float = maxf(mc.max_speed, 1.0)
 	# A turn of radius R at speed v moves the hull sideways v²t²/2R: a hull length takes sqrt(2RL)/v.
 	var shift_s: float = sqrt(2.0 * mc._p().turning_circle_radius * mc.ship_length) / speed
 	var reactable: float = clampf((tof - mc._p().rudder_response_time) / maxf(shift_s, 0.1), 0.0, 1.0)
-	var reload: float = enemy.artillery_controller.get_params().reload_time
+	var reload: float = shooter.artillery_controller.get_params().reload_time
 	return 1.0 - DODGE_MAX * reactable * reload / maxf(reload + tof, 0.1)
 
-## What our main and secondary batteries do to `enemy` per second at `range_m`, seen `aspect_deg` off its bow.
+## What our main and secondary batteries do to `enemy` per second at `range_m`,
+## seen `aspect_deg` off its bow, less the main-battery salvos it dodges.
 func outgoing_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
-	return maxf(SkillStance._expected(enemy, _ship, range_m, aspect_deg).x, 0.0) \
+	return maxf(SkillStance._expected(enemy, _ship, range_m, aspect_deg).x, 0.0) * dodge(enemy, _ship, range_m) \
 		+ _secondary_dps(_ship, enemy, range_m, aspect_deg)
 
 ## [shooter id, target id, range bucket, aspect bucket] -> secondary dps; the
@@ -3018,49 +3023,17 @@ static func _secondary_dps(shooter: Ship, target: Ship, range_m: float, aspect_d
 		_sec_dps_cache[key] = maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0)))
 	return _sec_dps_cache[key]
 
-## Enemy instance id -> [time, Vector2(radius, best trade ratio)].
+## Enemy instance id -> [time, _trade's answer].
 var _radius_cache: Dictionary = {}
 
-## How close this ship will fight `enemy`: in to the nearest range where it
-## out-trades it by TRADE_MARGIN (our share of its HP per second, it bow-in,
-## against its share of ours, us angled); short of that, wherever the trade is
-## best. Past its guns the trade is ours outright, so a ship that outranges it
-## stands just outside them.
-func enemy_radius(enemy: Ship) -> float:
-	return _trade(enemy).x
-
-## enemy_radius, unless `enemy` (believed `at`) is not shooting at us and a
-## lit friend is nearer it: that friend is ahead of us in its priorities, so
-## its ring shrinks to just behind the friend's range from it, never inside its secondaries.
-func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
-	var full := enemy_radius(enemy)
-	if active_shooters_at_me.has(enemy) or _ship.team == null or ctx.server == null:
-		return full
-	var mine: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-	var front := INF
-	for f in ctx.server.get_team_ships(_ship.team.team_id):
-		if f != _ship and is_instance_valid(f) and f.is_alive() and f.visible_to_enemy:
-			front = minf(front, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
-	if front >= mine:
-		return full
-	var screened: float = front + minf(front * (SCREEN_RATIO - 1.0), SCREEN_CAP_M)
-	return minf(full, maxf(screened, secondary_reach(enemy)))
-
-## How far out of `enemy`'s secondaries a ship that does not out-trade it keeps: their range plus a margin; 0 without.
-static func secondary_reach(enemy: Ship) -> float:
-	if not is_instance_valid(enemy) or not is_instance_valid(enemy.secondary_controller):
-		return 0.0
-	return enemy.secondary_controller.get_max_range() + SCREEN_SECONDARY_MARGIN_M
-
-## Whether `enemy` out-trades us by TRADE_MARGIN at every range: Fight keeps
-## out of its fire where it can.
-func dangerous(enemy: Ship) -> bool:
-	return _trade(enemy).y < 1.0 / TRADE_MARGIN
-
-## (radius, best trade ratio) against `enemy`, cached RADIUS_TTL_S.
-func _trade(enemy: Ship) -> Vector2:
+## The trade against `enemy`, cached RADIUS_TTL_S: {push, hold, best, ratios}.
+## push: the nearest range we out-trade it by TRADE_MARGIN (our share of its HP
+## per second, it bow-in, against its share of ours, us angled), -1 if none;
+## past its guns the trade is ours outright. hold: where the trade is best,
+## never inside its secondaries. ratios: the trade every RADIUS_STEP_M from POINT_BLANK_M.
+func _trade(enemy: Ship) -> Dictionary:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
-		return Vector2(0.0, INF)
+		return {"push": -1.0, "hold": 0.0, "best": INF, "ratios": PackedFloat32Array()}
 	var now: float = SimClock.now()
 	var c: Array = _radius_cache.get(enemy.get_instance_id(), [])
 	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
@@ -3070,20 +3043,84 @@ func _trade(enemy: Ship) -> Vector2:
 	var top: float = maxf(_ship.artillery_controller.get_params()._range, enemy.artillery_controller.get_params()._range)
 	var push := -1.0
 	var best := Vector2(top, -1.0)
+	var ratios := PackedFloat32Array()
 	var r := POINT_BLANK_M
 	while r <= top:
 		var out: float = outgoing_dps(enemy, r, BOW_ASPECT_DEG) / their_hp
 		var theirs: float = incoming_dps(enemy, r, ANGLED_ASPECT_DEG) / our_hp
 		var ratio: float = out / theirs if theirs > 0.0 else (INF if out > 0.0 else 0.0)
+		ratios.append(ratio)
 		if push < 0.0 and ratio >= TRADE_MARGIN:
 			push = r
 		if ratio > best.y:
 			best = Vector2(r, ratio)
 		r += RADIUS_STEP_M
-	# Short of out-trading it there, never inside its secondaries.
-	var result := Vector2(push if push >= 0.0 else maxf(best.x, secondary_reach(enemy)), best.y)
+	var result := {"push": push, "hold": maxf(best.x, secondary_reach(enemy)), "best": best.y, "ratios": ratios}
 	_radius_cache[enemy.get_instance_id()] = [now, result]
 	return result
+
+## Whether the push range `push` is paid for from `from` metres out: the trade
+## stays at least APPROACH_MIN_RATIO all the way in. Unseen, we close dark and it is.
+func _approach_ok(t: Dictionary, push: float, from: float) -> bool:
+	if not _ship.visible_to_enemy:
+		return true
+	var ratios: PackedFloat32Array = t.ratios
+	var k0: int = maxi(int((push - POINT_BLANK_M) / RADIUS_STEP_M), 0)
+	var k1: int = mini(int((from - POINT_BLANK_M) / RADIUS_STEP_M), ratios.size() - 1)
+	for k in range(k0, k1 + 1):
+		if ratios[k] < APPROACH_MIN_RATIO:
+			return false
+	return true
+
+## How close to fight `enemy`, believed `at`:
+## - it shoots at us while lit we can't see it: outside its guns;
+## - else the push range if the approach to it is paid for, else the hold range;
+## - not shooting at us with a lit friend nearer it (ahead of us in its
+##   priorities): just behind the friend's range from it, never inside its secondaries.
+## The answer moves no faster than RING_RATE_SPEEDS times our speed.
+func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
+	var t := _trade(enemy)
+	var mine: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+	var shooting: bool = active_shooters_at_me.has(enemy)
+	var full: float
+	if shooting and _ship.visible_to_enemy and not enemy.visible_to_enemy:
+		full = enemy.artillery_controller.get_params()._range if enemy.artillery_controller != null else float(t.hold)
+	elif float(t.push) >= 0.0 and _approach_ok(t, float(t.push), mine):
+		full = t.push
+	else:
+		full = t.hold
+	if not shooting and _ship.team != null and ctx.server != null:
+		var front := INF
+		for f in ctx.server.get_team_ships(_ship.team.team_id):
+			if f != _ship and is_instance_valid(f) and f.is_alive() and f.visible_to_enemy:
+				front = minf(front, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
+		if front < mine:
+			var screened: float = front + minf(front * (SCREEN_RATIO - 1.0), SCREEN_CAP_M)
+			full = minf(full, maxf(screened, secondary_reach(enemy)))
+	return _faded(enemy, full)
+
+## Enemy instance id -> [ring, time]: what ring() last answered.
+var _ring_held: Dictionary = {}
+
+func _faded(enemy: Ship, want: float) -> float:
+	var now: float = SimClock.now()
+	var h: Array = _ring_held.get(enemy.get_instance_id(), [])
+	var r: float = want if h.is_empty() else move_toward(float(h[0]), want,
+		RING_RATE_SPEEDS * _ship.movement_controller.max_speed * maxf(now - float(h[1]), 0.0))
+	_ring_held[enemy.get_instance_id()] = [r, now]
+	return r
+
+## How far out of `enemy`'s secondaries a ship that does not out-trade it keeps: their range plus a margin; 0 without.
+static func secondary_reach(enemy: Ship) -> float:
+	if not is_instance_valid(enemy) or not is_instance_valid(enemy.secondary_controller):
+		return 0.0
+	return enemy.secondary_controller.get_max_range() + SCREEN_SECONDARY_MARGIN_M
+
+## Whether `enemy` out-trades us by TRADE_MARGIN at every range, or shoots us
+## lit while we cannot see it: Fight keeps out of its fire where it can.
+func dangerous(enemy: Ship) -> bool:
+	return float(_trade(enemy).best) < 1.0 / TRADE_MARGIN \
+		or (active_shooters_at_me.has(enemy) and _ship.visible_to_enemy and not enemy.visible_to_enemy)
 
 ## The band radius the ship would choose if it sat on it: where
 ## engagement_range(threat there, everyone in reach firing) meets the radius

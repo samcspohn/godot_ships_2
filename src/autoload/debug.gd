@@ -39,7 +39,7 @@ enum DrawType {
 # LINE:   from(3) + to(3) + color(4) = 10 floats = 40 bytes
 # PATH:   variable — header: color(4) + sphere_interval(1) + sphere_radius(1) + point_count(1) = 7 floats, then point_count * 3 floats
 # SQUARE: pos(3) + width(1) + height(1) + color(4) + filled(1 as float) = 10 floats = 40 bytes
-# LABEL:  variable — pos(3) + color(4) + font_size(1) + text_byte_count(1i) = 36 bytes header, then text bytes (padded to 4)
+# LABEL:  variable — pos(3) + color(4) + font_size(1) + screen_up(1) + text_byte_count(1i) = 40 bytes header, then text bytes (padded to 4)
 # CONE:   pos(3) + rot(3) + cone_height(1) + top_radius(1) + bottom_radius(1) + color(4) + radial_segments(1) = 14 floats = 56 bytes
 # ARC:    pos(3) + bearing(1) + half_angle(1) + length(1) + color(4) + segments(1 int as float) = 11 floats = 44 bytes
 # SDF:    center(3) + clearance(1) + half_range(1) + draw_y(1) = 6 floats = 24 bytes
@@ -493,13 +493,15 @@ func draw_sdf_tiles(center: Vector3, clearance: float, half_range: float = 1000.
 	_buf_f32(dt, draw_y)
 
 ## 3D label (billboard text) at position.
-## Variable layout: pos(3f) + color(4f) + font_size(1f) + text_byte_len(1i) = 36 bytes header, then text bytes (padded to 4-byte boundary)
-func draw_label(position: Vector3, text: String, color: Color = Color.WHITE, font_size: int = 16) -> void:
+## Variable layout: pos(3f) + color(4f) + font_size(1f) + screen_up(1f) + text_byte_len(1i) = 40 bytes header, then text bytes (padded to 4-byte boundary)
+## `screen_up` > 0 lifts the text that many screen pixels above `position`, growing upward.
+func draw_label(position: Vector3, text: String, color: Color = Color.WHITE, font_size: int = 16, screen_up: float = 0.0) -> void:
 	var dt := DrawType.LABEL
 	_ensure_buffer(dt)
 	_buf_vec3(dt, position)
 	_buf_color(dt, color)
 	_buf_f32(dt, float(font_size))
+	_buf_f32(dt, screen_up)
 	var text_bytes := text.to_utf8_buffer()
 	_buf_i32(dt, text_bytes.size())
 	_buf_bytes(dt, text_bytes)
@@ -701,14 +703,15 @@ func _decode_labels(buf: PackedByteArray) -> void:
 
 	var offset := 0
 	while offset < buf.size():
-		# Header: pos(3f) + color(4f) + font_size(1f) + text_byte_len(1i) = 36 bytes
-		if offset + 36 > buf.size():
+		# Header: pos(3f) + color(4f) + font_size(1f) + screen_up(1f) + text_byte_len(1i) = 40 bytes
+		if offset + 40 > buf.size():
 			break
 		var pos := Vector3(buf.decode_float(offset), buf.decode_float(offset + 4), buf.decode_float(offset + 8))
 		var color := Color(buf.decode_float(offset + 12), buf.decode_float(offset + 16), buf.decode_float(offset + 20), buf.decode_float(offset + 24))
 		var font_size := int(buf.decode_float(offset + 28))
-		var text_len := buf.decode_s32(offset + 32)
-		offset += 36
+		var screen_up := buf.decode_float(offset + 32)
+		var text_len := buf.decode_s32(offset + 36)
+		offset += 40
 		if offset + text_len > buf.size():
 			break
 		var text_bytes := buf.slice(offset, offset + text_len)
@@ -719,7 +722,7 @@ func _decode_labels(buf: PackedByteArray) -> void:
 		if remainder != 0:
 			padded_len += 4 - remainder
 		offset += padded_len
-		cmds.append([pos, text, color, font_size])
+		cmds.append([pos, text, color, font_size, screen_up])
 
 # ============================================================================
 # Client: mesh pool management
@@ -1128,7 +1131,7 @@ func _build_sdf_tiles_node(cmd: Array, idx: int) -> MeshInstance3D:
 	return node
 
 func _build_label_node(cmd: Array, idx: int) -> Label3D:
-	# cmd: [pos, text, color, font_size]
+	# cmd: [pos, text, color, font_size, screen_up]
 	var color: Color = cmd[2]
 	var font_size: int = cmd[3]
 	var text: String = cmd[1]
@@ -1145,8 +1148,17 @@ func _build_label_node(cmd: Array, idx: int) -> Label3D:
 	label.outline_size = 4
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_lift_label(label, cmd[4])
 	label.text = text
 	return label
+
+## Fixed-size labels measure offset in screen pixels: lifted, centred and growing up from the anchor.
+func _lift_label(label: Label3D, screen_up: float) -> void:
+	if screen_up <= 0.0:
+		return
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	label.offset = Vector2(0.0, screen_up)
 
 func _build_cone_node(cmd: Array, idx: int) -> MeshInstance3D:
 	# cmd: [pos, rot, cone_height, top_radius, bottom_radius, color, radial_segments]
@@ -1256,10 +1268,12 @@ func _update_sdf_tiles_node(cmd: Array, node: Node3D) -> void:
 	node.global_position = _get_sdf_snapped_origin(center)
 
 func _update_label_node(cmd: Array, node: Node3D) -> void:
-	# cmd: [pos, text, color, font_size]
+	# cmd: [pos, text, color, font_size, screen_up]
 	node.global_position = cmd[0]
 	if node is Label3D:
 		var lbl := node as Label3D
+		if lbl.offset.y != float(cmd[4]):
+			_lift_label(lbl, cmd[4])
 		var text: String = cmd[1]
 		var color: Color = cmd[2]
 		if lbl.text != text:

@@ -149,16 +149,8 @@ func _walk_fight(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Packe
 		opts.need = 1
 		for avoid in tries:
 			opts.avoid = avoid
-			# As Spot: from the shared seed, else here; never from the enemy's side.
 			opts.budget_m = REFINE_BUDGET_M
-			var r: Dictionary
-			for from in [seed, here]:
-				if from.is_finite():
-					r = vis.hold_walk(from, danger, false, pos, opts)
-					if bool(r.get("has_start", false)):
-						break
-			if not bool(r.get("has_start", false)):
-				r = vis.hold_walk(danger, here, true, pos, opts)
+			var r := _fresh_walk(vis, danger, here, pos, opts)
 			if _take(r, prio, belief):
 				opts.avoid = base
 				return

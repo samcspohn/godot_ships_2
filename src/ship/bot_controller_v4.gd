@@ -104,6 +104,9 @@ const MIN_BEHAVIOR_INTERVAL: float = 0.3
 const MAX_BEHAVIOR_INTERVAL: float = 2.0
 var _behavior_timer: float = 0.0
 var bot_id: int = 0
+## Enemy debug labels anchor where the HP tag does (CameraUIScene, 20 m up) and sit this many pixels above it.
+const ENEMY_LABEL_Y: float = 20.0
+const ENEMY_LABEL_UP_PX: float = 50.0
 var _last_intent: NavIntent = null
 
 ## The raw intent returned by the behavior BEFORE validation adjusts it.
@@ -1304,17 +1307,30 @@ func _emit_debug_draws() -> void:
 			Debug.draw_circle(epos, 350.0, Color(1.0, 0.2, 0.2, 0.5), 16)
 
 		# Fight's ring round each enemy that shoots (shrunk while a lit friend nearer it screens us): green we push in, yellow we hold at our best trade, red we keep out of its fire.
+		# One label per enemy, its priority above its ring: separate labels at fixed screen size overlap at range.
+		var rank := {}
+		if behavior != null:
+			for k in behavior.priorities.size():
+				if behavior.priorities[k].ship != null:
+					rank[behavior.priorities[k].ship] = k
+		var ringed := {}
 		if behavior != null:
 			for b in server_node._team_belief(my_team_id):
 				var e: Ship = b.ship
 				if not is_instance_valid(e) or not SkillFight.threatens(e):
 					continue
-				var trade: float = behavior._trade(e).y
+				ringed[e] = true
+				var trade: float = float(behavior._trade(e).best)
 				var ring: float = behavior.ring(SkillContext.create(_ship, null, server_node, behavior), e, b.pos) + float(b.spread)
 				var col := Color(0.2, 1.0, 0.3, 0.7) if trade >= BotBehavior.TRADE_MARGIN \
 					else Color(1.0, 0.25, 0.2, 0.7) if behavior.dangerous(e) else Color(1.0, 0.85, 0.2, 0.7)
 				Debug.draw_circle(Vector3(b.pos.x, 12.0, b.pos.y), ring, col, 64)
-				Debug.draw_label(Vector3(b.pos.x, 140.0, b.pos.y), "%.1fk x%.2f" % [ring / 1000.0, trade], col, 14)
+				var text := "%.1fk x%.2f" % [ring / 1000.0, trade]
+				if rank.has(e):
+					var c: Dictionary = behavior.priorities[rank[e]]
+					text = "P%d %.2f\n%s" % [rank[e] + 1, float(c.get("score", 0.0)) * 100.0, text]
+				Debug.draw_label(Vector3(b.pos.x, ENEMY_LABEL_Y, b.pos.y), text,
+					Color(col, 1.0), 12 if rank.get(e, 99) < BotBehavior.PRIORITY_COUNT else 9, ENEMY_LABEL_UP_PX)
 
 		# How far each enemy spots us now, unbloomed: our concealment, or its radar/hydro while that reaches further.
 		if _ship.concealment != null:
@@ -1322,14 +1338,16 @@ func _emit_debug_draws() -> void:
 			for b in server_node._team_belief(my_team_id):
 				Debug.draw_circle(Vector3(b.pos.x, 14.0, b.pos.y), maxf(conceal, float(b.force_spot)), Color(0.3, 0.7, 1.0, 0.6), 64)
 
-		# Priority order: the top BotBehavior.PRIORITY_COUNT are what Fight and Spot try for.
+		# Priority order for enemies without a ring above: the top BotBehavior.PRIORITY_COUNT are what Fight and Spot try for.
 		if behavior != null:
 			for i in behavior.priorities.size():
 				var c: Dictionary = behavior.priorities[i]
+				if ringed.has(c.ship):
+					continue
 				var top: bool = i < BotBehavior.PRIORITY_COUNT
 				# Score as % of HP a second, theirs on us plus ours on them.
-				Debug.draw_label(Vector3(c.pos.x, 180.0, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0)) * 100.0],
-					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 20 if top else 14)
+				Debug.draw_label(Vector3(c.pos.x, ENEMY_LABEL_Y, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0)) * 100.0],
+					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 13 if top else 9, ENEMY_LABEL_UP_PX)
 
 		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness
 		var unspotted_enemies: Dictionary = server_node.get_unspotted_enemies(my_team_id)
