@@ -57,6 +57,10 @@ const REACH_SWEEP_INTERVAL: int = 12
 const REACH_MOVE_THRESHOLD_M: float = 100.0
 var _reach_prebuilt: bool = false
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
+## Stealth routing keeps this many seconds of a seen ship's sailing out of its circle.
+const THREAT_LEAD_S: float = 10.0
+## An unseen ship's circle grows in steps this size, so routers rebuild on whole steps.
+const THREAT_GROW_STEP_M: float = 100.0
 ## An inferred spotter's certainty runs out over this long.
 const INFERRED_DECAY_SECONDS: float = 30.0
 ## Fraction of a carried-but-inactive radar / hydro range that still gets
@@ -1944,6 +1948,7 @@ func _publish_team_threats(team_id: int) -> void:
 	var ids := PackedInt32Array()
 	var data := PackedVector3Array()
 	var force_spots := PackedFloat32Array()
+	var grows := PackedFloat32Array()
 	var published: Dictionary = {}
 	var contacts := teams[team_id].contacts
 	for enemy in teams[team_id].valid_targets:
@@ -1952,6 +1957,7 @@ func _publish_team_threats(team_id: int) -> void:
 			ids.append(int(enemy.get_instance_id()))
 			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
 			force_spots.append(_force_spot_reach(enemy))
+			grows.append(enemy.movement_controller.max_speed * THREAT_LEAD_S if enemy.movement_controller != null else 0.0)
 
 	var now: float = SimClock.now()
 	for enemy_ship in contacts:
@@ -1981,8 +1987,10 @@ func _publish_team_threats(team_id: int) -> void:
 		published[enemy_ship] = true
 		var lp: Vector3 = c.pos
 		ids.append(int(enemy_ship.get_instance_id()))
-		data.append(Vector3(lp.x, lp.z, decay))
+		# Unseen, it may be anywhere it could have sailed since: the circle grows, never shrinks.
+		data.append(Vector3(lp.x, lp.z, 1.0 if decay > 0.0 else 0.0))
 		force_spots.append(force_spot)
+		grows.append(snappedf(EnemyPresumption.lead_spread(age), THREAT_GROW_STEP_M) if decay > 0.0 else 0.0)
 
 	# Everything left: ships never seen at all, and ships whose last known
 	# position has decayed away to nothing. Routing that avoids only the enemies
@@ -1999,6 +2007,7 @@ func _publish_team_threats(team_id: int) -> void:
 		var at: Vector3 = guess.position
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(at.x, at.z, weight))
+		grows.append(0.0)
 		# No force-spot reach for a pure presumption, latent or lit. A guess
 		# about a ship nobody has ever seen carries no claim about what that
 		# ship is running or even carrying, and inventing one would let a bot
@@ -2006,7 +2015,7 @@ func _publish_team_threats(team_id: int) -> void:
 		# to a position that is itself only a guess.
 		force_spots.append(0.0)
 
-	threat_registry.update_team(team_id, ids, data, force_spots)
+	threat_registry.update_team(team_id, ids, data, force_spots, grows)
 
 
 ## How far `enemy` can force-spot regardless of anyone's concealment: radar or

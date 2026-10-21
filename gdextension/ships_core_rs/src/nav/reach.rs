@@ -705,6 +705,11 @@ impl ReachLookup {
         self.rays.iter().enumerate().take(64).fold(0, |m, (i, r)| m | ((r.is_some() as u64) << i))
     }
 
+    /// Enemy i's gun range, 0 when it has none to answer for.
+    pub(crate) fn range(&self, i: usize) -> f32 {
+        self.rays.get(i).and_then(|r| r.as_ref()).map_or(0.0, |(ray, _)| ray.range)
+    }
+
     pub(crate) fn known(&self, i: usize) -> bool {
         self.rays.get(i).is_some_and(|r| r.is_some())
     }

@@ -185,6 +185,13 @@ func get_shell_params() -> ShellParams:
 		return params.shell2
 
 func _ready() -> void:
+	if sub_controllers.size() > 0:
+		button_names = ["APs", "HEs"]
+		tool_tips = [
+		 	Callable(_build_tooltip_text).bind(0),
+			Callable(_build_tooltip_text).bind(1)
+		]
+
 	_ship = get_parent().get_parent() as Ship
 	target_mod = TargetMod.new()
 	target_mod = target_mod.instantiate(_ship) as TargetMod
@@ -207,12 +214,6 @@ func _ready() -> void:
 	else:
 		set_physics_process(false)
 		set_process(true)
-		if sub_controllers.size() > 0:
-			button_names = ["APs", "HEs"]
-			tool_tips = [
-			 	Callable(_build_tooltip_text).bind(0),
-				Callable(_build_tooltip_text).bind(1)
-			]
 
 func to_dict() -> Dictionary:
 	var sub_list = []

@@ -25,7 +25,8 @@ const SHIP_DATA = {
 	"res://assets/Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://assets/Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
 	"res://assets/Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10},
-	"res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn": {"class": SHIP_CLASS_CV, "tier": 10}
+	"res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn": {"class": SHIP_CLASS_CV, "tier": 10},
+	"res://assets/Ships/MLK-16-130/MLK-16-130.tscn": {"class": SHIP_CLASS_CA, "tier": 10}
 }
 
 # Available ships by class for bot team generation
@@ -39,7 +40,8 @@ const SHIPS_BY_CLASS = {
 		"res://assets/Ships/Montana/Montana.tscn"
 	],
 	SHIP_CLASS_CA: [
-		"res://assets/Ships/DesMoines/DesMoines.tscn"
+		"res://assets/Ships/DesMoines/DesMoines.tscn",
+		"res://assets/Ships/MLK-16-130/MLK-16-130.tscn"
 	],
 	SHIP_CLASS_DD: [
 		"res://assets/Ships/Shimakaze/Shimakaze.tscn",

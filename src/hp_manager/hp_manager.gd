@@ -63,7 +63,7 @@ func recent_damage_from(owner: Ship) -> float:
 	if rec.is_empty():
 		return 0.0
 	return rec[0] * exp(-(SimClock.now() - rec[1]) / DAMAGE_MEMORY_SEC)
-# const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
+const SHELL_DAMAGE_RADIUS_MOD: float = 17.0
 
 func _recalculate_healable_damage() -> void:
 	healable_damage = light_damage
@@ -162,16 +162,16 @@ func _ready() -> void:
 		superstructure.hp = self
 	_recalculate_healable_damage()
 
-func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, damage_type: DAMAGE_TYPE, damage_level: DAMAGE_LEVEL, owner: Ship) -> Array:
+func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, damage_type: DAMAGE_TYPE, damage_level: DAMAGE_LEVEL, owner: Ship, shell_cal: float) -> Array:
 	if sunk:
 		return [0, false]
 
 	# ship.update_static_mods = true
-	# var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
-	# var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
-	# dmg *= dmg_mod
+	var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
+	var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
+	dmg *= dmg_mod
 	dmg /= params.p().mult
-	# base_dmg *= dmg_mod
+	base_dmg *= dmg_mod
 	base_dmg /= params.p().mult
 
 	if armor_part == null:

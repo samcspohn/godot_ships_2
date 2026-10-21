@@ -714,6 +714,7 @@ shell_grid_cells={}",
                                                 damage_type.to_variant(),
                                                 damage_level.to_variant(),
                                                 owner_obj.to_variant(),
+                                                params.get("caliber").to_f64().to_variant(),
                                             ],
                                         )
                                         .to_any_array();

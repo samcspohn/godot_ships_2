@@ -71,7 +71,7 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 [sub_resource type="Resource" id="Resource_jajem"]
 script = ExtResource("7_g8rmw")
 sigma = 2.0
-h_disp = 150.0
+h_disp = 140.0
 v_disp = 90.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
@@ -83,6 +83,7 @@ damage = 2600.0
 size = 1.1
 caliber = 130.0
 mass = 33.4
+fuze_delay = 0.02
 overmatch = 9
 arming_threshold = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
@@ -109,7 +110,7 @@ shell2 = SubResource("Resource_gneek")
 dispersion = SubResource("Resource_jajem")
 reload_time = 4.0
 traverse_speed = 30.0
-_range = 9900.0
+_range = 10500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_x8cvy"]
@@ -237,46 +238,46 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 25.596409)
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 63.8563)
 
-[node name="Cylinder" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="0" unique_id=367956601]
+[node name="Cylinder" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="0" unique_id=99581893]
 layers = 0
 
-[node name="Cylinder_001" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="1" unique_id=1122961349]
+[node name="Cylinder_001" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="1" unique_id=860324308]
 layers = 0
 
-[node name="Cylinder_002" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="2" unique_id=1961062545]
+[node name="Cylinder_002" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="2" unique_id=1638112364]
 layers = 0
 
-[node name="Cylinder_003" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="3" unique_id=965264126]
+[node name="Cylinder_003" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="3" unique_id=962553090]
 layers = 0
 
-[node name="Hull_Bow" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="4" unique_id=1543711975]
+[node name="Hull_Bow" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="4" unique_id=153424514]
 layers = 0
 
-[node name="Hull_Casemate" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="5" unique_id=1352926789]
+[node name="Hull_Casemate" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="5" unique_id=105385294]
 layers = 0
 
-[node name="Hull_Citadel" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="6" unique_id=1366824306]
+[node name="Hull_Citadel" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="6" unique_id=1702136930]
 layers = 0
 
-[node name="Hull_Stern" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="7" unique_id=533844257]
+[node name="Hull_Stern" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="7" unique_id=1079390070]
 layers = 0
 
-[node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(1417905512) index="8" unique_id=756677087]
+[node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(1462951461) index="8" unique_id=386687121]
 layers = 0
 
-[node name="RUS_130mm_4b" parent="TurretMount_RUS_130mm_4b" parent_id_path=PackedInt32Array(163565178) index="0" unique_id=535558646 instance=ExtResource("2_wg7ll")]
+[node name="RUS_130mm_4b" parent="TurretMount_RUS_130mm_4b" parent_id_path=PackedInt32Array(650577007) index="0" unique_id=535558646 instance=ExtResource("2_wg7ll")]
 slew_min_angle = 3.6302848441482056
 slew_max_angle = 2.652900463031381
 
-[node name="RUS_130mm_4b_001" parent="TurretMount_RUS_130mm_4b_001" parent_id_path=PackedInt32Array(2010629837) index="0" unique_id=1589153575 instance=ExtResource("2_wg7ll")]
+[node name="RUS_130mm_4b_001" parent="TurretMount_RUS_130mm_4b_001" parent_id_path=PackedInt32Array(188373136) index="0" unique_id=1589153575 instance=ExtResource("2_wg7ll")]
 slew_min_angle = 3.6302848441482056
 slew_max_angle = 2.652900463031381
 
-[node name="RUS_130mm_4b_002" parent="TurretMount_RUS_130mm_4b_002" parent_id_path=PackedInt32Array(798495460) index="0" unique_id=1575074015 instance=ExtResource("2_wg7ll")]
+[node name="RUS_130mm_4b_002" parent="TurretMount_RUS_130mm_4b_002" parent_id_path=PackedInt32Array(1783209941) index="0" unique_id=1575074015 instance=ExtResource("2_wg7ll")]
 slew_min_angle = 0.4886921905584123
 slew_max_angle = 5.792213032369228
 
-[node name="RUS_130mm_4b_003" parent="TurretMount_RUS_130mm_4b_003" parent_id_path=PackedInt32Array(1894935003) index="0" unique_id=1556494030 instance=ExtResource("2_wg7ll")]
+[node name="RUS_130mm_4b_003" parent="TurretMount_RUS_130mm_4b_003" parent_id_path=PackedInt32Array(1754709364) index="0" unique_id=1556494030 instance=ExtResource("2_wg7ll")]
 slew_min_angle = 0.48775516866849333
 slew_max_angle = 5.801649139480276
 

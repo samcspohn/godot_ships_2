@@ -96,6 +96,12 @@ impl VisibilityGrid {
 
     pub(crate) fn in_zone_of(&self, c: (i32, i32), inp: &SpotInputs, avoid: u8) -> bool {
         let p = Vector2::new(self.min_x + (c.0 as f32 + 0.5) * self.cell, self.min_z + (c.1 as f32 + 0.5) * self.cell);
+        // One fire answer per cell for every enemy: ReachLookup::hits recomputes the whole mask per call.
+        let fire_mask = std::cell::OnceCell::new();
+        let fire_hits = |i: usize| -> bool {
+            let (known, hit) = *fire_mask.get_or_init(|| inp.fire.as_ref().map_or((0, 0), |f| (f.known_mask(), f.mask(p))));
+            i < 64 && hit & (1 << i) != 0 || (i < 64 && known & (1 << i) == 0)
+        };
         if avoid & AVOID_DET != 0 {
             let k = self.water(c.0, c.1);
             if inp.enemies.iter().enumerate().any(|(i, e)| {
@@ -103,14 +109,15 @@ impl VisibilityGrid {
                 d2 < e.det_r * e.det_r
                     && ((avoid & AVOID_DET_SEEN != 0 && d2 < e.los_r * e.los_r)
                         || ((avoid & AVOID_DET_SEEN == 0 || k.zip(e.cell).is_none_or(|(k, ec)| self.visible_idx(k, ec)))
-                            && (avoid & AVOID_DET_SHOT == 0 || inp.fire.as_ref().is_none_or(|f| !f.known(i) || f.hits(i, p)))))
+                            && (avoid & AVOID_DET_SHOT == 0 || inp.fire.is_none() || fire_hits(i))))
             }) {
                 return true;
             }
         }
         if avoid & AVOID_FIRE != 0 {
             if let Some(f) = &inp.fire {
-                if inp.enemies.iter().enumerate().any(|(i, e)| e.heavy && f.hits(i, p)) {
+                let hit = f.mask(p);
+                if inp.enemies.iter().enumerate().take(64).any(|(i, e)| e.heavy && hit & (1 << i) != 0) {
                     return true;
                 }
             }
@@ -293,8 +300,9 @@ impl VisibilityGrid {
             return None;
         }
         let c = self.centres[k];
+        let fire_hit = inp.fire.as_ref().map_or(0, |f| f.mask(c));
         let harm: f32 = (0..inp.enemies.len())
-            .filter(|&i| inp.fire.as_ref().is_some_and(|f| f.hits(i, c)))
+            .filter(|&i| i < 64 && fire_hit & (1 << i) != 0)
             .map(|i| inp.harm.get(i).copied().unwrap_or(0.0))
             .sum();
         let (t, v) = (0..inp.enemies.len().min(64))

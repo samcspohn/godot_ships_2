@@ -58,6 +58,7 @@ func _apply_gun_policy(ctx: SkillContext, _sit: Dictionary) -> void:
 	# side effect — deducing a concealed spotter from unexplained bloom.
 	_probe_concealment(ctx.server)
 
-## Opening: down our own flank, wide of the enemy spawn on this side.
+## Opening: fight where the unseen enemy is presumed to be; failing a station, down our own flank.
 func _opening(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Flank", ctx)
+	var intent := _hold(ctx, SkillHold.Mode.FIGHT, {"presumed": true})
+	return intent if intent != null else _run_skill(&"Flank", ctx)

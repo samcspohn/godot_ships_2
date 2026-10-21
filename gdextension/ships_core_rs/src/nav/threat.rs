@@ -15,6 +15,8 @@ pub struct EnemyThreatState {
     /// is the enemy's own reach and has nothing to do with who is asking, which
     /// is why it lives here and the observer's radius does not.
     pub force_spot: f32,
+    /// Metres the circle grows by: how far the ship may have come since it was where we think.
+    pub grow: f32,
     pub seen_this_tick: bool,
 }
 
@@ -25,6 +27,7 @@ impl Default for EnemyThreatState {
             position: Vector2::ZERO,
             decay: 1.0,
             force_spot: 0.0,
+            grow: 0.0,
             seen_this_tick: false,
         }
     }
@@ -94,7 +97,7 @@ impl ThreatRegistry {
             // concealment" and "how far it can see me whatever my concealment".
             // force_spot arrives pre-decayed on its own slower clock (see
             // GameServer.RADAR_DECAY_SECONDS), so only concealment decays here.
-            let radius = (observer_radius * es.decay).max(es.force_spot);
+            let radius = (observer_radius * es.decay + es.grow).max(es.force_spot);
             if radius <= 0.0 {
                 continue;
             }
@@ -124,6 +127,7 @@ impl ThreatRegistry {
     ///   ids                  — ship instance IDs
     ///   positions_with_decay — (world.x, world.z, decay); dropped when decay and force_spot are both <= 0
     ///   force_spot_ranges    — metres of radar/hydro reach, 0 for none
+    ///   grows                — metres added to the circle, 0 for none
     /// Entries are matched by id across calls; vanished ids are pruned.
     #[func]
     fn update_team(
@@ -132,6 +136,7 @@ impl ThreatRegistry {
         ids: PackedInt32Array,
         positions_with_decay: PackedVector3Array,
         force_spot_ranges: PackedFloat32Array,
+        grows: PackedFloat32Array,
     ) {
         let team = self.teams.entry(team_id).or_default();
 
@@ -154,6 +159,7 @@ impl ThreatRegistry {
             if decay <= 0.0 && force_spot <= 0.0 {
                 continue;
             }
+            let grow = grows.get(i).unwrap_or(0.0).max(0.0);
 
             match team.enemies.get_mut(&eid) {
                 None => {
@@ -165,6 +171,7 @@ impl ThreatRegistry {
                             position: Vector2::new(pwd.x, pwd.y),
                             decay,
                             force_spot,
+                            grow,
                             seen_this_tick: true,
                         },
                     );
@@ -180,12 +187,14 @@ impl ThreatRegistry {
                         || (es.position.y - pwd.y).abs() > POS_EPS
                         || (es.decay - decay).abs() > SCALAR_EPS
                         || (es.force_spot - force_spot).abs() > SCALAR_EPS
+                        || (es.grow - grow).abs() > SCALAR_EPS
                     {
                         changed = true;
                     }
                     es.position = Vector2::new(pwd.x, pwd.y);
                     es.decay = decay;
                     es.force_spot = force_spot;
+                    es.grow = grow;
                     es.seen_this_tick = true;
                 }
             }

@@ -95,7 +95,17 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 # 	# if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
 # 	# 	intent.heading_weight = 1.0
 
+## Lit above this threat a cruiser gets out, whatever it was holding; it keeps going until below the second.
+const LIT_DISENGAGE_THREAT := 0.5
+const LIT_DISENGAGE_RELEASE := 0.4
+
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var leaving: bool = _active_skill_name == &"Disengage"
+	if ctx.ship.is_detected() and sit.threat > (LIT_DISENGAGE_RELEASE if leaving else LIT_DISENGAGE_THREAT):
+		var out := _disengage(ctx, sit)
+		if out != null:
+			sit["arm"] = &"close"
+			return out
 	# Good odds release the cover, unless what it faces has yet to be seen: then wait for it.
 	if not _holding(SkillHold.Mode.COVER) or not _skill_hold.cover.has_station() \
 			or (sit.threat < _doc().cover_release_threat and not priority_dark()):

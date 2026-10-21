@@ -18,6 +18,7 @@ func spawn_smoke(ship: Ship, size: float, duration: float) -> void:
 	add_child(smoke_puff)
 	smoke_puffs.append(smoke_puff)
 	get_tree().create_timer(duration).timeout.connect(smoke_puff.queue_free)
+	_end_emission(smoke_puff, duration)
 	smoke_puff.global_position = ship.global_position
 	smoke_puff.scale = Vector3(size, size, size)
 	var shap_cast = PhysicsShapeQueryParameters3D.new()
@@ -32,6 +33,15 @@ func spawn_smoke(ship: Ship, size: float, duration: float) -> void:
 	# for result in results:
 	# 	var body = result.collider
 	spawn_smoke_c.rpc(ship.global_position, ship.team.team_id, size, duration)
+
+## Particles outlive their emitter by their lifetime: stop emitting that long
+## before the puff (and its LOS blocker) goes, so the cloud is gone with it.
+func _end_emission(puff: Node3D, duration: float) -> void:
+	var em := puff.get_node_or_null("ParticleEmitter")
+	if em == null or em.template == null:
+		return
+	get_tree().create_timer(maxf(duration - float(em.template.lifetime_max), 0.0)).timeout.connect(
+		func(): if is_instance_valid(em): em.stop_emitting())
 
 ## Server-side puffs as {centres: PackedVector2Array (XZ), radii: PackedFloat32Array}.
 func get_smoke_discs() -> Dictionary:
@@ -50,6 +60,7 @@ func spawn_smoke_c(pos: Vector3, team_id: int, size: float, duration: float):
 	# scene_tree.root.add_child(smoke_puff)
 	add_child(smoke_puff)
 	get_tree().create_timer(duration).timeout.connect(smoke_puff.queue_free)
+	_end_emission(smoke_puff, duration)
 	smoke_puff.global_position = pos
 	smoke_puff.scale = Vector3(size, size, size)
 	# smoke_puff.team_id = team_id

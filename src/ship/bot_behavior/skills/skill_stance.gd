@@ -4,8 +4,8 @@ extends BotSkill
 ## Owns heading and throttle while guns can reach us. The hull lies on the threat
 ## axis, bow or stern to the weighted fire: the end nearer the bow now, sailing
 ## ahead when the goal lies that way. When it lies the other way, the hull turns
-## round only if the salvos landing while it shows its side, plus the run away at
-## speed, cost less than backing there. It leaves the axis only to bear loaded
+## round only if the salvos landing on a simulated turn (the way the land
+## allows) and run cost less than backing as far toward the goal. It leaves the axis only to bear loaded
 ## guns or tubes that would fire, by the least angle, and returns once they have.
 ## It stops only when that clears the citadel of every salvo in the air.
 
@@ -18,13 +18,13 @@ const BYSTANDER_WEIGHT: float = 0.5
 const AXIS_CONE: float = deg_to_rad(15.0)
 ## Bow-in and stern-in swap only when the other end is this much nearer.
 const END_SWAP: float = deg_to_rad(20.0)
-## A turn round is priced over the arc it spends near broadside.
-const TURN_WINDOW: float = deg_to_rad(100.0)
-## After turning, the run away at full speed, and instead backing at reverse speed, in TURN_WINDOW crossing times.
-const AWAY_LEGS: float = 3.0
-const ASTERN_LEGS: float = 8.0
-## Full speed dodges this share of what lands.
-const DODGE_SHARE: float = 0.8
+## Turning round and backing are each simulated until this far toward the goal, or this long.
+const ESCAPE_M: float = 3000.0
+const ESCAPE_MAX_S: float = 300.0
+const ESCAPE_DT: float = 1.0
+const ESCAPE_REPRICE_S: float = 1.0
+## At full speed this share of what would land misses; slower, proportionally less.
+const DODGE_AT_SPEED: float = 0.2
 const TURN_SPEED_FRAC: float = 0.75
 ## Citadel damage counts this much extra.
 const CITADEL_W: float = 1.0
@@ -60,6 +60,7 @@ var _turning: bool = false
 var _axis: float = INF
 var _turn_cost: float = 0.0
 var _astern_cost: float = 0.0
+var _priced_at: float = -INF
 var _juke: bool = false
 ## &"", &"guns" or &"torps".
 var _fire: StringName = &""
@@ -179,7 +180,8 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 	var end: float = near
 	var astern: bool = false
 	if cos(angle_difference(near, goal)) < 0.0:
-		_turning = _turning or _turn_beats_astern(ctx, hdg, axis, near, far)
+		var to: Vector3 = intent.target_position - ctx.ship.global_position
+		_turning = _turning or _turn_beats_astern(ctx, hdg, near, far, goal, Vector2(to.x, to.z).length())
 		end = far if _turning else near
 		astern = not _turning
 	var motion: float = wrapf(end + PI, -PI, PI) if astern else end
@@ -187,35 +189,84 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 	_throttle = -1.0 if astern else 1.0
 
 
-## Turning round: the salvos landing while the side shows, then the run away at
-## speed less what speed dodges, against backing the whole way, in effective HP.
-func _turn_beats_astern(ctx: SkillContext, hdg: float, axis: float, near: float, far: float) -> bool:
+## Turning round, either way the land leaves clear, against backing, each run
+## until as far toward the goal: the salvos that land, in effective HP.
+func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, goal: float, dist: float) -> bool:
+	var now: float = SimClock.now()
+	if now - _priced_at < ESCAPE_REPRICE_S:
+		return _turn_cost < _astern_cost
+	_priced_at = now
 	var mv = ctx.ship.movement_controller
 	var p: MovementParams = mv._p()
-	var v: float = maxf(mv.max_speed, 1.0) * TURN_SPEED_FRAC
+	var vmax: float = maxf(mv.max_speed, 1.0)
+	var v: float = vmax * TURN_SPEED_FRAC
 	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
-	var lag: float = p.rudder_response_time
-	var cross: float = TURN_WINDOW / w
-	var left: float = absf(angle_difference(hdg, far))
-	var enter: float = lag + maxf(left - PI / 2.0 - TURN_WINDOW / 2.0, 0.0) / w
-	var leave: float = lag + maxf(left - PI / 2.0 + TURN_WINDOW / 2.0, 0.0) / w
-	var done: float = lag + left / w
-	_turn_cost = _taken(axis + PI / 2.0, enter, leave) + DODGE_SHARE * _taken(far, done, done + AWAY_LEGS * cross)
-	_astern_cost = _taken(near, 0.0, ASTERN_LEGS * cross)
+	var want: float = minf(dist, ESCAPE_M)
+	var start := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	var clearance: float = ctx.behavior._get_ship_clearance()
+	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
+	var left: float = angle_difference(hdg, far)
+	var short: float = signf(left) if left != 0.0 else 1.0
+	_turn_cost = INF
+	for way in [short, -short]:
+		var swing: float = absf(left) if way == short else TAU - absf(left)
+		var track := _escape_track(start, hdg, goal, want, vmax, vmax, w * way, p.rudder_response_time, swing, false, clearance, reach)
+		if not track.is_empty():
+			_turn_cost = minf(_turn_cost, _track_taken(track, vmax))
+	var back := _escape_track(start, near, goal, want, vmax, vmax * p.reverse_speed_ratio, 0.0, 0.0, 0.0, true, clearance, reach)
+	_astern_cost = _track_taken(back, vmax) if not back.is_empty() else INF
 	return _turn_cost < _astern_cost
 
 
-## Effective damage landing in [t0, t1) with the bow at `h`, in whole salvos on
-## each shooter's clock: a slow battery is one alpha strike, two, or none.
-func _taken(h: float, t0: float, t1: float) -> float:
+## Samples every ESCAPE_DT of [position, bow heading, speed] from `at`: the
+## rudder lag, a swing of `swing` at `w` rad/s, then on at `run` until `want`
+## along `goal` (astern: backing at `run` throughout). Empty when it runs aground
+## in the swing or within `reach` after it: past that the route steers round land.
+func _escape_track(at: Vector2, hdg: float, goal: float, want: float, vmax: float, run: float, w: float,
+		lag: float, swing: float, astern: bool, clearance: float, reach: float) -> Array:
+	var track: Array = []
+	var gdir := Vector2(sin(goal), cos(goal))
+	var start := at
+	var turned: float = 0.0
+	var after: float = 0.0
+	var t: float = 0.0
+	while t < ESCAPE_MAX_S:
+		var speed: float = run
+		if not astern and turned < swing:
+			speed = vmax * TURN_SPEED_FRAC
+			if t >= lag:
+				var step: float = minf(absf(w) * ESCAPE_DT, swing - turned)
+				hdg += step * signf(w)
+				turned += step
+		var dir := Vector2(sin(hdg), cos(hdg)) * (-1.0 if astern else 1.0)
+		at += dir * speed * ESCAPE_DT
+		t += ESCAPE_DT
+		if turned >= swing:
+			after += speed * ESCAPE_DT
+		if after <= reach and NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
+			return []
+		track.append([at, hdg, speed])
+		if turned >= swing and (at - start).dot(gdir) >= want:
+			break
+	return track
+
+
+## Whole salvos landing along `track`, each on its shooter's clock: at the hull's
+## aspect to it then, nothing once out of its range, less what speed dodges.
+func _track_taken(track: Array, vmax: float) -> float:
+	var end: float = track.size() * ESCAPE_DT
 	var sum: float = 0.0
 	for sh in _shooters:
 		var reload: float = sh.reload
-		var first: float = float(sh.next) + maxf(ceilf((t0 - float(sh.next)) / reload), 0.0) * reload
-		if first >= t1:
-			continue
-		var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(h, sh.bearing))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-		sum += ceilf((t1 - first) / reload) * reload * float(sh.weight) * sh.rows[a]
+		var t: float = float(sh.next)
+		while t < end:
+			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
+			var at: Vector2 = track[k][0]
+			var to: Vector2 = sh.pos - at
+			if to.length() <= float(sh.range):
+				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
+				sum += reload * float(sh.weight) * sh.rows[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+			t += reload
 	return sum
 
 
@@ -531,6 +582,7 @@ func _survey(ctx: SkillContext) -> bool:
 		var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
 		var next: float = ctx.behavior.salvo_clock.next_landing(s, now)
 		_shooters.append({"bearing": atan2(to.x, to.z), "rows": rows, "weight": float(weight[s]),
+			"pos": Vector2(s.global_position.x, s.global_position.z), "range": s.artillery_controller.get_params()._range,
 			"reload": reload, "next": next if is_finite(next) else reload * 0.5})
 	return not _shooters.is_empty()
 

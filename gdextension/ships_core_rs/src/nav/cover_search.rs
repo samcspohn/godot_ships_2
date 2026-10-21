@@ -31,7 +31,7 @@ impl CoverArgs {
 
     /// What reaching `p` from `from` costs: its distance, times away_ratio in
     /// the away cone; None outside both cones or past reach.
-    fn cost(&self, from: Vector2, p: Vector2) -> Option<f32> {
+    pub(crate) fn cost(&self, from: Vector2, p: Vector2) -> Option<f32> {
         let d = from.distance_to(p);
         if !self.axis.is_finite() || d < 1.0 {
             return (d <= self.reach_m).then_some(d);
@@ -47,13 +47,17 @@ impl CoverArgs {
     }
 }
 
+/// An enemy this far past its gun range is taken to close it before we leave.
+const ADVANCE_M: f32 = 2000.0;
+
 /// Why cell `k` is safe, as (dark, seen): dark when concealment keeps every
-/// threat off it, seen when some threat sees it but cannot shell it; None when
-/// a threat both sees and shells it. Threats are the `heavy` enemies: det_r is
-/// how far each sees us, los_r its radar.
+/// threat off it, seen when some threat sees it and an island stops every gun
+/// in or near range; None when one of those guns lands. Spotting is the team's:
+/// one threat seeing us lays every gun on us. Threats are the `heavy` enemies:
+/// det_r is how far each sees us, los_r its radar.
 pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark: bool) -> Option<(bool, bool)> {
     let p = g.centres[k];
-    let (mut dark, mut seen) = (true, false);
+    let (mut dark, mut seen, mut blind) = (true, false, false);
     for (i, e) in inp.enemies.iter().enumerate() {
         if !e.heavy {
             continue;
@@ -66,12 +70,29 @@ pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark:
         if d >= e.los_r && e.cell.is_some_and(|ec| !g.visible_idx(k, ec)) {
             continue;
         }
-        if !inp.fire.as_ref().is_some_and(|f| f.known(i) && !f.hits(i, p)) {
+        seen = true;
+        blind = blind || i >= 64 || inp.fire.as_ref().is_none_or(|f| !f.known(i));
+    }
+    if !seen {
+        return Some((dark, false));
+    }
+    if blind {
+        return None;
+    }
+    let Some(f) = inp.fire.as_ref() else { return None };
+    // One mask for every enemy: ReachLookup::hits recomputes the whole mask per call.
+    let (known, hit) = (f.known_mask(), f.mask(p));
+    for (i, e) in inp.enemies.iter().enumerate().take(64) {
+        if !e.heavy || known & (1 << i) == 0 {
+            continue;
+        }
+        let d = p.distance_to(e.pos);
+        let r = f.range(i);
+        if hit & (1 << i) != 0 || (d >= r && d < r + ADVANCE_M) {
             return None;
         }
-        seen = true;
     }
-    Some((dark, seen))
+    Some((dark, true))
 }
 
 impl VisibilityGrid {

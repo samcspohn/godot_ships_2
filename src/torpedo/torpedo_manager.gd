@@ -348,9 +348,9 @@ func _physics_process(_delta: float) -> void:
 
 						if armor_part.type == ArmorPart.Type.CASEMATE or armor_part.type == ArmorPart.Type.CITADEL:
 							damage *= (1.0 - hp.params.p().torpedo_protection)
-							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.HEAVY, p.owner)
+							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.HEAVY, p.owner, 1.0)
 						else:
-							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.MEDIUM, p.owner)
+							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.MEDIUM, p.owner, 1.0)
 
 						# 	damage *= (1.0 - hp.params.p().torpedo_protection)
 						# 	armor_part = ship.citadel

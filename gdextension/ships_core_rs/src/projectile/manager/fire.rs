@@ -269,6 +269,7 @@ impl ProjectileManager {
         let emitter_id = bullet.bind().emitter_id;
         if emitter_id >= 0 {
             if let Some(cps) = self.compute_particle_system.as_mut() {
+                cps.call("update_emitter_position", &[emitter_id.to_variant(), pos.to_variant()]);
                 cps.call("free_emitter", &[emitter_id.to_variant()]);
                 bullet.bind_mut().emitter_id = -1;
             }

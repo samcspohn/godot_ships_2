@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
 use crate::nav::cover_search::{safety, CoverArgs};
+use crate::nav::fight_search::FightArgs;
 use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
 use crate::variant_cast::VariantCast;
 
@@ -436,6 +437,63 @@ impl VisibilityGrid {
             d.set("seen", seen);
             d.set("mask", mask as i64);
             d.set("count", mask.count_ones() as i64);
+        }
+        d
+    }
+
+    /// The best fighting cell in the cones toward `axis` and away (cover_search's
+    /// cones): over hold_s, what the guns deal on the cheapest way there plus our
+    /// trade on the best target reached there for the rest, less the harm taken on the way.
+    /// hold_walk's opts (reach_field, team, hull_key, ids, shootable, heavy, det_r)
+    /// plus cover_search's cone keys and curve_out, curve_in, curve_steps,
+    /// curve_p0_m, curve_step_m, value, aggro, front, front_hp, focus, crossfire, hold_s, speed,
+    /// detect_rate, dark, held. {found, pos, score, value, harm, mask, cells,
+    /// held_ok, held_score, held_value, held_harm, held_mask}.
+    #[func]
+    fn fight_search(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("found", false);
+        d.set("held_ok", false);
+        if !self.is_ready() {
+            return d;
+        }
+        let inp = self.hold_inputs(&enemies, &opts);
+        let a = FightArgs::from_opts(axis, &opts);
+        let held = opts.get("held").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF);
+        let (best, h, weighed) = self.fight_search_impl(from, held, &inp, &a);
+        d.set("cells", weighed as i64);
+        if let Some((k, score, c)) = best {
+            d.set("found", true);
+            d.set("pos", self.centres[k]);
+            d.set("score", score);
+            d.set("value", c.value);
+            d.set("harm", c.harm);
+            d.set("mask", c.mask as i64);
+        }
+        if let Some((score, c)) = h {
+            d.set("held_ok", true);
+            d.set("held_score", score);
+            d.set("held_value", c.value);
+            d.set("held_harm", c.harm);
+            d.set("held_mask", c.mask as i64);
+        }
+        d
+    }
+
+    /// What fighting from the cell holding `pos` deals and takes a second: {ok, value, harm, mask}.
+    #[func]
+    fn fight_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("ok", false);
+        let (ix, iz) = self.grid_of(pos);
+        let Some(k) = self.water(ix, iz).filter(|_| self.is_ready()) else { return d };
+        let inp = self.hold_inputs(&enemies, &opts);
+        let a = FightArgs::from_opts(f32::INFINITY, &opts);
+        if let Some(c) = self.fight_cell(k, &inp, &a) {
+            d.set("ok", true);
+            d.set("value", c.value);
+            d.set("harm", c.harm);
+            d.set("mask", c.mask as i64);
         }
         d
     }

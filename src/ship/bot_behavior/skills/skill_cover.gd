@@ -7,12 +7,12 @@ extends SkillPosition
 ## (the shared hold seed, else cone_axis, else the priority) and the cone away,
 ## away cells costing AWAY_RATIO times their distance. OFFENSE also needs a
 ## target in reach and never goes dark: its guns would bloom it.
-## Params: mode, cone_axis, cone_half, allow_dark, fire_en_route, refs.
+## Params: mode, cone_axis, cone_half, away_ratio (INF: no away cone), allow_dark, fire_en_route, refs.
 
 enum Mode { OFFENSE, DEFENSE }
 
 const REACH_M := 8000.0
-const AWAY_RATIO := 3.0
+const AWAY_RATIO := 2.0
 ## Each side of the axis a cone covers when the caller gives none.
 const CONE_HALF := deg_to_rad(40.0)
 const COVER_HOLD_M := 300.0
@@ -144,7 +144,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.shootable.append(1)
 		opts.ids.append(int(r.id))
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
-		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": AWAY_RATIO,
+		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
 		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false)))}, true)
 	return opts

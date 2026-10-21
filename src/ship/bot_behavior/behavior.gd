@@ -604,6 +604,7 @@ func get_potential_target_weight(target: Ship) -> float:
 ## An enemy passes one ranked ahead of it only when its score is this much
 ## higher: order holds against small changes, so stations chosen on it hold too.
 const PRIORITY_SWITCH: float = 1.25
+const PRIORITY_SAIL_S: float = 90.0
 ## Guns taking less than this share of our HP a second are no threat to rank on.
 const PRIORITY_MIN_THREAT: float = 0.001
 
@@ -629,11 +630,15 @@ func update_priorities(server: GameServer) -> void:
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
-		fresh.append({"ship": b.ship, "pos": b.pos, "d": here.distance_to(b.pos), "score": priority_score(b.ship, b.pos)})
+		var d := here.distance_to(b.pos)
+		if d > _ship.artillery_controller.get_params()._range or not can_hit_target(b.ship):
+			d = PRIORITY_ROUTE_W * _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
+		fresh.append({"ship": b.ship, "pos": b.pos, "d": d, "score": priority_score(b.ship, b.pos, NAN, d)})
 	for r in server.anonymous_refs(team_id):
 		var proxy := _ref_proxy(server, int(r.id))
-		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": here.distance_to(r.pos),
-			"score": priority_score(proxy, r.pos, REF_ASPECT_DEG) if proxy != null else 0.0})
+		var d := PRIORITY_ROUTE_W * _sail_m("r%s" % str(r.id), here, r.pos)
+		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": d,
+			"score": priority_score(proxy, r.pos, REF_ASPECT_DEG, d) if proxy != null else 0.0})
 	# First sight retires the reference nearest the ship: it takes that reference's place, it is not new.
 	var gone: Array[Dictionary] = []
 	var keys := {}
@@ -677,9 +682,11 @@ func update_priorities(server: GameServer) -> void:
 ## What `enemy` (believed `at`) is worth attending to now: the share of our HP
 ## its guns take a second at the aspect we show it, citadels, fires and dodging
 ## counted (nothing below PRIORITY_MIN_THREAT), plus the share of its HP ours
-## take at the aspect it shows us: a battleship turning broadside is a target.
+## take at the aspect it shows us: a battleship turning broadside is a target,
+## fading by e per PRIORITY_SAIL_S we would sail to reach its hold range.
 ## `aspect`, when given, stands for both aspects: an unseen ship's heading is unknown.
-func priority_score(enemy: Ship, at: Vector2, aspect: float = NAN) -> float:
+## `sail_m`, when given, is how far it is to sail there, else the straight line.
+func priority_score(enemy: Ship, at: Vector2, aspect: float = NAN, sail_m: float = NAN) -> float:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
 		return 0.0
 	var at3 := Vector3(at.x, 0.0, at.y)
@@ -692,7 +699,38 @@ func priority_score(enemy: Ship, at: Vector2, aspect: float = NAN) -> float:
 		threat = 0.0
 	var chance: float = (maxf(SkillStance._effective(enemy, _ship, r, theirs), 0.0)
 		+ _secondary_dps(_ship, enemy, r, theirs)) / maxf(enemy.health_controller.current_hp, 1.0)
-	return threat + chance
+	var sail: float = maxf((sail_m if is_finite(sail_m) else r) - float(_trade(enemy).hold), 0.0) / maxf(_ship.movement_controller.max_speed, 1.0)
+	return threat + chance * exp(-sail / PRIORITY_SAIL_S)
+
+## Length of the sea route from `here` to `to` for contact `key`, re-planned
+## when either end moves PRIORITY_PATH_MOVE_M or after PRIORITY_PATH_TTL_S;
+## the straight line without a graph or a route.
+## A contact our guns cannot reach now is as far as its sea route, counted this many times over.
+const PRIORITY_ROUTE_W: float = 2.0
+const PRIORITY_PATH_TTL_S: float = 5.0
+const PRIORITY_PATH_MOVE_M: float = 500.0
+var _sail_cache: Dictionary = {}
+
+func _sail_m(key: String, here: Vector2, to: Vector2) -> float:
+	var now: float = SimClock.now()
+	var c: Array = _sail_cache.get(key, [])
+	if not c.is_empty() and now - float(c[0]) < PRIORITY_PATH_TTL_S \
+			and here.distance_to(c[1]) < PRIORITY_PATH_MOVE_M and to.distance_to(c[2]) < PRIORITY_PATH_MOVE_M:
+		return float(c[3])
+	var g: HpaGraph = NavigationMapManager.get_hpa_graph()
+	var length: float = here.distance_to(to)
+	if g != null and g.is_built():
+		# The graph is shared: a navigator's threat walls from its last plan must not shape this route.
+		g.debug_clear_threats()
+		var path: PackedVector2Array = g.find_path_packed(here, to, _get_ship_clearance())
+		if not path.is_empty():
+			length = here.distance_to(path[0])
+			for i in range(1, path.size()):
+				length += path[i - 1].distance_to(path[i])
+	if _sail_cache.size() > 128:
+		_sail_cache.clear()
+	_sail_cache[key] = [now, here, to, length]
+	return length
 
 ## A spawn reference is scored as a ship of our own fleet of the class dealt it
 ## (GameServer.ref_class), at the reference, seen at REF_ASPECT_DEG.
@@ -3030,10 +3068,12 @@ var _radius_cache: Dictionary = {}
 ## push: the nearest range we out-trade it by TRADE_MARGIN (our share of its HP
 ## per second, it bow-in, against its share of ours, us angled), -1 if none;
 ## past its guns the trade is ours outright. hold: where the trade is best,
-## never inside its secondaries. ratios: the trade every RADIUS_STEP_M from POINT_BLANK_M.
+## never inside its secondaries. ratios, out, in: the trade, our share of its HP
+## per second and its of ours, every RADIUS_STEP_M from POINT_BLANK_M.
 func _trade(enemy: Ship) -> Dictionary:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
-		return {"push": -1.0, "hold": 0.0, "best": INF, "ratios": PackedFloat32Array()}
+		return {"push": -1.0, "hold": 0.0, "best": INF, "ratios": PackedFloat32Array(),
+			"out": PackedFloat32Array(), "in": PackedFloat32Array()}
 	var now: float = SimClock.now()
 	var c: Array = _radius_cache.get(enemy.get_instance_id(), [])
 	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
@@ -3044,18 +3084,23 @@ func _trade(enemy: Ship) -> Dictionary:
 	var push := -1.0
 	var best := Vector2(top, -1.0)
 	var ratios := PackedFloat32Array()
+	var outs := PackedFloat32Array()
+	var ins := PackedFloat32Array()
 	var r := POINT_BLANK_M
 	while r <= top:
 		var out: float = outgoing_dps(enemy, r, BOW_ASPECT_DEG) / their_hp
 		var theirs: float = incoming_dps(enemy, r, ANGLED_ASPECT_DEG) / our_hp
 		var ratio: float = out / theirs if theirs > 0.0 else (INF if out > 0.0 else 0.0)
 		ratios.append(ratio)
+		outs.append(out)
+		ins.append(theirs)
 		if push < 0.0 and ratio >= TRADE_MARGIN:
 			push = r
 		if ratio > best.y:
 			best = Vector2(r, ratio)
 		r += RADIUS_STEP_M
-	var result := {"push": push, "hold": maxf(best.x, secondary_reach(enemy)), "best": best.y, "ratios": ratios}
+	var result := {"push": push, "hold": maxf(best.x, secondary_reach(enemy)), "best": best.y, "ratios": ratios,
+		"out": outs, "in": ins}
 	_radius_cache[enemy.get_instance_id()] = [now, result]
 	return result
 
