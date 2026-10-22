@@ -51,7 +51,7 @@ func would_fire_guns() -> bool:
 ## Whether the hull sits on the cover station it is holding. Shared with
 ## CVBehavior, which runs its own decision tree over the same skills.
 func _sync_cover_debug(_ctx: SkillContext) -> void:
-	var c: SkillCover = _skill_hold.cover if _holding(SkillHold.Mode.COVER) else _skill_disengage.cover()
+	var c: SkillCover = _skill_fight.cover if _fighting(SkillFight.Mode.COVER) else _skill_disengage.cover()
 	is_in_cover = c.has_station() and _ship.global_position.distance_to(c.station_position()) <= SkillCover.COVER_HOLD_M
 
 # ============================================================================
@@ -70,17 +70,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_sync_cover_debug(ctx)
 	return _nav_core(ctx)
 
-## Low threat: push, but prefer running down a closer unseen contact over
-## crossing the map to fight a distant visible one.
-func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var near_unspotted := _nearest_unspotted_info(ctx.server)
-	if not near_unspotted.is_empty() \
-			and near_unspotted.distance < sit.nearest_dist \
-			and sit.nearest_dist > sit.gun_range:
-		var chase := _run_skill(&"Chase", ctx)
-		if chase != null:
-			return chase
-	return _fight(ctx)
 
 # ## Cover navigates to a hide position, so its heading belongs to the navigator.
 # ## Every other close-arm skill wants a say in where the hull points, and near
@@ -95,42 +84,19 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 # 	# if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
 # 	# 	intent.heading_weight = 1.0
 
-## Lit above this threat a cruiser gets out, whatever it was holding; it keeps going until below the second.
-const LIT_DISENGAGE_THREAT := 0.5
-const LIT_DISENGAGE_RELEASE := 0.4
-
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var leaving: bool = _active_skill_name == &"Disengage"
-	if ctx.ship.is_detected() and sit.threat > (LIT_DISENGAGE_RELEASE if leaving else LIT_DISENGAGE_THREAT):
-		var out := _disengage(ctx, sit)
-		if out != null:
-			sit["arm"] = &"close"
-			return out
 	# Good odds release the cover, unless what it faces has yet to be seen: then wait for it.
-	if not _holding(SkillHold.Mode.COVER) or not _skill_hold.cover.has_station() \
+	if not _fighting(SkillFight.Mode.COVER) or not _skill_fight.cover.has_station() \
 			or (sit.threat < _doc().cover_release_threat and not priority_dark()):
 		return null
-	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(_skill_hold.cover.mode, sit))
-	if hold != null:
+	var held := _run_skill(&"Fight", ctx, SkillFight.cover_params(ctx, _skill_fight.cover.mode).merged({"only": SkillFight.Mode.COVER}))
+	if held != null:
 		sit["arm"] = &"engaged"
-		wants_stealth = wants_stealth or _skill_hold.cover.wants_concealment()
-	return hold
+	return held
 
-func _hold_cover_params(mode: int, _sit: Dictionary) -> Dictionary:
-	return {"mode": mode, "refs": cover_refs() if mode == SkillCover.Mode.OFFENSE else [], "fire_en_route": cant_go_dark}
-
-## The engaged arm: hold hidden island cover with a target in reach; without
-## one, engage from the band while the odds allow, then get out.
-func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
-	if hold != null:
-		wants_stealth = _skill_hold.cover.wants_concealment()
-		return hold
-	if sit.threat < _doc().engage_max_threat:
-		var engage := _fight(ctx)
-		if engage != null:
-			return engage
-	return _disengage(ctx, sit)
+## The engaged arm: hidden island cover with a target in reach first.
+func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _fight(ctx, {"prefer_cover": true})
 
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	# Only when something is actually spotted, matching the arms this used to sit
@@ -144,7 +110,4 @@ func try_use_consumable():
 
 ## Opening: hidden cover with the priority's spawn reference in reach.
 func _opening(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
-	if hold != null:
-		wants_stealth = _skill_hold.cover.wants_concealment()
-	return hold
+	return _run_skill(&"Fight", ctx, SkillFight.cover_params(ctx, SkillCover.Mode.OFFENSE).merged({"only": SkillFight.Mode.COVER}))

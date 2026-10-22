@@ -1262,7 +1262,7 @@ func _emit_debug_draws() -> void:
 	if behavior != null:
 		var st_skill: SkillPosition = null
 		match behavior._active_skill_name:
-			&"Hold": st_skill = behavior._skill_hold.current()
+			&"Fight": st_skill = behavior._skill_fight.current()
 			&"Disengage": st_skill = behavior._skill_disengage.cover()
 		if behavior._active_skill_name == &"Disengage":
 			Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), behavior._skill_disengage.debug_text(), Color(1.0, 0.8, 1.0), 14)
@@ -1283,7 +1283,7 @@ func _emit_debug_draws() -> void:
 			var st_col := Color(0.2, 1.0, 0.9)
 			if st_skill is SkillCover:
 				st_col = Color(0.3, 1.0, 0.3)
-			elif st_skill is SkillFight:
+			elif st_skill is FightStation:
 				st_col = Color(1.0, 0.5, 0.1)
 			elif st_skill is SkillSpot:
 				st_col = Color(0.4, 0.8, 1.0)
@@ -1314,14 +1314,17 @@ func _emit_debug_draws() -> void:
 				if behavior.priorities[k].ship != null:
 					rank[behavior.priorities[k].ship] = k
 		var ringed := {}
-		if behavior != null:
+		var g: Dictionary = NavigationMapManager.reach_gun(_ship)
+		if behavior != null and not g.is_empty():
+			var rctx := SkillContext.create(_ship, null, server_node, behavior)
+			var conceal: float = NavigationMapManager.reach_conceal_radius(_ship)
 			for b in server_node._team_belief(my_team_id):
 				var e: Ship = b.ship
-				if not is_instance_valid(e) or not SkillFight.threatens(e):
+				if not is_instance_valid(e) or not FightStation.threatens(e):
 					continue
 				ringed[e] = true
 				var trade: float = float(behavior._trade(e).best)
-				var ring: float = behavior.ring(SkillContext.create(_ship, null, server_node, behavior), e, b.pos) + float(b.spread)
+				var ring: float = FightStation._ring_for(rctx, b, {}, float(g.range), conceal) + float(b.spread)
 				var col := Color(0.2, 1.0, 0.3, 0.7) if trade >= BotBehavior.TRADE_MARGIN \
 					else Color(1.0, 0.25, 0.2, 0.7) if behavior.dangerous(e) else Color(1.0, 0.85, 0.2, 0.7)
 				Debug.draw_circle(Vector3(b.pos.x, 12.0, b.pos.y), ring, col, 64)

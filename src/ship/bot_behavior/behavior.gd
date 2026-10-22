@@ -84,7 +84,7 @@ var _skill_chase: SkillChase = SkillChase.new()
 var _skill_camp: SkillCamp = SkillCamp.new()
 var _skill_engage: SkillEngage = SkillEngage.new()
 var _skill_disengage: SkillDisengage = SkillDisengage.new()
-var _skill_hold: SkillHold = SkillHold.new()
+var _skill_fight: SkillFight = SkillFight.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_stance: SkillStance = SkillStance.new()
@@ -2395,16 +2395,17 @@ const RANGE_RATE_SPEEDS: float = 2.0
 ## Target changes under this share of gun range leave it where it is.
 const RANGE_DEADBAND: float = 0.03
 ## Threat is 1 - exp(-this x share of HP lost per second): ~0.45 at 2%/s.
+## Shorter for an enemy our guns would sink sooner.
 const THREAT_HORIZON_S: float = 30.0
 ## An enemy whose shells cannot land where we are keeps this share of its threat.
-const UNREACHABLE_THREAT: float = 0.1
+const UNREACHABLE_THREAT: float = 0.03
 ## A range is ours to fight at when we take this many times its HP share per second as it takes of ours.
 const TRADE_MARGIN: float = 1.5
 const RADIUS_STEP_M: float = 1000.0
-## An enemy's ring moves no faster than this many times our top speed: a station on it can keep up.
-const RING_RATE_SPEEDS: float = 1.0
-## A push stands only while the trade holds at least this all the way in to it.
-const APPROACH_MIN_RATIO: float = 1.0
+## A ring raised to where its owner last shot us sinks back toward the trade's at this rate.
+const RING_DECAY_MPS: float = 5.0
+## ...this many times faster while its guns are on a friend.
+const RING_SCREEN_DECAY: float = 4.0
 const RADIUS_TTL_S: float = 5.0
 ## In a trade we angle to them, and they show us their bow: our AP gets no angled citadel.
 const ANGLED_ASPECT_DEG: float = 30.0
@@ -2413,10 +2414,6 @@ const BOW_ASPECT_DEG: float = 10.0
 const DODGE_MAX: float = 0.6
 const SEC_RANGE_BUCKET_M: float = 500.0
 const SEC_ASPECT_BUCKET_DEG: float = 15.0
-## A screened ring sits this share of the range from the enemy to the friend it
-## is busy with, at most SCREEN_CAP_M behind them: just short of becoming its priority.
-const SCREEN_RATIO: float = 1.075
-const SCREEN_CAP_M: float = 900.0
 ## Never inside an enemy's secondary range plus this, unless out-trading it there.
 const SCREEN_SECONDARY_MARGIN_M: float = 500.0
 ## Bisection steps for optimal_engagement_range: gun range / 2^n of precision.
@@ -2447,34 +2444,21 @@ func smoothed_engagement_range(ctx: SkillContext, snap: bool = false) -> float:
 ## declines the situation, so callers can walk a fallback chain.
 func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
 	var intent: NavIntent = null
+	# Fight and Disengage are the only things a ship does.
 	match skill_name:
-		&"Hunt":        intent = _skill_hunt.execute(ctx, params)
-		&"Chase":       intent = _skill_chase.execute(ctx, params)
-		&"Camp":        intent = _skill_camp.execute(ctx, params)
-		&"Engage":      intent = _skill_engage.execute(ctx, params)
 		&"Disengage":
 			# Unseen there is nothing to break contact with.
 			if ctx.ship.is_detected():
 				intent = _skill_disengage.execute(ctx, params.merged({"cant_go_dark": cant_go_dark}))
-		&"Hold":        intent = _skill_hold.execute(ctx, params)
+		&"Fight":       intent = _skill_fight.execute(ctx, params)
 		&"Spot":
-			intent = _skill_hold.execute(ctx, params.merged({"hold": SkillHold.Mode.SPOT}))
-			skill_name = &"Hold"
-		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
-		&"SailForward": intent = _intent_sail_forward(ctx.ship)
-		&"Stand":       intent = _intent_stand(ctx)
-		&"Flank":       intent = _intent_flank(ctx)
+			intent = _skill_fight.execute(ctx, params.merged({"only": SkillFight.Mode.SPOT}))
+			skill_name = &"Fight"
+		_:
+			push_error("%s asked for skill %s: only Fight and Disengage run" % [_ship.ship_name, skill_name])
 	if intent != null:
 		_active_skill_name = skill_name
 	return intent
-
-## Walk a chain of skill names, returning the first that accepts.
-func _run_chain(chain: Array[StringName], ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
-	for skill_name in chain:
-		var intent := _run_skill(skill_name, ctx, params)
-		if intent != null:
-			return intent
-	return null
 
 ## Everything the ladder reads about the current moment, gathered once.
 func _build_situation(ctx: SkillContext) -> Dictionary:
@@ -2572,47 +2556,19 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_stealth = true
 		wants_to_be_concealed = true
 
-	intent = _committed_intent(ctx, sit)
+	intent = _threat_disengage(ctx, sit)
+	if intent == null:
+		intent = _committed_intent(ctx, sit)
 	if intent != null:
 		_apply_gun_policy(ctx, sit)
 		return _finish_nav(intent, ctx, sit, prev_skill)
 
-	if not sit.has_enemies:
-		sit["arm"] = &"idle"
-		if never_spotted():
-			intent = _opening(ctx, sit)
-		if intent == null:
-			intent = _run_chain(d.idle_chain, ctx)
-	elif not sit.has_spotted and not d.dark_chain.is_empty():
-		sit["arm"] = &"dark"
-		# Everything has gone dark. Running down the last-known position at flank
-		# speed is only reasonable while the picture is quiet; under pressure, take
-		# cover instead. prioritize_cover: with nothing spotted there's nothing to
-		# shoot at, so cover must not be rejected for being unshootable.
-		if d.dark_takes_cover and sit.threat >= get_chase_max_threat():
-			intent = _run_skill(&"Disengage", ctx)
-		if intent == null:
-			intent = _run_chain(d.dark_chain, ctx)
-	elif d.chase_when_unshootable and not _has_shootable_contact(ctx):
-		# Contacts are lit and not one of them can be shot — everything is either
-		# beyond the guns or masked by terrain.  That is a distance problem, and
-		# nothing else on the ladder is an answer to one: Camp holds a range that
-		# is already not working, FindCover searches for a firing position
-		# against a target list that is empty, and Flank spends the whole transit
-		# sliding along an arc every point of which is just as far out.  Close,
-		# and let the ladder have the fight back once there is a shot in it.
-		sit["arm"] = &"chase"
-		intent = _run_skill(&"Chase", ctx) if sit.threat < PUSH_MAX_THREAT else _run_skill(&"Stand", ctx)
-		if intent == null:
-			# Hand the arm back before falling through, or _finish_nav would
-			# post-process whatever ran below as though it were the chase.
-			sit["arm"] = &"engaged"
-			intent = _select_nav_skill(ctx, sit)
-	else:
+	if never_spotted():
+		intent = _opening(ctx, sit)
+	if intent == null:
 		intent = _select_nav_skill(ctx, sit)
-
-	if intent == null and d.universal_sail_forward_fallback:
-		intent = _run_skill(&"SailForward", ctx)
+	if intent == null:
+		intent = _fight(ctx)
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
@@ -2701,19 +2657,39 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		return _select_engaged_skill(ctx, sit)
 
 	sit["arm"] = &"close"
-	var intent: NavIntent = null
-	if sit.threat < d.push_threat:
-		intent = _fight(ctx)
-	else:
-		intent = _disengage(ctx, sit)
+	var intent := _fight(ctx)
 	if intent != null:
 		_shape_close_intent(intent, ctx, sit)
 	# Do not let the post-processors steer a committed push or a committed kite.
-	if (sit.threat < d.force_below or sit.threat >= d.force_above) and not _holding(SkillHold.Mode.COVER) and _active_skill_name != &"Disengage":
+	if (sit.threat < d.force_below or sit.threat >= d.force_above) and not _fighting(SkillFight.Mode.COVER) and _active_skill_name != &"Disengage":
 		sit["forced"] = true
 	return intent
 
-## Per-class hook: the close arm at high threat.
+## Lit above DISENGAGE_THREAT a ship gets out, whatever it was doing, until below REENGAGE_THREAT.
+const DISENGAGE_THREAT: float = 0.4
+const REENGAGE_THREAT: float = 0.35
+
+func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var leaving: bool = _active_skill_name == &"Disengage"
+	if not ctx.ship.is_detected() or sit.threat <= (REENGAGE_THREAT if leaving else DISENGAGE_THREAT):
+		return null
+	var out := _disengage(ctx, sit)
+	if out != null:
+		sit["arm"] = &"close"
+	return out
+
+## Gone dark by disengaging, the guns stay quiet until a lit ship here would sit under DISENGAGE_THREAT.
+var _dark_latch: bool = false
+
+func _dark_hold(ctx: SkillContext) -> bool:
+	if _active_skill_name == &"Disengage":
+		_dark_latch = _skill_disengage.wants_concealment()
+		return false
+	if _dark_latch and ((_ship.visible_to_enemy and not _probe_concealment(ctx.server))
+			or get_threat_score(ctx) < DISENGAGE_THREAT):
+		_dark_latch = false
+	return _dark_latch
+
 func _disengage(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 	var intent := _run_skill(&"Disengage", ctx)
 	wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
@@ -2736,14 +2712,44 @@ const FLANK_SWING: float = 0.4
 ## Pushing stops here: past it a ship with no firing station stands its ground.
 const PUSH_MAX_THREAT: float = 0.6
 
-## Hold the firing station; with none to be had, push in to the band, or under threat stand.
-func _fight(ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
-	var intent := _hold(ctx, SkillHold.Mode.FIGHT, params)
-	if intent != null:
-		return intent
-	if get_threat_score(ctx) < PUSH_MAX_THREAT:
-		intent = _run_skill(&"Engage", ctx, params)
-	return intent if intent != null else _run_skill(&"Stand", ctx)
+## Fight; a station that cannot be reached alive at DISENGAGE_THREAT disengages
+## instead, toward it. With nothing to fight, Fight holds where we are (unless `stand` is false).
+func _fight(ctx: SkillContext, params: Dictionary = {}, stand: bool = true) -> NavIntent:
+	var intent := _run_skill(&"Fight", ctx, params)
+	if intent != null and _fighting(SkillFight.Mode.STATION) and _skill_fight.station.doomed() \
+			and get_threat_score(ctx) >= DISENGAGE_THREAT:
+		var out := _run_skill(&"Disengage", ctx, {"toward": _skill_fight.station.station_xz()})
+		if out != null:
+			wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
+			return out
+	if intent == null and stand:
+		intent = _intent_stand(ctx)
+		_active_skill_name = &"Fight"
+	return intent
+
+## Whether we are seen from nearer than the enemies we know of are, on average: we can spot them first.
+func conceals_well(ctx: SkillContext) -> bool:
+	if _ship.concealment == null or _ship.team == null:
+		return false
+	var sum := 0.0
+	var n := 0
+	for b in ctx.server._team_belief(_ship.team.team_id):
+		var e: Ship = b.ship
+		if is_instance_valid(e) and e.concealment != null:
+			sum += (e.concealment.params.p() as ConcealmentParams).radius
+			n += 1
+	return n > 0 and NavigationMapManager.reach_conceal_radius(_ship) < sum / n
+
+## Enemy instance id -> when our team last saw it.
+var _seen_at: Dictionary = {}
+
+## Seconds since our team last saw `e`; since the match began if never.
+func unseen_s(e: Ship) -> float:
+	var now: float = SimClock.now()
+	if e.visible_to_enemy:
+		_seen_at[e.get_instance_id()] = now
+		return 0.0
+	return now - float(_seen_at.get(e.get_instance_id(), 0.0))
 
 ## Where we are, bow on the priority; stance angles. The flank is held, not crossed.
 func _intent_stand(ctx: SkillContext) -> NavIntent:
@@ -2753,12 +2759,9 @@ func _intent_stand(ctx: SkillContext) -> NavIntent:
 	var intent := NavIntent.create(Vector3(at.x, 0.0, at.z), atan2(to.x, to.z), ctx.ship.movement_controller.ship_length)
 	return intent
 
-func _hold(ctx: SkillContext, mode: int, params: Dictionary = {}) -> NavIntent:
-	return _run_skill(&"Hold", ctx, params.merged({"hold": mode}))
-
-## Whether the active posture is Hold in `mode`.
-func _holding(mode: int) -> bool:
-	return _active_skill_name == &"Hold" and _skill_hold.mode == mode
+## Whether the active posture is Fight in `mode`.
+func _fighting(mode: int) -> bool:
+	return _active_skill_name == &"Fight" and _skill_fight.mode == mode
 
 ## Per-class hook: adjust an intent produced by the close arm. CA uses it to
 ## hand heading authority to the navigator near terrain.
@@ -2798,8 +2801,8 @@ func _log_skill_time(intent: NavIntent) -> void:
 		skill_time[_skill_key] = float(skill_time.get(_skill_key, 0.0)) + now - _skill_since
 	_skill_since = now
 	_skill_key = "none" if intent == null else String(_active_skill_name)
-	if intent != null and _active_skill_name == &"Hold":
-		_skill_key += ":" + SkillHold.Mode.keys()[_skill_hold.mode]
+	if intent != null and _active_skill_name == &"Fight":
+		_skill_key += ":" + SkillFight.Mode.keys()[_skill_fight.mode]
 
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
@@ -2811,15 +2814,16 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	# activation reuses a stale spot.
 	if prev_skill == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
-	if prev_skill == &"Hold" and _active_skill_name != &"Hold":
-		_skill_hold.reset()
+	if prev_skill == &"Fight" and _active_skill_name != &"Fight":
+		_skill_fight.reset()
 
 	salvo_clock.tick(ctx.ship, ctx.server, self)
 	if ctx.ship.visible_to_enemy:
 		_infer_concealed_spotter(ctx.server)
 
 	cant_go_dark = not _probe_concealment(ctx.server)
-	hold_fire = not _owns_gun_policy() and wants_stealth and not cant_go_dark
+	var latched := _dark_hold(ctx)
+	hold_fire = not _owns_gun_policy() and ((wants_stealth and not cant_go_dark) or latched)
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
 		_skill_stance.reset()
@@ -2914,13 +2918,8 @@ func _unknown_class(server: GameServer, ref: int) -> Dictionary:
 	return f.by_class.get(server.ref_class(_ship.team.team_id, ref), f.all)
 
 func get_threat_score(ctx: SkillContext) -> float:
-	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
-	## Each enemy within its own gun range contributes matchup × condition ×
-	## range_pressure × class_w, and pressures compound: threat = 1 − 2^−(total
-	## pressure), so one unit of pressure halves remaining safety and threat
-	## approaches but never
-	## reaches 1. Calibrated by the reference engagement above; subclasses tune
-	## per-class fear via get_threat_class_weight().
+	## 0–1: 1 − exp(−Σ share of our HP each enemy takes per second × how long
+	## it keeps shooting), see _threat_from.
 	var frame := Engine.get_physics_frames()
 	if frame == _threat_score_frame:
 		return _threat_score_cache
@@ -2956,24 +2955,19 @@ func _threat_contacts(ctx: SkillContext) -> Array[Dictionary]:
 ## Threat from `contacts` with every distance moved by `shift`. `presume`: a
 ## firing ship there is seen by every enemy inside our gun range (the bloom),
 ## and seen, every enemy whose guns reach shoots; otherwise who is shooting now.
-func _threat_from(ctx: SkillContext, contacts: Array[Dictionary], shift: float, presume: bool) -> float:
+func _threat_from(ctx: SkillContext, contacts: Array[Dictionary], shift: float, _presume: bool = false) -> float:
 	var my_hp  = _ship.health_controller.current_hp
 	var max_hp = _ship.health_controller.max_hp
 	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
 	var my_hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
 	if contacts.is_empty():
 		return my_hp_pressure * 0.3
-	var spotted := false
-	if presume:
-		var seen_r: float = maxf(ctx.ship.artillery_controller.get_params()._range,
-			(_ship.concealment.params.p() as ConcealmentParams).radius if _ship.concealment != null else 0.0)
-		for contact in contacts:
-			spotted = spotted or (contact.position as Vector3).distance_to(_ship.global_position) + shift <= seen_r
 	var raw_threat: float = 1.0
 	var time_remaining: float = ctx.server.get_match_time_remaining()
 	var t_norm: float = clampf(1.0 - time_remaining / ctx.server.MATCH_DURATION, 0.0, 1.0)
 	var threat_scale: float = 1.0 - pow(t_norm, 4.0)
-	var reach := {} if presume else _reach_now(ctx)
+	var reach := _reach_now(ctx)
+	var friends: Array = ctx.server.get_team_ships(_ship.team.team_id) if _ship.team != null else []
 
 	for contact in contacts:
 		var enemy: Ship = contact.ship
@@ -2988,15 +2982,34 @@ func _threat_from(ctx: SkillContext, contacts: Array[Dictionary], shift: float, 
 			continue
 		if dist > enemy.artillery_controller.get_params()._range:
 			continue
-		# Share of our remaining HP its guns take per second at this range, off our real aspect to it.
+		# Share of our remaining HP its guns take per second at this range, off
+		# our real aspect to it, after dispersion against our hull and our dodge.
 		var share: float = incoming_dps(enemy, dist, BotGunnery.aspect_from(_ship, believed)) / maxf(my_hp, 1.0)
 		if reach.get(enemy.get_instance_id(), true) == false:
 			share *= UNREACHABLE_THREAT
-		var shooting: bool = spotted if presume else active_shooters_at_me.has(enemy)
-		if not shooting:
-			share *= 0.5
-		raw_threat *= exp(-THREAT_HORIZON_S * share * threat_scale * float(contact.certainty))
+		share *= _aim_share(enemy, Vector2(believed.x, believed.z), dist, friends)
+		var ours: float = outgoing_dps(enemy, dist, BotGunnery.aspect_from(enemy, _ship.global_position))
+		var lasts: float = minf(THREAT_HORIZON_S, enemy.health_controller.current_hp / ours) if ours > 0.0 else THREAT_HORIZON_S
+		raw_threat *= exp(-lasts * share * threat_scale * float(contact.certainty))
 	return clampf(1.0 - raw_threat, 0.0, 1.0)
+
+## The share of `enemy`'s guns (believed `at`, `dist` from us) we expect on us:
+## all while it shoots us; else our pull against every lit friend its guns
+## reach, pull falling with the square of range, whether or not we are seen.
+## Who it shoots now does not matter: only how much nearer a friend is than us.
+func _aim_share(enemy: Ship, at: Vector2, dist: float, friends: Array) -> float:
+	if active_shooters_at_me.has(enemy):
+		return 1.0
+	var reach: float = enemy.artillery_controller.get_params()._range
+	var mine: float = 1.0 / maxf(dist * dist, 1.0)
+	var total: float = mine
+	for f: Ship in friends:
+		if f == _ship or not is_instance_valid(f) or not f.is_alive() or not f.visible_to_enemy:
+			continue
+		var df: float = at.distance_to(Vector2(f.global_position.x, f.global_position.z))
+		if df <= reach:
+			total += 1.0 / maxf(df * df, 1.0)
+	return mine / total
 
 ## A spawn reference has a class, not a hull: the old matchup x range curve, 0..1.
 func _unknown_threat(stats: Dictionary, dist: float, hp_ratio: float, max_hp: float) -> float:
@@ -3104,56 +3117,58 @@ func _trade(enemy: Ship) -> Dictionary:
 	_radius_cache[enemy.get_instance_id()] = [now, result]
 	return result
 
-## Whether the push range `push` is paid for from `from` metres out: the trade
-## stays at least APPROACH_MIN_RATIO all the way in. Unseen, we close dark and it is.
-func _approach_ok(t: Dictionary, push: float, from: float) -> bool:
-	if not _ship.visible_to_enemy:
-		return true
-	var ratios: PackedFloat32Array = t.ratios
-	var k0: int = maxi(int((push - POINT_BLANK_M) / RADIUS_STEP_M), 0)
-	var k1: int = mini(int((from - POINT_BLANK_M) / RADIUS_STEP_M), ratios.size() - 1)
-	for k in range(k0, k1 + 1):
-		if ratios[k] < APPROACH_MIN_RATIO:
-			return false
-	return true
-
 ## How close to fight `enemy`, believed `at`:
-## - it shoots at us while lit we can't see it: outside its guns;
-## - else the push range if the approach to it is paid for, else the hold range;
-## - not shooting at us with a lit friend nearer it (ahead of us in its
-##   priorities): just behind the friend's range from it, never inside its secondaries.
-## The answer moves no faster than RING_RATE_SPEEDS times our speed.
+## - the push range if we out-trade it somewhere, else the hold range; pulled
+##   in to our engagement range where the trade there is at least even;
+## - its guns on a friend and not us: halfway from that to the friend's range from it, never inside
+##   its secondaries unless we out-trade it there;
+## - disengaging, it shooting us while it out-trades us at every range: just
+##   where it shot us. Held while disengaging, sinking back at
+##   RING_DECAY_MPS once fighting again; fighting, being shot moves nothing.
 func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
 	var t := _trade(enemy)
-	var mine: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+	var ideal: float = t.push if float(t.push) >= 0.0 else t.hold
+	if _range_held > 0.0 and _range_held < ideal and _ratio_at(t, _range_held) >= 1.0:
+		ideal = _range_held
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var shooting: bool = active_shooters_at_me.has(enemy)
-	var full: float
-	if shooting and _ship.visible_to_enemy and not enemy.visible_to_enemy:
-		full = enemy.artillery_controller.get_params()._range if enemy.artillery_controller != null else float(t.hold)
-	elif float(t.push) >= 0.0 and _approach_ok(t, float(t.push), mine):
-		full = t.push
-	else:
-		full = t.hold
-	if not shooting and _ship.team != null and ctx.server != null:
-		var front := INF
-		for f in ctx.server.get_team_ships(_ship.team.team_id):
-			if f != _ship and is_instance_valid(f) and f.is_alive() and f.visible_to_enemy:
-				front = minf(front, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
-		if front < mine:
-			var screened: float = front + minf(front * (SCREEN_RATIO - 1.0), SCREEN_CAP_M)
-			full = minf(full, maxf(screened, secondary_reach(enemy)))
-	return _faded(enemy, full)
+	var busy: float = INF if shooting else _friend_under(ctx, enemy, at)
+	if is_finite(busy):
+		var screened: float = (ideal + busy) * 0.5
+		ideal = minf(ideal, screened if _ratio_at(t, screened) >= 1.0 else maxf(screened, secondary_reach(enemy)))
+	var now: float = SimClock.now()
+	var id := enemy.get_instance_id()
+	var h: Array = _ring_held.get(id, [])
+	var disengaging: bool = _active_skill_name == &"Disengage"
+	var rate: float = 0.0 if disengaging else RING_DECAY_MPS * (RING_SCREEN_DECAY if is_finite(busy) else 1.0)
+	var r: float = ideal if h.is_empty() else maxf(ideal, float(h[0]) - rate * maxf(now - float(h[1]), 0.0))
+	if disengaging and shooting and float(t.push) < 0.0:
+		r = maxf(ideal, at.distance_to(here))
+	_ring_held[id] = [r, now]
+	return r
+
+## The trade against `t`'s enemy at `range_m`, from its RADIUS_STEP_M samples.
+static func _ratio_at(t: Dictionary, range_m: float) -> float:
+	var ratios: PackedFloat32Array = t.ratios
+	if ratios.is_empty():
+		return 0.0
+	return ratios[clampi(roundi((range_m - POINT_BLANK_M) / RADIUS_STEP_M), 0, ratios.size() - 1)]
+
+## Range from `at` to the nearest bot friend `enemy` is shooting at; INF if none.
+func _friend_under(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
+	if _ship.team == null or ctx == null or ctx.server == null:
+		return INF
+	var d := INF
+	for f in ctx.server.get_team_ships(_ship.team.team_id):
+		if f == _ship or not is_instance_valid(f) or not f.is_alive():
+			continue
+		var bc = f.get_node_or_null("Modules/BotController")
+		if bc != null and bc.behavior != null and bc.behavior.active_shooters_at_me.has(enemy):
+			d = minf(d, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
+	return d
 
 ## Enemy instance id -> [ring, time]: what ring() last answered.
 var _ring_held: Dictionary = {}
-
-func _faded(enemy: Ship, want: float) -> float:
-	var now: float = SimClock.now()
-	var h: Array = _ring_held.get(enemy.get_instance_id(), [])
-	var r: float = want if h.is_empty() else move_toward(float(h[0]), want,
-		RING_RATE_SPEEDS * _ship.movement_controller.max_speed * maxf(now - float(h[1]), 0.0))
-	_ring_held[enemy.get_instance_id()] = [r, now]
-	return r
 
 ## How far out of `enemy`'s secondaries a ship that does not out-trade it keeps: their range plus a margin; 0 without.
 static func secondary_reach(enemy: Ship) -> float:

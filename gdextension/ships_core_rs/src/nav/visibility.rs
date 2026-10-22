@@ -441,26 +441,26 @@ impl VisibilityGrid {
         d
     }
 
-    /// The best fighting cell in the cones toward `axis` and away (cover_search's
-    /// cones): over hold_s, what the guns deal on the cheapest way there plus our
-    /// trade on the best target reached there for the rest, less the harm taken on the way.
-    /// hold_walk's opts (reach_field, team, hull_key, ids, shootable, heavy, det_r)
-    /// plus cover_search's cone keys and curve_out, curve_in, curve_steps,
-    /// curve_p0_m, curve_step_m, value, aggro, front, front_hp, focus, crossfire, hold_s, speed,
-    /// detect_rate, dark, held. {found, pos, score, value, harm, mask, cells,
-    /// held_ok, held_score, held_value, held_harm, held_mask}.
+    /// The best fighting cell within window_m of `from`, outside every ring
+    /// whose owner's shells land there. hold_walk's opts (reach_field, team,
+    /// hull_key, ids, shootable, heavy, det_r) plus curve_out, curve_in,
+    /// curve_steps, curve_p0_m, curve_step_m, value, aggro, front, front_hp,
+    /// focus, crossfire, ring, chase_ring, window_m, speed, dark, anchor, move_cost, chase_anchor_w, walk_axis, walk_from, walk_slack, lat_axis, lat_origin, lat_min, lat_max,
+    /// claims, claim_r, claim_cost, held. {found, chase, chase_to, pos, score, value,
+    /// harm, mask, cells, held_ok, held_score, held_value, held_harm, held_mask}.
     #[func]
-    fn fight_search(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+    fn fight_search(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
         d.set("found", false);
+        d.set("chase", false);
         d.set("held_ok", false);
         if !self.is_ready() {
             return d;
         }
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = FightArgs::from_opts(axis, &opts);
+        let a = FightArgs::from_opts(&opts);
         let held = opts.get("held").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF);
-        let (best, h, weighed) = self.fight_search_impl(from, held, &inp, &a);
+        let (best, h, chase, weighed) = self.fight_search_impl(from, held, &inp, &a);
         d.set("cells", weighed as i64);
         if let Some((k, score, c)) = best {
             d.set("found", true);
@@ -469,6 +469,11 @@ impl VisibilityGrid {
             d.set("value", c.value);
             d.set("harm", c.harm);
             d.set("mask", c.mask as i64);
+        } else if let Some((k, t)) = chase {
+            d.set("found", true);
+            d.set("chase", true);
+            d.set("pos", self.centres[k]);
+            d.set("chase_to", t);
         }
         if let Some((score, c)) = h {
             d.set("held_ok", true);
@@ -480,6 +485,16 @@ impl VisibilityGrid {
         d
     }
 
+    /// Harm (fight_search's units) taken sailing straight from `from` to `to` at opts.speed.
+    #[func]
+    fn fight_route_harm(&self, from: Vector2, to: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> f32 {
+        if !self.is_ready() {
+            return 0.0;
+        }
+        let inp = self.hold_inputs(&enemies, &opts);
+        self.route_harm(from, to, &inp, &FightArgs::from_opts(&opts))
+    }
+
     /// What fighting from the cell holding `pos` deals and takes a second: {ok, value, harm, mask}.
     #[func]
     fn fight_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
@@ -488,7 +503,7 @@ impl VisibilityGrid {
         let (ix, iz) = self.grid_of(pos);
         let Some(k) = self.water(ix, iz).filter(|_| self.is_ready()) else { return d };
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = FightArgs::from_opts(f32::INFINITY, &opts);
+        let a = FightArgs::from_opts(&opts);
         if let Some(c) = self.fight_cell(k, &inp, &a) {
             d.set("ok", true);
             d.set("value", c.value);

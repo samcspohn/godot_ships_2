@@ -1622,7 +1622,7 @@ func _cover_snapshot(ship: Ship) -> Dictionary:
 		return {}
 	var b: BotBehavior = bc.behavior
 	var best: Dictionary = {}
-	for pair in [["hold", b._skill_hold.cover], ["disengage", b._skill_disengage.cover()]]:
+	for pair in [["fight", b._skill_fight.cover], ["disengage", b._skill_disengage.cover()]]:
 		var sk: SkillCover = pair[1]
 		if sk != null and not sk.last_sweep.is_empty() and (best.is_empty() or int(sk.last_sweep.ms) > int(best.sweep.ms)):
 			best = {"name": pair[0], "skill": sk, "sweep": sk.last_sweep}

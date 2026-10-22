@@ -49,7 +49,7 @@ static func write(bot: BotControllerV4, us: int, target: Vector3) -> void:
 		var skill := String(beh._active_skill_name)
 		var st: SkillPosition = null
 		match beh._active_skill_name:
-			&"Hold": st = beh._skill_hold.current()
+			&"Fight": st = beh._skill_fight.current()
 			&"Disengage": st = beh._skill_disengage.cover()
 		var pt: Ship = beh.priority_target()
 		rec.merge({"skill": skill, "station": st.debug_text() if st != null else "",

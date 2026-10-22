@@ -43,16 +43,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_to_be_concealed = false
 	return _nav_core(SkillContext.create(ship, target, server, self))
 
-## The engaged arm: not close aboard, or not detected. A battleship engages
-## from its band (closer as the fight looks easier) until the threat says
-## the trade is lost, then gets out.
-func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if sit.threat < _doc().engage_max_threat or sit.nearest_dist > sit.gun_range:
-		var engage := _fight(ctx)
-		if engage != null:
-			return engage
-	return _disengage(ctx, sit)
-
 func _apply_gun_policy(ctx: SkillContext, _sit: Dictionary) -> void:
 	# Result deliberately unused: BBs never suppress. The call is kept for its
 	# side effect — deducing a concealed spotter from unexplained bloom.
@@ -60,5 +50,5 @@ func _apply_gun_policy(ctx: SkillContext, _sit: Dictionary) -> void:
 
 ## Opening: fight where the unseen enemy is presumed to be; failing a station, down our own flank.
 func _opening(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	var intent := _hold(ctx, SkillHold.Mode.FIGHT, {"presumed": true})
-	return intent if intent != null else _run_skill(&"Flank", ctx)
+	var intent := _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.STATION, "presumed": true})
+	return intent if intent != null else _fight(ctx)

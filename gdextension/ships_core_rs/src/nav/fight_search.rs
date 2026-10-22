@@ -1,15 +1,10 @@
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
-
 use godot::prelude::*;
 
-use crate::nav::cover_search::CoverArgs;
 use crate::nav::spot_walk::SpotInputs;
 use crate::nav::visibility::VisibilityGrid;
 
-/// fight_search's per-enemy trade curves and weights, from the opts dictionary.
+/// fight_search's per-enemy trade curves, weights and rings, from the opts dictionary.
 pub(crate) struct FightArgs {
-    pub cones: CoverArgs,
     /// Per enemy, `steps` samples every `step_m` from `p0_m`: our share of its HP
     /// per second (out) and its share of ours (inn).
     pub out: Vec<f32>,
@@ -29,20 +24,42 @@ pub(crate) struct FightArgs {
     pub focus: f32,
     /// Harm grows by this share as the shooters' arc widens from CROSSFIRE_FREE to CROSSFIRE_FULL.
     pub crossfire: f32,
-    /// Seconds a station is scored over, sailing there included.
-    pub hold_s: f32,
+    /// Per enemy: inside this range, a cell its shells reach is no station.
+    pub ring: Vec<f32>,
+    /// Per enemy: the circle stations are walked on, 0 for none.
+    pub walk_r: Vec<f32>,
+    /// Per enemy: a chase keeps out of its sight inside this, 0 for none.
+    pub chase_ring: Vec<f32>,
+    pub window_m: f32,
     pub speed: f32,
-    /// Share of our HP a second that being seen costs a dark ship en route.
-    pub detect_rate: f32,
+    /// Unseen now: the route costs only where it would be seen.
     pub dark: bool,
+    /// The last station: a cell scores `move_cost` less per metre from it, a
+    /// chase cell counts `chase_anchor_w` metres per metre from it.
+    pub anchor: Vector2,
+    pub move_cost: f32,
+    pub chase_anchor_w: f32,
+    /// A new station lies no more than `walk_slack` behind `walk_from` along
+    /// `walk_axis` (zero: any way), and every station's offset from
+    /// `lat_origin` along `lat_axis` lies in [lat_min, lat_max].
+    pub walk_axis: Vector2,
+    pub walk_from: Vector2,
+    pub walk_slack: f32,
+    pub lat_axis: Vector2,
+    pub lat_origin: Vector2,
+    pub lat_min: f32,
+    pub lat_max: f32,
+    /// Team-mates' stations: a cell inside `claim_r` of one loses up to `claim_cost`.
+    pub claims: Vec<Vector2>,
+    pub claim_r: f32,
+    pub claim_cost: f32,
 }
 
 impl FightArgs {
-    pub(crate) fn from_opts(axis: f32, o: &VarDictionary) -> Self {
+    pub(crate) fn from_opts(o: &VarDictionary) -> Self {
         let f = |k: &str, d: f32| o.get(k).map_or(d, |v| v.to::<f32>());
         let arr = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedFloat32Array>().ok()).map_or(Vec::new(), |a| a.to_vec());
         Self {
-            cones: CoverArgs::from_opts(axis, o),
             out: arr("curve_out"),
             inn: arr("curve_in"),
             steps: o.get("curve_steps").map_or(0, |v| v.to::<i32>().max(0) as usize),
@@ -54,10 +71,25 @@ impl FightArgs {
             front_hp: arr("front_hp"),
             focus: f("focus", 0.0),
             crossfire: f("crossfire", 0.0),
-            hold_s: f("hold_s", 90.0),
+            ring: arr("ring"),
+            walk_r: arr("walk_r"),
+            chase_ring: arr("chase_ring"),
+            window_m: f("window_m", 6000.0),
             speed: f("speed", 10.0).max(1.0),
-            detect_rate: f("detect_rate", 0.0),
             dark: o.get("dark").is_some_and(|v| v.to::<bool>()),
+            anchor: o.get("anchor").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
+            move_cost: f("move_cost", 0.0),
+            chase_anchor_w: f("chase_anchor_w", 0.0),
+            walk_axis: o.get("walk_axis").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
+            walk_from: o.get("walk_from").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
+            walk_slack: f("walk_slack", 0.0),
+            lat_axis: o.get("lat_axis").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
+            lat_origin: o.get("lat_origin").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
+            lat_min: f("lat_min", f32::NEG_INFINITY),
+            lat_max: f("lat_max", f32::INFINITY),
+            claims: o.get("claims").and_then(|v| v.try_to::<PackedVector2Array>().ok()).map_or(Vec::new(), |a| a.to_vec()),
+            claim_r: f("claim_r", 0.0),
+            claim_cost: f("claim_cost", 0.0),
         }
     }
 
@@ -155,25 +187,11 @@ fn shooter_arc(b: &mut [(f32, f32)]) -> f32 {
     std::f32::consts::TAU - gap
 }
 
-#[derive(Clone, Copy, PartialEq)]
-struct Q(f32, usize);
-impl Eq for Q {}
-impl Ord for Q {
-    fn cmp(&self, o: &Self) -> Ordering {
-        self.0.total_cmp(&o.0).then(self.1.cmp(&o.1))
-    }
-}
-impl PartialOrd for Q {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-
 impl VisibilityGrid {
     /// What our guns do at cell `k` to the best target they reach, and what we
     /// take there; None without a target.
     pub(crate) fn fight_cell(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> Option<FightCell> {
-        if self.sdf_c[k] < inp.clearance {
+        if self.sdf_c[k] < inp.clearance || self.ringed(k, inp, a) {
             return None;
         }
         let mask = self.spotted_mask(k, inp);
@@ -199,102 +217,130 @@ impl VisibilityGrid {
         value
     }
 
-    /// The best cell to fight from in the cones from `from`: over a window of
-    /// hold_s, what the guns deal on the way there plus (value - harm) for the
-    /// rest of the window once there, less the harm taken on the
-    /// cheapest way there (dark, only where seen, plus detect_rate). Also the
-    /// same reckoning for `held`. ((cell, score, reckoning), held score, weighed).
-    pub(crate) fn fight_search_impl(&self, from: Vector2, held: Vector2, inp: &SpotInputs, a: &FightArgs)
-        -> (Option<(usize, f32, FightCell)>, Option<(f32, FightCell)>, usize) {
-        let r = (a.cones.reach_m / self.cell).ceil() as i32 + 1;
-        let (cx, cz) = self.grid_of(from);
-        let (x0, z0) = ((cx - r).max(0), (cz - r).max(0));
-        let (x1, z1) = ((cx + r).min(self.w - 1), (cz + r).min(self.h - 1));
-        let bw = (x1 - x0 + 1) as usize;
-        let n = bw * (z1 - z0 + 1) as usize;
-        let local = |ix: i32, iz: i32| (iz - z0) as usize * bw + (ix - x0) as usize;
-        // Each cell's (harm, seen), once: the route and the station both read it.
-        let mut expo: Vec<Option<(f32, bool)>> = vec![None; n];
-        let exposure_at = |v: usize, k: usize, expo: &mut Vec<Option<(f32, bool)>>| -> (f32, bool) {
-            *expo[v].get_or_insert_with(|| exposure(self, k, inp, a))
-        };
-        // Each cell's (targets reached, what the guns do there), once.
-        let mut vals: Vec<Option<(u64, f32)>> = vec![None; n];
-        let value_at = |v: usize, k: usize, vals: &mut Vec<Option<(u64, f32)>>| -> (u64, f32) {
-            *vals[v].get_or_insert_with(|| {
-                let mask = self.spotted_mask(k, inp);
-                (mask, if mask == 0 { 0.0 } else { self.fight_value(k, mask, inp, a) })
-            })
-        };
-        // Cheapest route by harm taken, time breaking ties; what the guns deal along it.
-        let mut cost = vec![f32::INFINITY; n];
-        let mut time = vec![f32::INFINITY; n];
-        let mut dealt = vec![0.0f32; n];
-        let mut heap = BinaryHeap::new();
-        let s = local(cx.clamp(x0, x1), cz.clamp(z0, z1));
-        cost[s] = 0.0;
-        time[s] = 0.0;
-        heap.push(Reverse(Q(0.0, s)));
-        while let Some(Reverse(Q(c, u))) = heap.pop() {
-            if c > cost[u] {
-                continue;
-            }
-            let (ux, uz) = (x0 + (u % bw) as i32, z0 + (u / bw) as i32);
-            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
-                let (vx, vz) = (ux + dx, uz + dz);
-                if vx < x0 || vx > x1 || vz < z0 || vz > z1 {
-                    continue;
+    /// Inside some enemy's ring where its shells land, or may.
+    fn ringed(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> bool {
+        let p = self.centres[k];
+        let fire = inp.fire.as_ref().map(|f| (f.known_mask(), f.mask(p)));
+        inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
+            a.ring.get(i).is_some_and(|&r| p.distance_to(e.pos) < r)
+                && fire.is_none_or(|(known, hit)| known & (1 << i) == 0 || hit & (1 << i) != 0)
+        })
+    }
+
+    /// Inside the chase ring of some enemy that sees the cell.
+    fn chase_seen(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> bool {
+        let p = self.centres[k];
+        inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
+            a.chase_ring.get(i).is_some_and(|&r| p.distance_to(e.pos) < r)
+                && e.cell.is_none_or(|ec| self.visible_idx(k, ec))
+        })
+    }
+
+    /// Metres from the anchor, 0 without one.
+    fn off_anchor(&self, k: usize, a: &FightArgs) -> f32 {
+        if a.anchor.is_finite() { self.centres[k].distance_to(a.anchor) } else { 0.0 }
+    }
+
+    /// What a station at `k` gives up for leaving the anchor and crowding team-mates.
+    fn penalty(&self, k: usize, a: &FightArgs) -> f32 {
+        let p = self.centres[k];
+        let crowd: f32 = if a.claim_r > 0.0 {
+            a.claims.iter().map(|c| (1.0 - p.distance_to(*c) / a.claim_r).max(0.0)).sum()
+        } else { 0.0 };
+        a.move_cost * self.off_anchor(k, a) + a.claim_cost * crowd
+    }
+
+    /// Inside the lateral band, and for a new station not back against the walk.
+    fn walk_ok(&self, p: Vector2, new: bool, a: &FightArgs) -> bool {
+        let lat = (p - a.lat_origin).dot(a.lat_axis);
+        (a.lat_axis == Vector2::ZERO || (lat >= a.lat_min && lat <= a.lat_max))
+            && (!new || a.walk_axis == Vector2::ZERO || (p - a.walk_from).dot(a.walk_axis) >= -a.walk_slack)
+    }
+
+    /// Harm taken sailing the straight line `from` to `to`, at `speed`.
+    pub(crate) fn route_harm(&self, from: Vector2, to: Vector2, inp: &SpotInputs, a: &FightArgs) -> f32 {
+        let len = from.distance_to(to);
+        let n = (len / (self.cell * 0.5)).ceil().max(1.0) as usize;
+        let dt = len / n as f32 / a.speed;
+        let mut last = usize::MAX;
+        let mut per_s = 0.0;
+        let mut harm = 0.0;
+        for j in 0..n {
+            let (ix, iz) = self.grid_of(from.lerp(to, (j as f32 + 0.5) / n as f32));
+            if let Some(k) = self.water(ix, iz) {
+                if k != last {
+                    let (h, seen) = exposure(self, k, inp, a);
+                    per_s = if a.dark && !seen { 0.0 } else { h };
+                    last = k;
                 }
-                let Some(k) = self.water(vx, vz) else { continue };
-                if self.sdf_c[k] < inp.clearance {
-                    continue;
-                }
-                let v = local(vx, vz);
-                let (harm, seen) = exposure_at(v, k, &mut expo);
-                let per_s = if a.dark { if seen { harm + a.detect_rate } else { 0.0 } } else { harm };
-                let dt = self.cell * if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 } / a.speed;
-                let nc = c + per_s * dt + 1.0e-7 * dt;
-                if nc < cost[v] {
-                    cost[v] = nc;
-                    time[v] = time[u] + dt;
-                    dealt[v] = dealt[u] + value_at(v, k, &mut vals).1 * dt.min((a.hold_s - time[u]).max(0.0));
-                    heap.push(Reverse(Q(nc, v)));
-                }
+                harm += per_s * dt;
             }
         }
-        let cell_at = |v: usize, k: usize, expo: &mut Vec<Option<(f32, bool)>>, vals: &mut Vec<Option<(u64, f32)>>| -> Option<FightCell> {
-            let (mask, value) = value_at(v, k, vals);
-            (value > 0.0).then(|| FightCell { mask, value, harm: exposure_at(v, k, expo).0 })
-        };
-        let held_v = held.is_finite().then(|| self.grid_of(held)).and_then(|(hx, hz)| {
-            if hx < x0 || hx > x1 || hz < z0 || hz > z1 {
-                return None;
+        harm
+    }
+
+    /// The best cell on the walk circles within window_m of `from`: what we
+    /// deal there less what we take and the penalty, outside every ring whose
+    /// owner's shells land. Where none has a target, of those cells and the
+    /// step from `from` toward the most valued target's circle, the nearest that
+    /// target out of sight of any enemy whose chase ring holds it (chase). Also
+    /// `held`'s score. (best, held score, chase (cell, target), weighed).
+    pub(crate) fn fight_search_impl(&self, from: Vector2, held: Vector2, inp: &SpotInputs, a: &FightArgs)
+        -> (Option<(usize, f32, FightCell)>, Option<(f32, FightCell)>, Option<(usize, Vector2)>, usize) {
+        let chase = inp.enemies.iter().enumerate().take(64)
+            .filter(|(i, e)| e.shootable && a.value.get(*i).is_some_and(|&v| v > 0.0))
+            .max_by(|x, y| a.value[x.0].total_cmp(&a.value[y.0]))
+            .map(|(i, e)| (i, e.pos));
+        let mut seen = std::collections::HashSet::new();
+        let mut cand: Vec<usize> = Vec::new();
+        let mut add = |p: Vector2, cand: &mut Vec<usize>| {
+            if p.distance_to(from) > a.window_m {
+                return;
             }
-            let k = self.water(hx, hz)?;
-            let v = local(hx, hz);
-            cost[v].is_finite().then_some((v, k))
-        });
-        let held_fc = held_v.and_then(|(v, k)| cell_at(v, k, &mut expo, &mut vals));
-        // Past the window a station adds nothing but the sailing: the nearer of equals wins.
-        let score = |v: usize, fc: &FightCell| dealt[v] - cost[v] + (fc.value - fc.harm) * (a.hold_s - time[v]).max(0.0)
-            - 1.0e-6 * time[v];
-        let mut best: Option<(usize, f32, FightCell)> = None;
-        let mut weighed = 0;
-        for v in 0..n {
-            let (ix, iz) = (x0 + (v % bw) as i32, z0 + (v / bw) as i32);
-            let Some(k) = self.water(ix, iz) else { continue };
-            if !cost[v].is_finite() || a.cones.cost(from, self.centres[k]).is_none() {
+            let (ix, iz) = self.grid_of(p);
+            if let Some(k) = self.water(ix, iz).filter(|&k| self.sdf_c[k] >= inp.clearance && self.walk_ok(self.centres[k], true, a)) {
+                if seen.insert(k) {
+                    cand.push(k);
+                }
+            }
+        };
+        for (i, e) in inp.enemies.iter().enumerate().take(64) {
+            let r = a.walk_r.get(i).copied().unwrap_or(0.0);
+            if r <= 0.0 || (e.pos.distance_to(from) - r).abs() > a.window_m {
                 continue;
             }
-            weighed += 1;
-            if let Some(fc) = cell_at(v, k, &mut expo, &mut vals) {
-                let sc = score(v, &fc);
+            let n = ((std::f32::consts::TAU * r / self.cell).ceil() as usize).max(8);
+            for j in 0..n {
+                let t = std::f32::consts::TAU * j as f32 / n as f32;
+                add(e.pos + Vector2::new(t.sin(), t.cos()) * r, &mut cand);
+            }
+        }
+        if let Some((i, t)) = chase {
+            let r = a.walk_r.get(i).copied().unwrap_or(0.0);
+            let on = if from.distance_to(t) > 1.0 { t + (from - t).normalized() * r } else { from };
+            add(from + (on - from).limit_length(Some(a.window_m)), &mut cand);
+        }
+        let mut best: Option<(usize, f32, FightCell)> = None;
+        let mut near: Option<(usize, f32)> = None;
+        for &k in &cand {
+            if let Some(fc) = self.fight_cell(k, inp, a) {
+                let sc = fc.value - fc.harm - self.penalty(k, a);
                 if best.as_ref().is_none_or(|b| sc > b.1) {
                     best = Some((k, sc, fc));
                 }
+            } else if let Some((_, t)) = chase.filter(|_| best.is_none() && !self.ringed(k, inp, a) && !self.chase_seen(k, inp, a)) {
+                let d = self.centres[k].distance_to(t) + a.chase_anchor_w * self.off_anchor(k, a);
+                if near.is_none_or(|b| d < b.1) {
+                    near = Some((k, d));
+                }
             }
         }
-        let held = held_v.zip(held_fc).map(|((v, _), fc)| (score(v, &fc), fc));
-        (best, held, weighed)
+        let weighed = cand.len();
+        let held = held.is_finite().then(|| self.grid_of(held))
+            .and_then(|(hx, hz)| self.water(hx, hz))
+            .filter(|&k| self.walk_ok(self.centres[k], false, a))
+            .and_then(|k| self.fight_cell(k, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a), fc)));
+        let chase = if best.is_none() { near.zip(chase).map(|(x, (_, t))| (x.0, t)) } else { None };
+        (best, held, chase, weighed)
     }
 }

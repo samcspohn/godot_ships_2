@@ -72,8 +72,6 @@ var push_threat: float = 0.5
 var force_below: float = 0.25
 var force_above: float = 0.75
 
-## Above this threat the engaged arm stops engaging and disengages.
-var engage_max_threat: float = 0.75
 
 ## Below this threat the bot reads the fight as its own: a hidden station may
 ## open fire (BotBehavior._hold_fire_hidden).
@@ -135,7 +133,7 @@ var ra_hurt_hp_ratio: float = 0.5
 
 var stance_exclude: Array[StringName] = [&"SailForward"]
 
-var spread_exclude: Array[StringName] = [&"Engage", &"Disengage", &"Hold"]
+var spread_exclude: Array[StringName] = [&"Engage", &"Disengage", &"Fight"]
 var spread_distance: float = 1000.0
 var spread_multiplier: float = 1.0
 
@@ -158,7 +156,7 @@ static func for_battleship() -> BotDoctrine:
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
 	d.ra_bb_shooter_hurt = 13000.0
-	d.spread_exclude = [&"Engage", &"Disengage", &"Camp", &"Hold"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Camp", &"Fight"]
 	d.post_process_idle_arms = true
 	return d
 
@@ -168,7 +166,7 @@ static func for_cruiser() -> BotDoctrine:
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
 	d.ra_bb_shooter_hurt = 11000.0
-	d.spread_exclude = [&"Engage", &"Disengage", &"Hold"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Fight"]
 	d.low_threat_arm_first = true
 	# CA forces the post-processors off for its whole high-threat close arm,
 	# rather than only at the extremes the way BB does.
@@ -194,7 +192,7 @@ static func for_destroyer() -> BotDoctrine:
 	d.dark_chain = []
 	d.close_arm_range_gated = false
 	d.push_threat = 0.5
-	d.spread_exclude = [&"Engage", &"Disengage", &"Retreat", &"Hold"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Retreat", &"Fight"]
 	# The DD never marks an intent forced, so nothing is ever skipped for it.
 	d.force_below = -1.0
 	d.force_above = INF
