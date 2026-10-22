@@ -4,8 +4,7 @@ extends SkillPosition
 ## SkillFight's open-water station: the point on the enemies' rings (or our gun range
 ## round a target without one) within WINDOW_M dealing the most less what it
 ## takes, outside every ring whose owner's shells land there; with none, a step
-## toward the most valued target's. The sailed destination eases toward it at
-## our top speed, never jumping. The route is walled out of the rings. Params:
+## toward the most valued target's. The route is walled out of the rings. Params:
 ## band_m (else desired_range, else each enemy's own ring), away (bow away from
 ## the danger on arrival), presumed (fight where unseen enemies are guessed to
 ## be, worth and threatening by their belief weight: the opening).
@@ -19,8 +18,6 @@ static var _tc: Array = []
 const WALK_MARGIN_M := 150.0
 ## Sailing to a station that costs this share of our HP on the way is not worth starting.
 const SURVIVE_SHARE := 0.8
-## An unseen enemy's ring sinks this fast for every second since we saw it, to our concealment.
-const UNSEEN_SHRINK_MPS := 10.0
 ## A chase leg must close on its target by this much, or Fight gives the ship up to spotting.
 const CHASE_MIN_PROGRESS_M := 500.0
 const CHASE_RETRY_S := 10.0
@@ -53,8 +50,6 @@ var _presumed := false
 const MARCH_SWITCH_REL := 0.2
 const MARCH_SWITCH_ABS := 0.02
 const MARCH_MS := 1000
-## Fight idle longer than this restarts the sailed destination from the ship.
-const EASE_GAP_S := 1.0
 
 var band_m: float = 0.0
 var _target: Ship = null
@@ -72,9 +67,6 @@ var _chase_to := Vector2.INF
 var _chase_failed_at: float = -INF
 var _harm_price: float = 1.0
 var _cells: int = 0
-## The destination sailed to, easing toward the station at our top speed.
-var _shown := Vector2.INF
-var _shown_at: float = -INF
 
 func reset() -> void:
 	super()
@@ -156,24 +148,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	opts.shootable = _union(prio, live)
 	opts.prio_bits = _bits(prio)
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
-	_ease(ship)
 	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}) if bool(params.get("away", false)) else params)
 	intent.target_position = ctx.behavior._get_valid_nav_point(intent.target_position)
 	_shape(intent, ctx, here, pos, opts)
 	return intent
-
-## Moves the sailed destination from where it was toward the station at our
-## top speed; a Fight not run last tick sails straight for its station.
-func _ease(ship: Ship) -> void:
-	var now: float = SimClock.now()
-	var dt: float = now - _shown_at
-	_shown_at = now
-	var goal := Vector2(_station.x, _station.z)
-	_shown = goal if not _shown.is_finite() or dt > EASE_GAP_S \
-		else _shown.move_toward(goal, ship.movement_controller.max_speed * maxf(dt, 0.0))
-
-func _published() -> Vector3:
-	return Vector3(_shown.x, 0.0, _shown.y) if _shown.is_finite() else _station
 
 ## Holds the station while it still has a target outside the rings and nothing
 ## in the window scores better by the switch margin; searches at most every MARCH_MS.
@@ -427,12 +405,9 @@ static func radius_for(ctx: SkillContext, e: Ship, at: Vector2, params: Dictiona
 	var r: float = float(params.get("band_m", params.get("desired_range", 0.0)))
 	return r if r > 0.0 else ctx.behavior.ring(ctx, e, at)
 
-## `b`'s ring, never past our own guns; one we cannot see sinks toward our concealment the longer it stays unseen.
-static func _ring_for(ctx: SkillContext, b: Dictionary, params: Dictionary, gun_range: float, conceal: float) -> float:
-	var r: float = minf(radius_for(ctx, b.ship, b.pos, params), gun_range)
-	if int(b.source) == 0:
-		return r
-	return maxf(r - UNSEEN_SHRINK_MPS * ctx.behavior.unseen_s(b.ship), minf(r, conceal))
+## `b`'s ring, never past our own guns.
+static func _ring_for(ctx: SkillContext, b: Dictionary, params: Dictionary, gun_range: float, _conceal: float) -> float:
+	return minf(radius_for(ctx, b.ship, b.pos, params), gun_range)
 
 ## A destroyer out front spotting, guns quiet, is a target to close on, not a band to keep out of.
 static func threatens(e: Ship) -> bool:

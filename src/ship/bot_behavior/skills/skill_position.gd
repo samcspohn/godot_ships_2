@@ -166,7 +166,7 @@ func _refine_to_shore(cell: Vector3, clearance: float) -> Vector3:
 func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Dictionary) -> NavIntent:
 	var ship: Ship = ctx.ship
 	var heading: float
-	var st: Vector3 = _published()
+	var st: Vector3 = _station
 	var away = params.get("away_from")
 	if away is Vector2 and Vector2(st.x, st.z).distance_to(away) > 1.0:
 		var out: Vector2 = Vector2(st.x, st.z) - away
@@ -186,10 +186,6 @@ func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Diction
 	intent.skip_threat_adjustment = true
 	intent.near_terrain = _refined
 	return intent
-
-## Where the intent sails: the station, unless a subclass eases toward it.
-func _published() -> Vector3:
-	return _station
 
 ## Every contact, presumed ones included, by certainty and nearness: the
 ## spotted centre alone drags a walk to whichever flank happens to be lit.

@@ -2402,10 +2402,12 @@ const UNREACHABLE_THREAT: float = 0.03
 ## A range is ours to fight at when we take this many times its HP share per second as it takes of ours.
 const TRADE_MARGIN: float = 1.5
 const RADIUS_STEP_M: float = 1000.0
-## A ring raised to where its owner last shot us sinks back toward the trade's at this rate.
-const RING_DECAY_MPS: float = 5.0
-## ...this many times faster while its guns are on a friend.
-const RING_SCREEN_DECAY: float = 4.0
+## An enemy's ring starts at this share of our gun range.
+const RING_GUN_SHARE: float = 0.5
+## Under DISENGAGE_THREAT every ring sinks this fast.
+const RING_SHRINK_MPS: float = 5.0
+## Over this threat, the rings of those shooting us grow to their range.
+const RING_GROW_THREAT: float = 0.5
 const RADIUS_TTL_S: float = 5.0
 ## In a trade we angle to them, and they show us their bow: our AP gets no angled citadel.
 const ANGLED_ASPECT_DEG: float = 30.0
@@ -2556,6 +2558,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_stealth = true
 		wants_to_be_concealed = true
 
+	update_rings(ctx)
 	intent = _threat_disengage(ctx, sit)
 	if intent == null:
 		intent = _committed_intent(ctx, sit)
@@ -2739,17 +2742,6 @@ func conceals_well(ctx: SkillContext) -> bool:
 			sum += (e.concealment.params.p() as ConcealmentParams).radius
 			n += 1
 	return n > 0 and NavigationMapManager.reach_conceal_radius(_ship) < sum / n
-
-## Enemy instance id -> when our team last saw it.
-var _seen_at: Dictionary = {}
-
-## Seconds since our team last saw `e`; since the match began if never.
-func unseen_s(e: Ship) -> float:
-	var now: float = SimClock.now()
-	if e.visible_to_enemy:
-		_seen_at[e.get_instance_id()] = now
-		return 0.0
-	return now - float(_seen_at.get(e.get_instance_id(), 0.0))
 
 ## Where we are, bow on the priority; stance angles. The flank is held, not crossed.
 func _intent_stand(ctx: SkillContext) -> NavIntent:
@@ -3117,57 +3109,41 @@ func _trade(enemy: Ship) -> Dictionary:
 	_radius_cache[enemy.get_instance_id()] = [now, result]
 	return result
 
-## How close to fight `enemy`, believed `at`:
-## - the push range if we out-trade it somewhere, else the hold range; pulled
-##   in to our engagement range where the trade there is at least even;
-## - its guns on a friend and not us: halfway from that to the friend's range from it, never inside
-##   its secondaries unless we out-trade it there;
-## - disengaging, it shooting us while it out-trades us at every range: just
-##   where it shot us. Held while disengaging, sinking back at
-##   RING_DECAY_MPS once fighting again; fighting, being shot moves nothing.
-func ring(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
-	var t := _trade(enemy)
-	var ideal: float = t.push if float(t.push) >= 0.0 else t.hold
-	if _range_held > 0.0 and _range_held < ideal and _ratio_at(t, _range_held) >= 1.0:
-		ideal = _range_held
-	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
-	var shooting: bool = active_shooters_at_me.has(enemy)
-	var busy: float = INF if shooting else _friend_under(ctx, enemy, at)
-	if is_finite(busy):
-		var screened: float = (ideal + busy) * 0.5
-		ideal = minf(ideal, screened if _ratio_at(t, screened) >= 1.0 else maxf(screened, secondary_reach(enemy)))
+## How close to fight `enemy`: its ring as update_rings last left it; RING_GUN_SHARE of our gun range for one not yet ringed.
+func ring(_ctx: SkillContext, enemy: Ship, _at: Vector2) -> float:
+	var h: Array = _ring_held.get(enemy.get_instance_id(), [])
+	return float(h[0]) if not h.is_empty() else _ring_start()
+
+## Every enemy we believe in, every tick: under DISENGAGE_THREAT each ring sinks
+## at RING_SHRINK_MPS, to no nearer than its secondaries; over RING_GROW_THREAT
+## the ring of each one shooting us grows to where it is now.
+func update_rings(ctx: SkillContext) -> void:
+	if _ship.team == null or ctx.server == null:
+		return
 	var now: float = SimClock.now()
-	var id := enemy.get_instance_id()
-	var h: Array = _ring_held.get(id, [])
-	var disengaging: bool = _active_skill_name == &"Disengage"
-	var rate: float = 0.0 if disengaging else RING_DECAY_MPS * (RING_SCREEN_DECAY if is_finite(busy) else 1.0)
-	var r: float = ideal if h.is_empty() else maxf(ideal, float(h[0]) - rate * maxf(now - float(h[1]), 0.0))
-	if disengaging and shooting and float(t.push) < 0.0:
-		r = maxf(ideal, at.distance_to(here))
-	_ring_held[id] = [r, now]
-	return r
-
-## The trade against `t`'s enemy at `range_m`, from its RADIUS_STEP_M samples.
-static func _ratio_at(t: Dictionary, range_m: float) -> float:
-	var ratios: PackedFloat32Array = t.ratios
-	if ratios.is_empty():
-		return 0.0
-	return ratios[clampi(roundi((range_m - POINT_BLANK_M) / RADIUS_STEP_M), 0, ratios.size() - 1)]
-
-## Range from `at` to the nearest bot friend `enemy` is shooting at; INF if none.
-func _friend_under(ctx: SkillContext, enemy: Ship, at: Vector2) -> float:
-	if _ship.team == null or ctx == null or ctx.server == null:
-		return INF
-	var d := INF
-	for f in ctx.server.get_team_ships(_ship.team.team_id):
-		if f == _ship or not is_instance_valid(f) or not f.is_alive():
+	var threat: float = get_threat_score(ctx)
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	for b in ctx.server._team_belief(_ship.team.team_id):
+		var e: Ship = b.ship
+		if not is_instance_valid(e):
 			continue
-		var bc = f.get_node_or_null("Modules/BotController")
-		if bc != null and bc.behavior != null and bc.behavior.active_shooters_at_me.has(enemy):
-			d = minf(d, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))
-	return d
+		var id := e.get_instance_id()
+		var h: Array = _ring_held.get(id, [])
+		var r: float = _ring_start() if h.is_empty() else float(h[0])
+		var dt: float = 0.0 if h.is_empty() else maxf(now - float(h[1]), 0.0)
+		if threat < DISENGAGE_THREAT:
+			r = maxf(r - RING_SHRINK_MPS * dt, _secondary_range(e))
+		elif threat > RING_GROW_THREAT and active_shooters_at_me.has(e):
+			r = maxf(r, here.distance_to(b.pos))
+		_ring_held[id] = [r, now]
 
-## Enemy instance id -> [ring, time]: what ring() last answered.
+func _ring_start() -> float:
+	return RING_GUN_SHARE * _ship.artillery_controller.get_params()._range if _ship.artillery_controller != null else 0.0
+
+static func _secondary_range(e: Ship) -> float:
+	return e.secondary_controller.get_max_range() if is_instance_valid(e.secondary_controller) else 0.0
+
+## Enemy instance id -> [ring, time]: what update_rings last left.
 var _ring_held: Dictionary = {}
 
 ## How far out of `enemy`'s secondaries a ship that does not out-trade it keeps: their range plus a margin; 0 without.

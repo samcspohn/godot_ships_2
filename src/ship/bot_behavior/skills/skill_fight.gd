@@ -7,6 +7,8 @@ extends BotSkill
 ## exposure is; otherwise, and when no station is found, spot if our
 ## concealment beats theirs, else cover, each failing the other; with nothing
 ## found, fight the presumed, else close on our priority.
+## Whichever search answers, the sailed destination eases from the last one
+## toward it at our top speed, never jumping.
 ## Params: only (run that Mode alone), prefer_cover (OFFENSE cover first), and
 ## each search's own.
 
@@ -24,6 +26,10 @@ var spot := SkillSpot.new()
 var _shelter_until: float = -INF
 var _seed := Vector2.INF
 var _seed_at: float = -INF
+## Fight not run for longer than this sails straight for its next destination.
+const EASE_GAP_S := 1.0
+var _shown := Vector2.INF
+var _shown_at: float = -INF
 
 func reset() -> void:
 	station.reset()
@@ -40,6 +46,20 @@ func fresh_seed() -> Vector2:
 	return _seed if SimClock.now() - _seed_at <= SEED_TTL_S else Vector2.INF
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
+	var intent := _choose(ctx, params)
+	var now: float = SimClock.now()
+	var dt: float = now - _shown_at
+	_shown_at = now
+	if intent == null:
+		return null
+	var goal := Vector2(intent.target_position.x, intent.target_position.z)
+	_shown = goal if not _shown.is_finite() or dt > EASE_GAP_S \
+		else _shown.move_toward(goal, ctx.ship.movement_controller.max_speed * maxf(dt, 0.0))
+	if _shown.distance_to(goal) > 1.0:
+		intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(_shown.x, 0.0, _shown.y))
+	return intent
+
+func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var only: int = int(params.get("only", -1))
 	if only >= 0:
 		return _run(ctx, only, params)
