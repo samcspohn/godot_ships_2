@@ -7,7 +7,9 @@ extends SkillPosition
 ## (the shared hold seed, else cone_axis, else the priority) and the cone away,
 ## away cells costing AWAY_RATIO times their distance. OFFENSE also needs a
 ## target in reach and never goes dark: its guns would bloom it.
-## Params: mode, cone_axis, cone_half, away_ratio (INF: no away cone), allow_dark, fire_en_route, refs.
+## Dark water is also at least DARK_MARGIN_M farther from each threat than we are now.
+## Params: mode, cone_axis, cone_half, away_ratio (INF: no away cone), allow_dark, fire_en_route, refs,
+## near_pos + near_d (new stations only nearer than near_d to near_pos).
 
 enum Mode { OFFENSE, DEFENSE }
 
@@ -22,6 +24,7 @@ const COVER_BLIND_S := 10.0
 ## A friend counts as on a target within this many of its concealment radii.
 const SPOTTER_REACH := 1.3
 const RESEARCH_MS := 1000
+const DARK_MARGIN_M := 500.0
 
 var mode: int = Mode.OFFENSE
 var _dark: bool = false
@@ -122,7 +125,8 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	var conceal: float = NavigationMapManager.reach_conceal_radius(ship)
 	# Firing on the way, the bloom is what they see us from.
 	var seen_from: float = maxf(conceal, float(g.get("range", 0.0))) if params.get("fire_en_route", false) else conceal
-	var opts := {"pos": PackedVector2Array(), "det_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var opts := {"pos": PackedVector2Array(), "det_r": PackedFloat32Array(), "dark_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
 		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shootable": PackedByteArray(), "ids": PackedInt64Array()}
 	for b in belief:
 		var e: Ship = b.ship
@@ -130,6 +134,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		var force: float = float(b.force_spot)
 		opts.pos.append(b.pos)
 		opts.det_r.append(seen_from + spread)
+		opts.dark_r.append(here.distance_to(b.pos) + DARK_MARGIN_M)
 		opts.los_r.append(force + spread if force > 0.0 else 0.0)
 		opts.spot_r.append(0.0)
 		opts.heavy.append(1)
@@ -138,6 +143,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	for r in params.get("refs", []):
 		opts.pos.append(r.pos)
 		opts.det_r.append(0.0)
+		opts.dark_r.append(0.0)
 		opts.los_r.append(0.0)
 		opts.spot_r.append(0.0)
 		opts.heavy.append(0)
@@ -146,7 +152,8 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
-		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false)))}, true)
+		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false))),
+		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF))}, true)
 	return opts
 
 ## What this station shoots, so a dark spell can be waited out while a friend can spot it.

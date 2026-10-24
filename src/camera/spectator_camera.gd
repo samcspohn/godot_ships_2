@@ -71,8 +71,29 @@ func _ready() -> void:
 	if dbg != null:
 		dbg.register_camera(self)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_Utils.match_ended.connect(_on_match_ended, CONNECT_ONE_SHOT)
 	if follow_ship == null:
 		cycle(1)
+
+
+func _on_match_ended(winning_team: int) -> void:
+	set_process(false)
+	set_process_input(false)
+	set_process_unhandled_input(false)
+	_set_looking(false)
+	var server := get_tree().root.get_node_or_null("Server")
+	if server != null:
+		server.process_mode = Node.PROCESS_MODE_DISABLED
+	_layer.visible = false
+	await RenderingServer.frame_post_draw
+	_Utils.match_result["winning_team"] = winning_team
+	_Utils.match_result["friendly_team_id"] = 0
+	_Utils.match_result["spectator"] = true
+	_Utils.match_result["screenshot"] = get_viewport().get_texture().get_image()
+	ProjectileManager.clear_all()
+	(TorpedoManager as _TorpedoManager).clear_all()
+	queue_free()
+	get_tree().change_scene_to_file.call_deferred("res://src/ui/battle_end_screen.tscn")
 
 
 func candidates() -> Array[Ship]:
@@ -123,7 +144,7 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
-			KEY_TAB:
+			KEY_C:
 				cycle(-1 if event.shift_pressed else 1)
 			KEY_F:
 				mode = Mode.ORBIT if mode == Mode.FREE else Mode.FREE
@@ -332,7 +353,7 @@ func _ship_nearest_screen_centre() -> Ship:
 
 
 func _hud_text() -> String:
-	var lines: PackedStringArray = ["SPECTATING   [Tab] next  [Shift+Tab] prev  [F] free cam  [Space] ship at centre  [RMB] look"]
+	var lines: PackedStringArray = ["SPECTATING   [C] next  [Shift+C] prev  [Tab] scores  [F] free cam  [Space] ship at centre  [RMB] look"]
 	if mode == Mode.FREE:
 		lines.append("free cam   WASD move  Q/E down/up  Shift fast")
 	if follow_ship != null and is_instance_valid(follow_ship):

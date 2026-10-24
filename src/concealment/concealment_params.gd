@@ -39,6 +39,7 @@ func from_bytes(data: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = data
 	radius = reader.get_float()
+	air_radius = reader.get_float()
 	bloom_duration = reader.get_float()
 	unspotted_bloom_duration = reader.get_float()
 	torpedo_detection_multiplier = reader.get_float()
@@ -50,6 +51,7 @@ func from_bytes(data: PackedByteArray) -> void:
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	writer.put_float(radius)
+	writer.put_float(air_radius)
 	writer.put_float(bloom_duration)
 	writer.put_float(unspotted_bloom_duration)
 	writer.put_float(torpedo_detection_multiplier)

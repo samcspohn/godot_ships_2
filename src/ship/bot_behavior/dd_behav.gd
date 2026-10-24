@@ -267,7 +267,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# further would just walk it into gun range for nothing.
 	if sit.threat < d.push_threat and sit.has_spotted and ctx.target != null \
 			and not _has_better_unspotted_torp_target(ship, ctx.target, ctx.server):
-		intent = _fight(ctx, {"desired_range": sit.engagement_range})
+		intent = _fight(ctx, {"desired_range": smoothed_engagement_range(ctx)})
 		if intent != null:
 			wants_stealth = false
 			wants_to_be_concealed = false

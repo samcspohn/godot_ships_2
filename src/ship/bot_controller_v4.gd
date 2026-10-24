@@ -1331,7 +1331,7 @@ func _emit_debug_draws() -> void:
 				var text := "%.1fk x%.2f" % [ring / 1000.0, trade]
 				if rank.has(e):
 					var c: Dictionary = behavior.priorities[rank[e]]
-					text = "P%d %.2f\n%s" % [rank[e] + 1, float(c.get("score", 0.0)) * 100.0, text]
+					text = "P%d %.2f\n%s" % [rank[e] + 1, float(c.get("score", 0.0)), text]
 				Debug.draw_label(Vector3(b.pos.x, ENEMY_LABEL_Y, b.pos.y), text,
 					Color(col, 1.0), 12 if rank.get(e, 99) < BotBehavior.PRIORITY_COUNT else 9, ENEMY_LABEL_UP_PX)
 
@@ -1349,7 +1349,7 @@ func _emit_debug_draws() -> void:
 					continue
 				var top: bool = i < BotBehavior.PRIORITY_COUNT
 				# Score as % of HP a second, theirs on us plus ours on them.
-				Debug.draw_label(Vector3(c.pos.x, ENEMY_LABEL_Y, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0)) * 100.0],
+				Debug.draw_label(Vector3(c.pos.x, ENEMY_LABEL_Y, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0))],
 					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 13 if top else 9, ENEMY_LABEL_UP_PX)
 
 		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness

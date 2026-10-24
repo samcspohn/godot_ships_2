@@ -5,10 +5,10 @@ use crate::projectile::manager::ev::{ev_levels, ev_lookup};
 
 /// HpParams defaults: light, pen, citadel repair.
 const DEFAULT_REPAIR: [f32; 3] = [0.95, 0.5, 0.15];
-/// Matches BotGunnery.FIRE_VALUE_PER_FIRE.
-const FIRE_VALUE_PER_FIRE: f32 = 0.06;
 /// Per range sample: descent and pen for each ammo, then half-dispersion h, v.
 const CURVE_STRIDE: usize = 6;
+/// HE lights this many fires before AP takes over while they burn.
+const FIRES_BEFORE_AP: f32 = 2.0;
 const GRID_RANGE_STEP_M: f32 = 500.0;
 const GRID_ASPECT_STEP_DEG: f32 = 15.0;
 const GRID_ASPECTS: usize = 13;
@@ -33,6 +33,9 @@ struct Hull {
     max_hp: f32,
     max_buildup: f32,
     fire_dps: f32,
+    /// Seconds a fire burns before damage control: BotGunnery.fire_burn_s.
+    fire_burn_s: f32,
+    fire_zones: f32,
     /// Repairable share of light, medium and heavy damage (HpParams).
     repair: [f32; 3],
 }
@@ -71,6 +74,8 @@ pub(crate) struct Expected {
     /// Shares of ap_dps / he_dps that are citadel hits.
     pub ap_cit: f32,
     pub he_cit: f32,
+    /// Fire's share of ap_dps when lighting fires first beats AP alone; else 0.
+    pub ap_fire_dps: f32,
 }
 
 impl Expected {
@@ -166,18 +171,32 @@ impl DamageModel {
                 landed_he = l;
             }
         }
-        let ap_ev = value[0];
-        let mut fire_ev = s.ammo[1].as_ref().map_or(0.0, |a| {
+        let mut ap_ev = value[0];
+        let fires_per_s = s.ammo[1].as_ref().map_or(0.0, |a| {
             let chance = if h.max_buildup > 0.0 { (a.fire_buildup / h.max_buildup).clamp(0.0, 1.0) } else { 0.0 };
-            chance * landed_he * h.max_hp * FIRE_VALUE_PER_FIRE
+            chance * landed_he * s.rate
         });
-        if h.fire_dps > 0.0 && ap_ev > 0.0 {
-            fire_ev *= (h.fire_dps / (ap_ev * s.rate)).clamp(0.0, 1.0);
+        let burning = fires_per_s * h.fire_burn_s;
+        let capped = if burning > h.fire_zones { h.fire_zones / burning } else { 1.0 };
+        let fire_value = h.fire_dps * h.fire_burn_s;
+        let fire_ev = if s.rate > 0.0 { fires_per_s / s.rate * fire_value * capped } else { 0.0 };
+        // HE until FIRES_BEFORE_AP are lit, then AP while they burn, then again.
+        let mut ap_fire_dps = 0.0;
+        let lit = FIRES_BEFORE_AP.min(h.fire_zones);
+        if fires_per_s > 0.0 && lit > 0.0 && h.fire_burn_s > 0.0 {
+            let t_light = lit / fires_per_s;
+            let cycle = t_light + h.fire_burn_s;
+            let fire = lit * fire_value / cycle;
+            let mixed = (value[1] * s.rate * t_light + ap_ev * s.rate * h.fire_burn_s) / cycle + fire;
+            if mixed > ap_ev * s.rate {
+                ap_fire_dps = fire;
+                ap_ev = mixed / s.rate;
+            }
         }
         let he_ev = value[1] + fire_ev;
         let he_heal = if he_ev > 0.0 { (value[1] * heal[1] + fire_ev * h.repair[0]) / he_ev } else { heal[1] };
         Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate,
-            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 } })
+            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 }, ap_fire_dps })
     }
 }
 
@@ -208,14 +227,14 @@ impl DamageModel {
 
     /// `ev`: the hull table's "ev" dictionary, bucket id -> chunk.
     #[func]
-    fn set_hull(&mut self, id: i64, ev: VarDictionary, max_hp: f32, max_buildup: f32, fire_dps: f32) {
+    fn set_hull(&mut self, id: i64, ev: VarDictionary, max_hp: f32, max_buildup: f32, fire_dps: f32, fire_burn_s: f32, fire_zones: f32) {
         let chunks = ev
             .iter_shared()
             .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()? as usize, v.try_to::<PackedByteArray>().ok()?.to_vec())))
             .collect();
         self.grids.retain(|k, _| k.1 != id);
         let repair = self.hulls.get(&id).map_or(DEFAULT_REPAIR, |h| h.repair);
-        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps, repair });
+        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps, fire_burn_s, fire_zones, repair });
     }
 
     /// Repairable shares of light, medium and heavy damage on hull `id` (HpParams).
@@ -270,6 +289,7 @@ impl DamageModel {
             d.set("he_heal", e.he_heal);
             d.set("ap_cit", e.ap_cit);
             d.set("he_cit", e.he_cit);
+            d.set("ap_fire_dps", e.ap_fire_dps);
         }
         d
     }

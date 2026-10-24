@@ -824,6 +824,37 @@ func sync_player(b: PackedByteArray):
 	client_positioned = true
 
 
+## Weapon/concealment stats for spectators, who never get sync_player.
+func sync_params_data() -> PackedByteArray:
+	var writer := StreamPeerBuffer.new()
+	writer.put_var(artillery_controller.to_bytes())
+	writer.put_32(secondary_controller.sub_controllers.size())
+	for controller in secondary_controller.sub_controllers:
+		writer.put_var(controller.to_bytes())
+	writer.put_var(torpedo_controller.to_bytes() if torpedo_controller else PackedByteArray())
+	writer.put_var(aaa_controller.get_params().to_bytes() if aaa_controller else PackedByteArray())
+	writer.put_var(concealment.to_bytes())
+	return writer.data_array
+
+
+func parse_params_data(b: PackedByteArray) -> void:
+	var reader := StreamPeerBuffer.new()
+	reader.data_array = b
+	artillery_controller.from_bytes(reader.get_var())
+	var sc_count := reader.get_32()
+	for i in sc_count:
+		var sc_bytes: PackedByteArray = reader.get_var()
+		if i < secondary_controller.sub_controllers.size():
+			secondary_controller.sub_controllers[i].from_bytes(sc_bytes)
+	var tc_bytes: PackedByteArray = reader.get_var()
+	if torpedo_controller and not tc_bytes.is_empty():
+		torpedo_controller.from_bytes(tc_bytes)
+	var aa_bytes: PackedByteArray = reader.get_var()
+	if aaa_controller and not aa_bytes.is_empty():
+		aaa_controller.get_params().from_bytes(aa_bytes)
+	concealment.from_bytes(reader.get_var())
+
+
 ## Held by the enemy through any channel: LOS, a hydro/radar ping, or aircraft
 ## overhead. What the bots key hiding behaviour on — a ship being pinged is just
 ## as shootable as one in sight, even with LOS broken.

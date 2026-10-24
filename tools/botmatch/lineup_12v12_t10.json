@@ -52,7 +52,7 @@
   "bot0_07": {
    "team": "0",
    "player_id": "bot0_07",
-   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "ship": "res://assets/Ships/MLK-16-130/MLK-16-130.tscn",
    "is_bot": true,
    "aptitude": 1
   },
@@ -136,7 +136,7 @@
   "bot1_07": {
    "team": "1",
    "player_id": "bot1_07",
-   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "ship": "res://assets/Ships/MLK-16-130/MLK-16-130.tscn",
    "is_bot": true,
    "aptitude": 1
   },

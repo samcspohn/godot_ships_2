@@ -49,6 +49,8 @@ func _draw() -> void:
 	var local_team_id: int = -1
 	if local_ship and local_ship.team:
 		local_team_id = local_ship.team.team_id
+	elif cam is SpectatorCamera:
+		local_team_id = 0
 
 	var cam_dir := -cam.global_transform.basis.z.normalized()
 	var viewport_rect: Rect2 = get_viewport_rect()

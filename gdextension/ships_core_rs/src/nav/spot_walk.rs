@@ -11,6 +11,8 @@ pub(crate) struct Enemy {
     pub cell: Option<usize>,
     /// Inside this we are seen.
     pub det_r: f32,
+    /// Dark water is also no nearer than this.
+    pub dark_r: f32,
     /// Inside this, with line of sight, we see it.
     pub spot_r: f32,
     /// Inside this, with line of sight, it can see us to shoot (AVOID_LOS).

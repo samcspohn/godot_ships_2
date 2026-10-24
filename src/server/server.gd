@@ -104,6 +104,9 @@ var all_players_spawned: bool = false
 # so a single debugged client leaving doesn't tear everything down.
 var _debug_keep_alive: bool = OS.has_feature("editor")
 var spectators: Dictionary[int, bool] = {}
+const SPECTATOR_PARAMS_INTERVAL_MS: int = 250
+var _spectator_params_sent: Dictionary[String, PackedByteArray] = {}
+var _spectator_params_next_ms: int = 0
 var _sync_queue: Dictionary[String, Array] = {}
 var _sync_per_frame: int = 1
 var bot_match: bool = CmdArgs.has("--botmatch")
@@ -176,6 +179,10 @@ func _warm_gunnery() -> void:
 	BotGunnery.warm(ships)
 	for t in teams:
 		t.ships = _get_team(t.id)
+	var all_ships: Array = []
+	for t in teams:
+		all_ships.append_array(t.ships)
+	BotBehavior.warm_dps_curves(all_ships)
 	_sweep_reach_fields()
 	print("Warmed %d ships' gunnery and reach tables in %d ms" % [ships.size(), Time.get_ticks_msec() - t0])
 
@@ -259,6 +266,7 @@ func request_spectate() -> void:
 		spawn_players_client.rpc_id(id, players[p_name][2], p.name, p.global_position,
 			p.global_rotation.y, p.team.team_id, players[p_name][1], true)
 	_sync_match_timer.rpc_id(id, match_elapsed)
+	_spectator_params_sent.clear()
 	print("Spectator joined: ", id)
 
 func _on_peer_connected(id):
@@ -1244,7 +1252,30 @@ func _broadcast_match_end():
 		winning_team = 0 if teams[0].points > teams[1].points else 1
 		win_reason = "points"
 
-	# Gather leaderboard data from all players (including bots)
+	var leaderboard := _build_leaderboard()
+
+	for p_name in players:
+		var p = players[p_name]
+		var ship: Ship = p[0]
+		if not ship.team.is_bot:
+			var peer_id = p[2]
+			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
+	for spectator_id in spectators:
+		notify_match_end.rpc_id(spectator_id, winning_team, leaderboard)
+
+	if bot_match or CmdArgs.has("--metrics"):
+		_write_match_metrics(winning_team, leaderboard, win_reason)
+
+	# Finalize the replay file server-side.
+	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
+	# so we must call end_match() directly here on the server.
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null and _rr._match_active:
+			_rr.end_match(winning_team if winning_team >= 0 else 255)
+
+## Every ship's stat line, bots included.
+func _build_leaderboard() -> Array[Dictionary]:
 	var leaderboard: Array[Dictionary] = []
 	for p_name in players:
 		var ship: Ship = players[p_name][0]
@@ -1284,24 +1315,18 @@ func _broadcast_match_end():
 		}
 		entry.merge(stats.xp_breakdown())
 		leaderboard.append(entry)
+	return leaderboard
 
-	for p_name in players:
-		var p = players[p_name]
-		var ship: Ship = p[0]
-		if not ship.team.is_bot:
-			var peer_id = p[2]
-			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
+signal live_leaderboard_received(leaderboard: Array)
 
-	if bot_match or CmdArgs.has("--metrics"):
-		_write_match_metrics(winning_team, leaderboard, win_reason)
-
-	# Finalize the replay file server-side.
-	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
-	# so we must call end_match() directly here on the server.
+@rpc("any_peer", "call_remote", "reliable")
+func request_live_leaderboard() -> void:
 	if _Utils.authority():
-		var _rr = get_node_or_null("/root/ReplayRecorder")
-		if _rr != null and _rr._match_active:
-			_rr.end_match(winning_team if winning_team >= 0 else 255)
+		_receive_live_leaderboard.rpc_id(multiplayer.get_remote_sender_id(), _build_leaderboard())
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_live_leaderboard(leaderboard: Array) -> void:
+	live_leaderboard_received.emit(leaderboard)
 
 func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win_reason: String) -> void:
 	var taken: Dictionary[Ship, float] = {}
@@ -1509,7 +1534,11 @@ func _physics_process(_delta: float) -> void:
 			_broadcast_match_end()
 			match_complete = true
 			if bot_match:
-				get_tree().quit()
+				if spectators.is_empty():
+					get_tree().quit()
+				else:
+					# Let the reliable match-end RPC flush before the peer drops.
+					get_tree().create_timer(2.0, true, false, true).timeout.connect(get_tree().quit)
 				return
 			_reset_server()
 
@@ -1617,6 +1646,29 @@ func _spot_pass() -> void:
 					_write_unspotted_lkp(enemy_team_id, p, SimClock.now())
 
 
+## Changed entries only; a new spectator clears the cache so it gets the full set.
+func _send_spectator_params() -> void:
+	if spectators.is_empty() or Time.get_ticks_msec() < _spectator_params_next_ms:
+		return
+	_spectator_params_next_ms = Time.get_ticks_msec() + SPECTATOR_PARAMS_INTERVAL_MS
+	var changed: Dictionary = {}
+	for p_name: String in players:
+		var b: PackedByteArray = players[p_name][0].sync_params_data()
+		if _spectator_params_sent.get(p_name, PackedByteArray()) != b:
+			_spectator_params_sent[p_name] = b
+			changed[p_name] = b
+	if changed.is_empty():
+		return
+	for spectator_id in spectators:
+		_sync_spectator_params.rpc_id(spectator_id, changed)
+
+# Channel 0 so it stays ordered behind spawn_players_client.
+@rpc("authority", "reliable", "call_remote")
+func _sync_spectator_params(changed: Dictionary) -> void:
+	for p_name in changed:
+		if players.has(p_name) and is_instance_valid(players[p_name][0]):
+			players[p_name][0].parse_params_data(changed[p_name])
+
 ## Ship state to every connected player and spectator, each seeing only what its team has spotted.
 func _sync_clients() -> void:
 	_send_hydro_syncs()
@@ -1720,6 +1772,7 @@ func _sync_clients() -> void:
 	# var team_0_bytes = team_0_writer.data_array
 	# var team_1_bytes = team_1_writer.data_array
 
+	_send_spectator_params()
 	for spectator_id in spectators:
 		if sunk_toggled.is_empty():
 			sync_game_state.rpc_id(spectator_id, spectator_bytes)

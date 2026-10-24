@@ -14,6 +14,9 @@ pub(crate) struct CoverArgs {
     pub cone_half: f32,
     pub allow_dark: bool,
     pub need: u32,
+    /// Only cells nearer than near_d to near_pos; near_d INF, any.
+    pub near_pos: Vector2,
+    pub near_d: f32,
 }
 
 impl CoverArgs {
@@ -26,6 +29,8 @@ impl CoverArgs {
             cone_half: f("cone_half", std::f32::consts::PI),
             allow_dark: o.get("allow_dark").is_none_or(|v| v.to::<bool>()),
             need: o.get("need").map_or(0, |v| v.to::<i32>().max(0) as u32),
+            near_pos: o.get("near_pos").map_or(Vector2::ZERO, |v| v.to::<Vector2>()),
+            near_d: f("near_d", f32::INFINITY),
         }
     }
 
@@ -33,6 +38,9 @@ impl CoverArgs {
     /// the away cone; None outside both cones or past reach.
     pub(crate) fn cost(&self, from: Vector2, p: Vector2) -> Option<f32> {
         let d = from.distance_to(p);
+        if self.near_d.is_finite() && p.distance_to(self.near_pos) >= self.near_d {
+            return None;
+        }
         if !self.axis.is_finite() || d < 1.0 {
             return (d <= self.reach_m).then_some(d);
         }
@@ -63,7 +71,7 @@ pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark:
             continue;
         }
         let d = p.distance_to(e.pos);
-        if allow_dark && d >= e.det_r {
+        if allow_dark && d >= e.det_r.max(e.dark_r) {
             continue;
         }
         dark = false;

@@ -386,6 +386,8 @@ func notify_armed(id: int):
 		for e in enemy_ships:
 			if !e.team.is_bot:
 				arm_torp.rpc_id(e.peer_id, id)
+	for spectator_id in server.spectators:
+		arm_torp.rpc_id(spectator_id, id)
 
 @rpc("call_remote", "reliable", "authority")
 func notify_torpedo_detected(id: int):
@@ -408,6 +410,8 @@ func notify_detected(id: int):
 	for ship in friendly_ships:
 		if !ship.team.is_bot:
 			notify_torpedo_detected.rpc_id(ship.peer_id, id)
+	for spectator_id in server.spectators:
+		notify_torpedo_detected.rpc_id(spectator_id, id)
 
 
 
@@ -521,6 +525,8 @@ func notify_fired(id: int, pos: Vector3, vel: Vector3, t: float, params: Torpedo
 	for ship in server._get_team_ships(_owner.team.team_id):
 		if not ship.team.is_bot:
 			fireTorpedoClient.rpc_id(ship.peer_id, pos, vel, t, id, params.speed, params.damage, _owner.get_path(), armed)
+	for spectator_id in server.spectators:
+		fireTorpedoClient.rpc_id(spectator_id, pos, vel, t, id, params.speed, params.damage, _owner.get_path(), armed)
 
 
 func _clear_torpedo_transform(idx: int) -> void:

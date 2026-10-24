@@ -10,6 +10,7 @@ func _ready():
 		print("Game world initialized on client")
 
 		get_node("Camera3D").queue_free()
+		add_child(LiveScoreboard.new())
 		
 		if CmdArgs.has("--spectate"):
 			get_parent().request_spectate.rpc_id(1)

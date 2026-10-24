@@ -4,11 +4,13 @@ extends BotSkill
 ## The one fighting posture: a station on the enemies' rings in open water
 ## (FightStation), island cover (SkillCover) or a spotting station (SkillSpot).
 ## Open water while threat is under DISENGAGE_THREAT or the station's own
-## exposure is; otherwise, and when no station is found, spot if our
-## concealment beats theirs, else cover, each failing the other; with nothing
-## found, fight the presumed, else close on our priority.
+## exposure is, and the run there is survivable; otherwise spot if our
+## concealment beats theirs, else cover nearer our priority than we are, each
+## failing the other, then the ring station anyway. Under DISENGAGE_THREAT with
+## nothing in reach, and when nothing else is found, fight the presumed, else
+## close on our priority.
 ## Whichever search answers, the sailed destination eases from the last one
-## toward it at our top speed, never jumping.
+## toward it at our top speed plus EASE_GAIN_MPS for every second it has held still, never jumping.
 ## Params: only (run that Mode alone), prefer_cover (OFFENSE cover first), and
 ## each search's own.
 
@@ -30,6 +32,11 @@ var _seed_at: float = -INF
 const EASE_GAP_S := 1.0
 var _shown := Vector2.INF
 var _shown_at: float = -INF
+const EASE_GAIN_MPS := 0.5
+## A goal moving less than this is the same destination.
+const EASE_SAME_M := 50.0
+var _goal := Vector2.INF
+var _goal_since: float = -INF
 
 func reset() -> void:
 	station.reset()
@@ -45,6 +52,12 @@ func debug_text() -> String:
 func fresh_seed() -> Vector2:
 	return _seed if SimClock.now() - _seed_at <= SEED_TTL_S else Vector2.INF
 
+## Disengage's island or dark destination: where Fight's easing resumes from.
+func snap_to(p: Vector3) -> void:
+	_shown = Vector2(p.x, p.z)
+	_shown_at = SimClock.now()
+	_goal = Vector2.INF
+
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var intent := _choose(ctx, params)
 	var now: float = SimClock.now()
@@ -53,8 +66,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if intent == null:
 		return null
 	var goal := Vector2(intent.target_position.x, intent.target_position.z)
-	_shown = goal if not _shown.is_finite() or dt > EASE_GAP_S \
-		else _shown.move_toward(goal, ctx.ship.movement_controller.max_speed * maxf(dt, 0.0))
+	if not _goal.is_finite() or _goal.distance_to(goal) > EASE_SAME_M:
+		_goal_since = now
+	_goal = goal
+	var speed: float = ctx.ship.movement_controller.max_speed + EASE_GAIN_MPS * (now - _goal_since)
+	_shown = goal if not _shown.is_finite() or dt > EASE_GAP_S else _shown.move_toward(goal, speed * maxf(dt, 0.0))
 	if _shown.distance_to(goal) > 1.0:
 		intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(_shown.x, 0.0, _shown.y))
 	return intent
@@ -71,17 +87,30 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var threat: float = b.get_threat_score(ctx)
 	if not station.resting() and (SimClock.now() >= _shelter_until or threat < BotBehavior.REENGAGE_THREAT):
 		var intent := _run(ctx, Mode.STATION, params)
-		if intent != null and (threat < BotBehavior.DISENGAGE_THREAT or station.station_threat() < BotBehavior.DISENGAGE_THREAT):
+		if intent != null and not station.doomed() \
+				and (threat < BotBehavior.DISENGAGE_THREAT or station.station_threat() < BotBehavior.DISENGAGE_THREAT):
 			_shelter_until = -INF
 			return intent
 		if intent != null:
 			_shelter_until = SimClock.now() + SHELTER_S
+	# Calm and nothing in reach: close in rather than hide.
+	if threat < BotBehavior.DISENGAGE_THREAT and not b._has_shootable_contact(ctx):
+		var closing := _close_in(ctx, params)
+		if closing != null:
+			return closing
 	var order: Array = [Mode.SPOT, Mode.COVER] if b.conceals_well(ctx) else [Mode.COVER, Mode.SPOT]
 	for m in order:
-		var intent := _run(ctx, m, cover_params(ctx, SkillCover.Mode.OFFENSE) if m == Mode.COVER else {})
+		var intent := _run(ctx, m, advance_cover_params(ctx) if m == Mode.COVER else {})
 		if intent != null:
 			return intent
-	# Nothing seen to fight: fight where they are presumed to be, else close on our priority.
+	if not station.resting():
+		var held := _run(ctx, Mode.STATION, params)
+		if held != null:
+			return held
+	return _close_in(ctx, params)
+
+## Fight where the enemy is presumed to be, else close on our priority.
+func _close_in(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var presumed: NavIntent = null
 	if not bool(params.get("presumed", false)):
 		presumed = _run(ctx, Mode.STATION, params.merged({"presumed": true}))
@@ -103,6 +132,20 @@ func _advance(ctx: SkillContext) -> NavIntent:
 static func cover_params(ctx: SkillContext, cover_mode: int) -> Dictionary:
 	return {"mode": cover_mode, "refs": ctx.behavior.cover_refs() if cover_mode == SkillCover.Mode.OFFENSE else [],
 		"fire_en_route": ctx.behavior.cant_go_dark}
+
+## OFFENSE cover nearer our priority than we are, or inside the range we want it at.
+static func advance_cover_params(ctx: SkillContext) -> Dictionary:
+	var p := cover_params(ctx, SkillCover.Mode.OFFENSE)
+	var b: BotBehavior = ctx.behavior
+	var target: Ship = b.priority_target()
+	var at: Vector3 = b.priority_point()
+	if not at.is_finite():
+		return p
+	var to := Vector2(at.x, at.z)
+	var near: float = to.distance_to(Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z))
+	if is_instance_valid(target):
+		near = maxf(near, b.desired(target).x)
+	return p.merged({"near_pos": to, "near_d": near})
 
 ## Runs one search, resetting the last on a switch so its claim and station go.
 func _run(ctx: SkillContext, m: int, params: Dictionary) -> NavIntent:

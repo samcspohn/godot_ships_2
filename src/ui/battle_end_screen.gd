@@ -38,6 +38,7 @@ const APTITUDE_COLORS := {
 
 var _return_button: Button
 var _tab_container: TabContainer
+var _spectator: bool = false
 
 
 func _ready() -> void:
@@ -59,6 +60,7 @@ func _ready() -> void:
 	var stats: Dictionary = result.get("stats", {})
 	var screenshot: Image = result.get("screenshot", null)
 	var leaderboard: Array = result.get("leaderboard", [])
+	_spectator = result.get("spectator", false)
 
 	var is_victory := winning_team == friendly_team_id
 	var is_draw := winning_team == -1
@@ -99,10 +101,13 @@ func _ready() -> void:
 	root_margin.add_child(vbox)
 
 	# -- Title --
+	var title := "DRAW" if is_draw else "VICTORY" if is_victory else "DEFEAT"
+	if _spectator and not is_draw:
+		title = "TEAM %d WINS" % winning_team
 	var title_label := _make_label(
-		"DRAW" if is_draw else "VICTORY" if is_victory else "DEFEAT",
+		title,
 		56,
-		SUBTITLE_WHITE if is_draw else GOLD if is_victory else DEFEAT_RED,
+		SUBTITLE_WHITE if is_draw else GOLD if is_victory or _spectator else DEFEAT_RED,
 		HORIZONTAL_ALIGNMENT_CENTER,
 	)
 	vbox.add_child(title_label)
@@ -134,12 +139,13 @@ func _ready() -> void:
 	vbox.add_child(_tab_container)
 
 	# -- Personal Stats tab --
-	var personal_tab := _build_personal_stats_tab(stats, _find_local_entry(leaderboard, ship_name))
-	personal_tab.name = "Personal Stats"
-	_tab_container.add_child(personal_tab)
+	if not _spectator:
+		var personal_tab := _build_personal_stats_tab(stats, _find_local_entry(leaderboard, ship_name))
+		personal_tab.name = "Personal Stats"
+		_tab_container.add_child(personal_tab)
 
 	# -- Leaderboard tab --
-	var leaderboard_tab := _build_leaderboard_tab(leaderboard, friendly_team_id, ship_name)
+	var leaderboard_tab := build_leaderboard(leaderboard, friendly_team_id, ship_name, _spectator)
 	leaderboard_tab.name = "Leaderboard"
 	_tab_container.add_child(leaderboard_tab)
 
@@ -233,13 +239,13 @@ func _build_personal_stats_tab(stats: Dictionary, entry: Dictionary) -> Control:
 
 
 
-func sort_leaderboard(a, b):
+static func sort_leaderboard(a, b):
 	return a.get("xp", 0) > b.get("xp", 0)
 
 # ===========================================================================
 #  Leaderboard tab
 # ===========================================================================
-func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_ship_name: String) -> Control:
+static func build_leaderboard(leaderboard: Array, friendly_team_id: int, local_ship_name: String, spectator: bool) -> Control:
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -261,8 +267,8 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 		else:
 			enemy_entries.append(entry)
 
-	friendly_entries.sort_custom(sort_leaderboard)
-	enemy_entries.sort_custom(sort_leaderboard)
+	friendly_entries.sort_custom(BattleEndScreen.sort_leaderboard)
+	enemy_entries.sort_custom(BattleEndScreen.sort_leaderboard)
 
 	# Friendly team (left side)
 	var friendly_vbox := VBoxContainer.new()
@@ -270,7 +276,7 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 	friendly_vbox.add_theme_constant_override("separation", 4)
 	hbox.add_child(friendly_vbox)
 
-	var friendly_header := _make_label("Your Team", 22, FRIENDLY_COLOR, HORIZONTAL_ALIGNMENT_CENTER)
+	var friendly_header := _make_label("Team 0" if spectator else "Your Team", 22, FRIENDLY_COLOR, HORIZONTAL_ALIGNMENT_CENTER)
 	friendly_vbox.add_child(friendly_header)
 	if friendly_entries.size() > 0:
 		var table := _build_team_table(friendly_entries, local_ship_name, true)
@@ -282,7 +288,7 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 	enemy_vbox.add_theme_constant_override("separation", 4)
 	hbox.add_child(enemy_vbox)
 
-	var enemy_header := _make_label("Enemy Team", 22, ENEMY_COLOR, HORIZONTAL_ALIGNMENT_CENTER)
+	var enemy_header := _make_label("Team 1" if spectator else "Enemy Team", 22, ENEMY_COLOR, HORIZONTAL_ALIGNMENT_CENTER)
 	enemy_vbox.add_child(enemy_header)
 	if enemy_entries.size() > 0:
 		var table := _build_team_table(enemy_entries, local_ship_name, false)
@@ -291,7 +297,7 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 	return scroll
 
 
-func _build_team_table(entries: Array, local_ship_name: String, is_friendly: bool) -> Control:
+static func _build_team_table(entries: Array, local_ship_name: String, is_friendly: bool) -> Control:
 	"""Build a table of player stats for one team."""
 	var vbox := VBoxContainer.new()
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -299,7 +305,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 
 	# Header row
 	var header_row := _make_leaderboard_row(
-		"Ship", "Apt", "XP", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot",
+		"Ship", "Apt", "XP", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot", "Potential",
 		LABEL_GRAY, false, 14
 	)
 	vbox.add_child(header_row)
@@ -343,6 +349,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 			str(entry.get("torpedo_count", 0)),
 			str(entry.get("fire_count", 0)),
 			"%d" % entry.get("spotting_damage", 0.0),
+			"%d" % entry.get("potential_damage", 0.0),
 			VALUE_WHITE,
 			is_local,
 			15,
@@ -366,10 +373,10 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 	return vbox
 
 
-func _make_leaderboard_row(
+static func _make_leaderboard_row(
 	col_name: String, col_apt: String, col_xp: String, col_dmg: String, col_kills: String,
 	col_main: String, col_sec: String, col_torp: String, col_fire: String,
-	col_spot: String,
+	col_spot: String, col_potential: String,
 	text_color: Color, highlight: bool, font_size: int = 15,
 	row_bg_color: Color = Color.TRANSPARENT,
 ) -> PanelContainer:
@@ -410,6 +417,7 @@ func _make_leaderboard_row(
 		[col_torp, 50, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_fire, 50, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_spot, 80, HORIZONTAL_ALIGNMENT_RIGHT],
+		[col_potential, 90, HORIZONTAL_ALIGNMENT_RIGHT],
 	]
 
 	for i in range(columns.size()):
@@ -433,7 +441,7 @@ func _make_leaderboard_row(
 # ===========================================================================
 #  Shared helpers (same as before)
 # ===========================================================================
-func _make_label(
+static func _make_label(
 	text: String,
 	font_size: int,
 	color: Color,
@@ -468,7 +476,7 @@ func _add_stat_row(grid: GridContainer, label_text: String, value_text: String) 
 	grid.add_child(value_label)
 
 
-func _make_separator_stylebox() -> StyleBoxLine:
+static func _make_separator_stylebox() -> StyleBoxLine:
 	var style := StyleBoxLine.new()
 	style.color = SEPARATOR_COLOR
 	style.thickness = 1
@@ -481,7 +489,7 @@ func _make_separator_stylebox() -> StyleBoxLine:
 
 func _make_return_button() -> Button:
 	var button := Button.new()
-	button.text = "Return to Port"
+	button.text = "Quit" if _spectator else "Return to Port"
 	button.custom_minimum_size = Vector2(200, 50)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.add_theme_font_size_override("font_size", 20)
@@ -513,6 +521,9 @@ func _make_return_button() -> Button:
 
 
 func _on_return_to_port_pressed() -> void:
+	if _spectator:
+		get_tree().quit()
+		return
 	_Utils.match_result = {}
 	NetworkManager.disconnect_network()
 	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")

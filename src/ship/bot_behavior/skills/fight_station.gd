@@ -66,6 +66,7 @@ var _route_hp: float = 0.0
 var _chase_to := Vector2.INF
 var _chase_failed_at: float = -INF
 var _harm_price: float = 1.0
+var _horizon: float = 0.0
 var _cells: int = 0
 
 func reset() -> void:
@@ -205,7 +206,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 func station_threat() -> float:
 	if not _has_station or _chasing:
 		return 1.0
-	return 1.0 - exp(-BotBehavior.THREAT_HORIZON_S * _march_harm / maxf(_harm_price, 0.01))
+	return 1.0 - exp(-_horizon * _march_harm / maxf(_harm_price, 0.01))
 
 ## A chase failed lately: Fight sits out CHASE_RETRY_S so the fallback can hold.
 func resting() -> bool:
@@ -265,6 +266,7 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 	var friends: Array = ctx.server.get_team_ships(ship.team.team_id)
 	var conceal: float = (ship.concealment.params.p() as ConcealmentParams).radius if ship.concealment != null else 0.0
 	_harm_price = harm_price(ctx)
+	_horizon = ctx.behavior.threat_horizon(ctx.server)
 	for i in belief.size():
 		var o: PackedFloat32Array = (trades[i].out as PackedFloat32Array).duplicate()
 		var n: PackedFloat32Array = (trades[i].in as PackedFloat32Array).duplicate()

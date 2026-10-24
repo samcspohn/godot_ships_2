@@ -2387,7 +2387,7 @@ func _on_sniper_reticle_draw() -> void:
 		return  # Only draw in sniper mode
 
 	# Calculate distance traveled by a target moving at 10 knots during shell flight time
-	var knot_10 = 10.0 * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
+	var knot_10 = 10.0 * 0.514444 * ShipMovementV4.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
 	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
 	var distance_to_target_m = distance_to_target
 
@@ -2421,7 +2421,7 @@ func _on_sniper_reticle_draw() -> void:
 		var speed = 10
 		while true:
 			# Calculate distance traveled at this speed during shell flight time
-			var speed_ms = speed * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
+			var speed_ms = speed * 0.514444 * ShipMovementV4.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
 			var lead_distance = speed_ms * time_to_target
 
 			# Convert world distance to screen pixels using FOV and distance

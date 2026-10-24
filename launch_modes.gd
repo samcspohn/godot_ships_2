@@ -72,5 +72,7 @@ func setup_spectator(address: String) -> void:
 	NetworkManager.connection_succeeded.connect(func():
 		TcpThreadPool.start_client()
 		get_tree().change_scene_to_file.call_deferred("res://src/server/server.tscn"), CONNECT_ONE_SHOT)
-	NetworkManager.server_disconnected.connect(func(): get_tree().quit(), CONNECT_ONE_SHOT)
+	NetworkManager.server_disconnected.connect(func():
+		if _Utils.match_result.is_empty():
+			get_tree().quit(), CONNECT_ONE_SHOT)
 	NetworkManager.create_client(parts[0], port)

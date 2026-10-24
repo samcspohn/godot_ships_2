@@ -1,5 +1,7 @@
+use godot::classes::{
+    Camera3D, INode, Node, Node3D, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource,
+};
 use godot::prelude::*;
-use godot::classes::{Camera3D, Node, Node3D, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource, INode};
 use std::collections::BTreeMap;
 
 use crate::nav::map::NavigationMap;
@@ -121,7 +123,7 @@ impl INode for ProjectileManager {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
-            shell_time_multiplier: 2.0,
+            shell_time_multiplier: 2.5,
             current_time: 0.0,
             client_time: 0.0,
             next_id: 0,
@@ -169,79 +171,217 @@ impl INode for ProjectileManager {
 // has no caller though the function is live internally.
 #[godot_api]
 impl ProjectileManager {
-    #[func] pub(crate) fn get_shell_time_multiplier(&self) -> f64 { self.shell_time_multiplier }
-    #[func] pub(crate) fn set_shell_time_multiplier(&mut self, value: f64) { self.set_shell_time_multiplier_impl(value); }
-    #[func] pub(crate) fn get_current_time(&self) -> f64 { self.current_time }
-    #[func] pub(crate) fn get_next_id(&self) -> i32 { self.next_id }
-    #[func] pub(crate) fn set_next_id(&mut self, value: i32) { self.next_id = value; }
-    #[func] pub(crate) fn get_projectiles(&self) -> VarArray { self.projectiles.clone() }
-    #[func] pub(crate) fn set_projectiles(&mut self, value: VarArray) { self.projectiles = value; }
-    #[func] pub(crate) fn get_ids_reuse(&self) -> VarArray { self.ids_reuse.clone() }
-    #[func] pub(crate) fn set_ids_reuse(&mut self, value: VarArray) { self.ids_reuse = value; }
-    #[func] pub(crate) fn get_shell_param_ids(&self) -> VarDictionary { self.shell_param_ids.clone() }
-    #[func] pub(crate) fn set_shell_param_ids(&mut self, value: VarDictionary) { self.shell_param_ids = value; }
-    #[func] pub(crate) fn get_bullet_id(&self) -> i32 { self.bullet_id }
-    #[func] pub(crate) fn set_bullet_id(&mut self, value: i32) { self.bullet_id = value; }
-    #[func] pub(crate) fn get_last_shell_uid(&self) -> u32 { self.next_shell_uid }
-    #[func] pub(crate) fn get_gpu_renderer(&self) -> Option<Gd<Node>> { self.gpu_renderer.clone() }
-    #[func] pub(crate) fn set_gpu_renderer(&mut self, value: Option<Gd<Node>>) { self.gpu_renderer = value; }
-    #[func] pub(crate) fn get_compute_particle_system(&self) -> Option<Gd<Node>> { self.compute_particle_system.clone() }
-    #[func] pub(crate) fn set_compute_particle_system(&mut self, value: Option<Gd<Node>>) { self.compute_particle_system = value; }
-    #[func] pub(crate) fn get_trail_template(&self) -> Option<Gd<Resource>> { self.trail_template.clone() }
-    #[func] pub(crate) fn set_trail_template(&mut self, value: Option<Gd<Resource>>) { self.trail_template = value; }
-    #[func] pub(crate) fn get_camera(&self) -> Option<Gd<Camera3D>> { self.camera.clone() }
-    #[func] pub(crate) fn set_camera(&mut self, value: Option<Gd<Camera3D>>) { self.camera = value; }
+    #[func]
+    pub(crate) fn get_shell_time_multiplier(&self) -> f64 {
+        self.shell_time_multiplier
+    }
+    #[func]
+    pub(crate) fn set_shell_time_multiplier(&mut self, value: f64) {
+        self.set_shell_time_multiplier_impl(value);
+    }
+    #[func]
+    pub(crate) fn get_current_time(&self) -> f64 {
+        self.current_time
+    }
+    #[func]
+    pub(crate) fn get_next_id(&self) -> i32 {
+        self.next_id
+    }
+    #[func]
+    pub(crate) fn set_next_id(&mut self, value: i32) {
+        self.next_id = value;
+    }
+    #[func]
+    pub(crate) fn get_projectiles(&self) -> VarArray {
+        self.projectiles.clone()
+    }
+    #[func]
+    pub(crate) fn set_projectiles(&mut self, value: VarArray) {
+        self.projectiles = value;
+    }
+    #[func]
+    pub(crate) fn get_ids_reuse(&self) -> VarArray {
+        self.ids_reuse.clone()
+    }
+    #[func]
+    pub(crate) fn set_ids_reuse(&mut self, value: VarArray) {
+        self.ids_reuse = value;
+    }
+    #[func]
+    pub(crate) fn get_shell_param_ids(&self) -> VarDictionary {
+        self.shell_param_ids.clone()
+    }
+    #[func]
+    pub(crate) fn set_shell_param_ids(&mut self, value: VarDictionary) {
+        self.shell_param_ids = value;
+    }
+    #[func]
+    pub(crate) fn get_bullet_id(&self) -> i32 {
+        self.bullet_id
+    }
+    #[func]
+    pub(crate) fn set_bullet_id(&mut self, value: i32) {
+        self.bullet_id = value;
+    }
+    #[func]
+    pub(crate) fn get_last_shell_uid(&self) -> u32 {
+        self.next_shell_uid
+    }
+    #[func]
+    pub(crate) fn get_gpu_renderer(&self) -> Option<Gd<Node>> {
+        self.gpu_renderer.clone()
+    }
+    #[func]
+    pub(crate) fn set_gpu_renderer(&mut self, value: Option<Gd<Node>>) {
+        self.gpu_renderer = value;
+    }
+    #[func]
+    pub(crate) fn get_compute_particle_system(&self) -> Option<Gd<Node>> {
+        self.compute_particle_system.clone()
+    }
+    #[func]
+    pub(crate) fn set_compute_particle_system(&mut self, value: Option<Gd<Node>>) {
+        self.compute_particle_system = value;
+    }
+    #[func]
+    pub(crate) fn get_trail_template(&self) -> Option<Gd<Resource>> {
+        self.trail_template.clone()
+    }
+    #[func]
+    pub(crate) fn set_trail_template(&mut self, value: Option<Gd<Resource>>) {
+        self.trail_template = value;
+    }
+    #[func]
+    pub(crate) fn get_camera(&self) -> Option<Gd<Camera3D>> {
+        self.camera.clone()
+    }
+    #[func]
+    pub(crate) fn set_camera(&mut self, value: Option<Gd<Camera3D>>) {
+        self.camera = value;
+    }
 
-    #[func] pub(crate) fn calculate_penetration_power(&self, shell_params: Option<Gd<Resource>>, velocity: f64) -> f64 {
+    #[func]
+    pub(crate) fn calculate_penetration_power(
+        &self,
+        shell_params: Option<Gd<Resource>>,
+        velocity: f64,
+    ) -> f64 {
         self.calculate_penetration_power_impl(shell_params.as_ref(), velocity)
     }
-    #[func] pub(crate) fn calculate_impact_angle(&self, velocity: Vector3, surface_normal: Vector3) -> f64 {
+    #[func]
+    pub(crate) fn calculate_impact_angle(&self, velocity: Vector3, surface_normal: Vector3) -> f64 {
         self.calculate_impact_angle_impl(velocity, surface_normal)
     }
-    #[func] pub(crate) fn find_ship(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
+    #[func]
+    pub(crate) fn find_ship(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> {
+        self.find_ship_impl(node)
+    }
     #[func(rename = findShip)]
-    pub(crate) fn find_ship_camel(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
+    pub(crate) fn find_ship_camel(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> {
+        self.find_ship_impl(node)
+    }
 
     /// Connected BY NAME to a SceneTreeTimer in _ready; do not unbind.
     /// gdext will not register a leading-underscore fn name directly, so the
     /// Godot-side name is set explicitly.
     #[func(rename = _init_compute_trails)]
-    pub(crate) fn init_compute_trails(&mut self) { self.init_compute_trails_impl(); }
+    pub(crate) fn init_compute_trails(&mut self) {
+        self.init_compute_trails_impl();
+    }
 
-    #[func] pub(crate) fn clear_all(&mut self) { self.clear_all_impl(); }
-    #[func] pub(crate) fn sync_time(&mut self, server_time: f64) { self.sync_time_impl(server_time); }
-    #[func] pub(crate) fn profiled_process(&mut self, delta: f64) { self.process_impl(delta); }
-    #[func] pub(crate) fn profiled_physics_process(&mut self, delta: f64) { self.physics_process_impl(delta); }
-    #[func] pub(crate) fn _process_trails_only(&mut self, current_time: f64) { self.process_trails_only_impl(current_time); }
+    #[func]
+    pub(crate) fn clear_all(&mut self) {
+        self.clear_all_impl();
+    }
+    #[func]
+    pub(crate) fn sync_time(&mut self, server_time: f64) {
+        self.sync_time_impl(server_time);
+    }
+    #[func]
+    pub(crate) fn profiled_process(&mut self, delta: f64) {
+        self.process_impl(delta);
+    }
+    #[func]
+    pub(crate) fn profiled_physics_process(&mut self, delta: f64) {
+        self.physics_process_impl(delta);
+    }
+    #[func]
+    pub(crate) fn _process_trails_only(&mut self, current_time: f64) {
+        self.process_trails_only_impl(current_time);
+    }
 
     // Every GDScript caller passes all arguments, so the C++ DEFVALs on
     // fire_bullet/fire_bullet_client are not needed on the bindings.
-    #[func] pub(crate) fn fire_bullet(&mut self, vel: Vector3, pos: Vector3, shell: Gd<Resource>, t: f64,
-                           owner: Option<Gd<Object>>, exclude: VarArray) -> i32 {
+    #[func]
+    pub(crate) fn fire_bullet(
+        &mut self,
+        vel: Vector3,
+        pos: Vector3,
+        shell: Gd<Resource>,
+        t: f64,
+        owner: Option<Gd<Object>>,
+        exclude: VarArray,
+    ) -> i32 {
         self.fire_bullet_impl(vel, pos, &shell, t, owner, exclude)
     }
     #[func(rename = fireBullet)]
-    pub(crate) fn fire_bullet_camel(&mut self, vel: Vector3, pos: Vector3, shell: Gd<Resource>, t: f64,
-                         owner: Option<Gd<Object>>, exclude: VarArray) -> i32 {
+    pub(crate) fn fire_bullet_camel(
+        &mut self,
+        vel: Vector3,
+        pos: Vector3,
+        shell: Gd<Resource>,
+        t: f64,
+        owner: Option<Gd<Object>>,
+        exclude: VarArray,
+    ) -> i32 {
         self.fire_bullet_impl(vel, pos, &shell, t, owner, exclude)
     }
-    #[func] pub(crate) fn fire_bullet_client(&mut self, pos: Vector3, vel: Vector3, t: f64, id: i32,
-                                  shell: Gd<Resource>, owner: Option<Gd<Object>>,
-                                  muzzle_blast: bool, basis: Basis) {
+    #[func]
+    pub(crate) fn fire_bullet_client(
+        &mut self,
+        pos: Vector3,
+        vel: Vector3,
+        t: f64,
+        id: i32,
+        shell: Gd<Resource>,
+        owner: Option<Gd<Object>>,
+        muzzle_blast: bool,
+        basis: Basis,
+    ) {
         self.fire_bullet_client_impl(pos, vel, t, id, &shell, owner, muzzle_blast, basis);
     }
     #[func(rename = fireBulletClient)]
-    pub(crate) fn fire_bullet_client_camel(&mut self, pos: Vector3, vel: Vector3, t: f64, id: i32,
-                                shell: Gd<Resource>, owner: Option<Gd<Object>>,
-                                muzzle_blast: bool, basis: Basis) {
+    pub(crate) fn fire_bullet_client_camel(
+        &mut self,
+        pos: Vector3,
+        vel: Vector3,
+        t: f64,
+        id: i32,
+        shell: Gd<Resource>,
+        owner: Option<Gd<Object>>,
+        muzzle_blast: bool,
+        basis: Basis,
+    ) {
         self.fire_bullet_client_impl(pos, vel, t, id, &shell, owner, muzzle_blast, basis);
     }
     #[func(rename = destroyBulletRpc)]
-    pub(crate) fn destroy_bullet_rpc_camel(&mut self, id: i32, position: Vector3, hit_result: i32, normal: Vector3) {
+    pub(crate) fn destroy_bullet_rpc_camel(
+        &mut self,
+        id: i32,
+        position: Vector3,
+        hit_result: i32,
+        normal: Vector3,
+    ) {
         self.destroy_bullet_rpc_impl(id, position, hit_result, normal);
     }
     #[func(rename = destroyBulletRpc2)]
-    pub(crate) fn destroy_bullet_rpc2_camel(&mut self, id: i32, pos: Vector3, hit_result: i32, normal: Vector3) {
+    pub(crate) fn destroy_bullet_rpc2_camel(
+        &mut self,
+        id: i32,
+        pos: Vector3,
+        hit_result: i32,
+        normal: Vector3,
+    ) {
         self.destroy_bullet_rpc2_impl(id, pos, hit_result, normal);
     }
     #[func(rename = destroyBulletRpc3)]
@@ -249,106 +389,246 @@ impl ProjectileManager {
         self.destroy_bullet_rpc3_impl(data);
     }
     #[func(rename = createRicochetRpc)]
-    pub(crate) fn create_ricochet_rpc_camel(&mut self, original_shell_id: i32, new_shell_id: i32,
-                                 ricochet_position: Vector3, ricochet_velocity: Vector3, ricochet_time: f64) {
-        self.create_ricochet_rpc_impl(original_shell_id, new_shell_id, ricochet_position, ricochet_velocity, ricochet_time);
+    pub(crate) fn create_ricochet_rpc_camel(
+        &mut self,
+        original_shell_id: i32,
+        new_shell_id: i32,
+        ricochet_position: Vector3,
+        ricochet_velocity: Vector3,
+        ricochet_time: f64,
+    ) {
+        self.create_ricochet_rpc_impl(
+            original_shell_id,
+            new_shell_id,
+            ricochet_position,
+            ricochet_velocity,
+            ricochet_time,
+        );
     }
     #[func(rename = createRicochetRpc2)]
     pub(crate) fn create_ricochet_rpc2_camel(&mut self, data: PackedByteArray) {
         self.create_ricochet_rpc2_impl(data);
     }
 
-    #[func] pub(crate) fn destroy_bullet_rpc(&mut self, id: i32, position: Vector3, hit_result: i32, normal: Vector3) {
+    #[func]
+    pub(crate) fn destroy_bullet_rpc(
+        &mut self,
+        id: i32,
+        position: Vector3,
+        hit_result: i32,
+        normal: Vector3,
+    ) {
         self.destroy_bullet_rpc_impl(id, position, hit_result, normal);
     }
-    #[func] pub(crate) fn destroy_bullet_rpc2(&mut self, id: i32, pos: Vector3, hit_result: i32, normal: Vector3) {
+    #[func]
+    pub(crate) fn destroy_bullet_rpc2(
+        &mut self,
+        id: i32,
+        pos: Vector3,
+        hit_result: i32,
+        normal: Vector3,
+    ) {
         self.destroy_bullet_rpc2_impl(id, pos, hit_result, normal);
     }
-    #[func] pub(crate) fn destroy_bullet_rpc3(&mut self, data: PackedByteArray) {
+    #[func]
+    pub(crate) fn destroy_bullet_rpc3(&mut self, data: PackedByteArray) {
         self.destroy_bullet_rpc3_impl(data);
     }
-    #[func] pub(crate) fn create_ricochet_rpc(&mut self, original_shell_id: i32, new_shell_id: i32,
-                                   ricochet_position: Vector3, ricochet_velocity: Vector3, ricochet_time: f64) {
-        self.create_ricochet_rpc_impl(original_shell_id, new_shell_id, ricochet_position, ricochet_velocity, ricochet_time);
+    #[func]
+    pub(crate) fn create_ricochet_rpc(
+        &mut self,
+        original_shell_id: i32,
+        new_shell_id: i32,
+        ricochet_position: Vector3,
+        ricochet_velocity: Vector3,
+        ricochet_time: f64,
+    ) {
+        self.create_ricochet_rpc_impl(
+            original_shell_id,
+            new_shell_id,
+            ricochet_position,
+            ricochet_velocity,
+            ricochet_time,
+        );
     }
-    #[func] pub(crate) fn create_ricochet_rpc2(&mut self, data: PackedByteArray) {
+    #[func]
+    pub(crate) fn create_ricochet_rpc2(&mut self, data: PackedByteArray) {
         self.create_ricochet_rpc2_impl(data);
     }
 
-    #[func] pub(crate) fn apply_fire_damage(&mut self, projectile: Gd<ProjectileData>, ship: Option<Gd<Object>>, hit_position: Vector3) {
+    #[func]
+    pub(crate) fn apply_fire_damage(
+        &mut self,
+        projectile: Gd<ProjectileData>,
+        ship: Option<Gd<Object>>,
+        hit_position: Vector3,
+    ) {
         self.apply_fire_damage_impl(&projectile, ship, hit_position);
     }
-    #[func] pub(crate) fn print_armor_debug(&self, armor_result: VarDictionary, ship: Option<Gd<Object>>) {
+    #[func]
+    pub(crate) fn print_armor_debug(&self, armor_result: VarDictionary, ship: Option<Gd<Object>>) {
         self.print_armor_debug_impl(armor_result, ship);
     }
-    #[func] pub(crate) fn validate_penetration_formula(&self) { self.validate_penetration_formula_impl(); }
+    #[func]
+    pub(crate) fn validate_penetration_formula(&self) {
+        self.validate_penetration_formula_impl();
+    }
 
-    #[func] pub(crate) fn get_shells_near_position(&self, position: Vector2, radius: f32, exclude_team_id: i32) -> VarArray {
+    #[func]
+    pub(crate) fn get_shells_near_position(
+        &self,
+        position: Vector2,
+        radius: f32,
+        exclude_team_id: i32,
+    ) -> VarArray {
         self.get_shells_near_position_impl(position, radius, exclude_team_id)
     }
 
     /// Run one shell through the live armour path and return the outcome.
     /// The bot gunnery solver's survey walk; see `sim_process_travel_impl`.
-    #[func] pub(crate) fn sim_process_travel(&mut self, projectile: Gd<ProjectileData>,
-            prev_pos: Vector3, t: f64, space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
-            #[opt(default = false)] log_armor: bool) -> VarDictionary {
+    #[func]
+    pub(crate) fn sim_process_travel(
+        &mut self,
+        projectile: Gd<ProjectileData>,
+        prev_pos: Vector3,
+        t: f64,
+        space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
+        #[opt(default = false)] log_armor: bool,
+    ) -> VarDictionary {
         self.sim_process_travel_impl(projectile, prev_pos, t, space_state, log_armor)
     }
 
     /// Batch survey walk for BotGunnery; see `survey_walk_impl`.
-    #[func] pub(crate) fn survey_walk(&mut self, target: Gd<Node3D>, owner: Gd<Object>, shell: Gd<Resource>,
-            from: Vector3, points: PackedVector3Array,
-            space_state: Option<Gd<PhysicsDirectSpaceState3D>>) -> PackedByteArray {
+    #[func]
+    pub(crate) fn survey_walk(
+        &mut self,
+        target: Gd<Node3D>,
+        owner: Gd<Object>,
+        shell: Gd<Resource>,
+        from: Vector3,
+        points: PackedVector3Array,
+        space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
+    ) -> PackedByteArray {
         self.survey_walk_impl(target, owner, shell, from, points, space_state)
     }
 
-    #[func] pub(crate) fn armor_register_ship(&mut self, ship: Gd<Node3D>) { self.armor_register_ship_impl(ship) }
-    #[func] pub(crate) fn armor_unregister_ship(&mut self, ship_id: i64) { self.armor_unregister_ship_impl(ship_id) }
-    #[func] pub(crate) fn armor_add_part(&mut self, ship: Gd<Node3D>, part: Gd<Node3D>, local_xform: Transform3D,
-            faces: PackedVector3Array, thickness: PackedFloat32Array, armor_type: i32, dynamic: bool) -> i32 {
-        self.armor_add_part_impl(ship, part, local_xform, faces, thickness, armor_type, dynamic)
+    #[func]
+    pub(crate) fn armor_register_ship(&mut self, ship: Gd<Node3D>) {
+        self.armor_register_ship_impl(ship)
     }
-    #[func] pub(crate) fn armor_part_count(&self, ship: Gd<Node3D>) -> i32 { self.armor_part_count_impl(ship) }
+    #[func]
+    pub(crate) fn armor_unregister_ship(&mut self, ship_id: i64) {
+        self.armor_unregister_ship_impl(ship_id)
+    }
+    #[func]
+    pub(crate) fn armor_add_part(
+        &mut self,
+        ship: Gd<Node3D>,
+        part: Gd<Node3D>,
+        local_xform: Transform3D,
+        faces: PackedVector3Array,
+        thickness: PackedFloat32Array,
+        armor_type: i32,
+        dynamic: bool,
+    ) -> i32 {
+        self.armor_add_part_impl(
+            ship,
+            part,
+            local_xform,
+            faces,
+            thickness,
+            armor_type,
+            dynamic,
+        )
+    }
+    #[func]
+    pub(crate) fn armor_part_count(&self, ship: Gd<Node3D>) -> i32 {
+        self.armor_part_count_impl(ship)
+    }
     /// Closest armour hit along a ship-local segment: armor, position, normal, face_index.
-    #[func] pub(crate) fn armor_raycast(&mut self, ship: Gd<Node3D>, from_local: Vector3, to_local: Vector3) -> VarDictionary {
+    #[func]
+    pub(crate) fn armor_raycast(
+        &mut self,
+        ship: Gd<Node3D>,
+        from_local: Vector3,
+        to_local: Vector3,
+    ) -> VarDictionary {
         self.armor_raycast_impl(ship, from_local, to_local)
     }
     /// The armour part a ship-local point is inside, or null.
-    #[func] pub(crate) fn armor_part_at(&mut self, ship: Gd<Node3D>, local_pos: Vector3) -> Option<Gd<Object>> {
+    #[func]
+    pub(crate) fn armor_part_at(
+        &mut self,
+        ship: Gd<Node3D>,
+        local_pos: Vector3,
+    ) -> Option<Gd<Object>> {
         self.armor_part_at_impl(ship, local_pos)
     }
 
     /// Offline bake of every lattice; see `survey_bake_impl`.
-    #[func] pub(crate) fn survey_bake(&mut self, hulls: Array<Gd<Node3D>>, ref_shell: Gd<Resource>,
-            job_hull: PackedInt32Array, job_dir: PackedVector3Array, job_vref: PackedFloat32Array,
-            job_nxny: PackedInt32Array, job_rect: PackedVector4Array, points: PackedVector3Array,
-            pt_off: PackedInt32Array, edges: PackedFloat32Array, edge_off: PackedInt32Array,
-            opts: VarDictionary) -> VarDictionary {
-        self.survey_bake_impl(hulls, ref_shell, job_hull, job_dir, job_vref, job_nxny, job_rect,
-            points, pt_off, edges, edge_off, opts)
+    #[func]
+    pub(crate) fn survey_bake(
+        &mut self,
+        hulls: Array<Gd<Node3D>>,
+        ref_shell: Gd<Resource>,
+        job_hull: PackedInt32Array,
+        job_dir: PackedVector3Array,
+        job_vref: PackedFloat32Array,
+        job_nxny: PackedInt32Array,
+        job_rect: PackedVector4Array,
+        points: PackedVector3Array,
+        pt_off: PackedInt32Array,
+        edges: PackedFloat32Array,
+        edge_off: PackedInt32Array,
+        opts: VarDictionary,
+    ) -> VarDictionary {
+        self.survey_bake_impl(
+            hulls, ref_shell, job_hull, job_dir, job_vref, job_nxny, job_rect, points, pt_off,
+            edges, edge_off, opts,
+        )
     }
 
     /// (value per shell fired as a fraction of alpha, landed share) from a
     /// baked expected-damage chunk; see `ev::ev_lookup`. (-1, -1) if malformed.
-    #[func] pub(crate) fn ev_lookup(chunk: PackedByteArray, pen: f64, overmatch: f64, is_he: bool,
-            half_disp: Vector2) -> Vector2 {
-        ev::ev_lookup(chunk.as_slice(), pen, overmatch, is_he, half_disp.x, half_disp.y)
-            .map_or(Vector2::new(-1.0, -1.0), |(v, l)| Vector2::new(v, l))
+    #[func]
+    pub(crate) fn ev_lookup(
+        chunk: PackedByteArray,
+        pen: f64,
+        overmatch: f64,
+        is_he: bool,
+        half_disp: Vector2,
+    ) -> Vector2 {
+        ev::ev_lookup(
+            chunk.as_slice(),
+            pen,
+            overmatch,
+            is_he,
+            half_disp.x,
+            half_disp.y,
+        )
+        .map_or(Vector2::new(-1.0, -1.0), |(v, l)| Vector2::new(v, l))
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.
-    #[func] pub(crate) fn walk_penetration(shell: Gd<Resource>, velocity: f64) -> f64 {
+    #[func]
+    pub(crate) fn walk_penetration(shell: Gd<Resource>, velocity: f64) -> f64 {
         Self::walk_penetration_impl(&shell, velocity)
     }
 
     /// Resolve a baked lattice to result bytes for one shell; see `lattice_resolve_impl`.
-    #[func] pub(crate) fn lattice_resolve(blob: PackedByteArray, pen: f64, overmatch: f64,
-            is_he: bool) -> PackedByteArray {
+    #[func]
+    pub(crate) fn lattice_resolve(
+        blob: PackedByteArray,
+        pen: f64,
+        overmatch: f64,
+        is_he: bool,
+    ) -> PackedByteArray {
         Self::lattice_resolve_impl(&blob, pen, overmatch, is_he)
     }
 
     /// `nx`, `ny`, `rect` and `dir` of a baked bucket blob; empty if malformed.
-    #[func] pub(crate) fn lattice_header(blob: PackedByteArray) -> VarDictionary {
+    #[func]
+    pub(crate) fn lattice_header(blob: PackedByteArray) -> VarDictionary {
         let mut d = VarDictionary::new();
         if let Some(h) = survey::blob_header(blob.as_slice()) {
             d.set("nx", h.nx as i32);
@@ -361,10 +641,24 @@ impl ProjectileManager {
     }
 
     /// Dispersion-kernel scoring of a survey lattice; see `lattice_score_impl`.
-    #[func] pub(crate) fn lattice_score(cells: PackedByteArray, nx: i32, ny: i32, rect: Vector4,
-            v_edges: PackedFloat32Array, aims: PackedVector2Array, half_disp: Vector2, sigma: f64,
-            guarantee: f64, ellipse: Vector2, payouts: PackedFloat64Array, turret_cap: f64) -> PackedFloat64Array {
-        Self::lattice_score_impl(&cells, nx, ny, rect, &v_edges, &aims, half_disp, sigma, guarantee,
-            ellipse, &payouts, turret_cap)
+    #[func]
+    pub(crate) fn lattice_score(
+        cells: PackedByteArray,
+        nx: i32,
+        ny: i32,
+        rect: Vector4,
+        v_edges: PackedFloat32Array,
+        aims: PackedVector2Array,
+        half_disp: Vector2,
+        sigma: f64,
+        guarantee: f64,
+        ellipse: Vector2,
+        payouts: PackedFloat64Array,
+        turret_cap: f64,
+    ) -> PackedFloat64Array {
+        Self::lattice_score_impl(
+            &cells, nx, ny, rect, &v_edges, &aims, half_disp, sigma, guarantee, ellipse, &payouts,
+            turret_cap,
+        )
     }
 }

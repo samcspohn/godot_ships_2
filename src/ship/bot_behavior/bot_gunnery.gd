@@ -17,7 +17,8 @@ const DMG_PENETRATION: float = 1.0 / 3.0
 const DMG_PARTIAL_PEN: float = 0.0667
 const DMG_OVERPENETRATION: float = 0.1
 const DMG_TURRET: float = DMG_CITADEL * 0.1
-const FIRE_VALUE_PER_FIRE: float = 0.06
+## Share of a fire's full duration it burns before damage control puts it out.
+const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
 const SOLVER_VERSION: int = 11
@@ -212,8 +213,9 @@ static func aspect_from(target: Ship, from: Vector3) -> float:
 ## seen `aspect_deg` off its bow: {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps},
 ## ev per shell fired in HP. Full pools, one dispersion kernel for every gun,
 ## the nearest baked bucket; for what-if questions, not for aiming.
+## `bearing_deg`: secondaries count only the guns that bear on the target there off our bow; NAN, all.
 static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: float,
-		kind: int = KIND_MAIN) -> Dictionary:
+		kind: int = KIND_MAIN, bearing_deg: float = NAN) -> Dictionary:
 	var table = _table(target)
 	if table == null or not (table as Dictionary).has("ev"):
 		return {}
@@ -224,7 +226,7 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 	var landed_he := 0.0
 	var fire := 0.0
 	var total_rate := 0.0
-	for m in _batteries(shooter, kind, range_m):
+	for m in _batteries(shooter, kind, range_m, bearing_deg):
 		var rate: float = m["rate"]
 		total_rate += rate
 		var hd := _half_disp(m, range_m)
@@ -249,11 +251,9 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 	if total_rate <= 0.0:
 		return {}
 	var ap_ev: float = value[0] / total_rate
-	var fire_ev: float = fire / total_rate * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE
-	var fp := target.fire_manager.fparams.p() as DOTParams \
-		if target.fire_manager != null and target.fire_manager.fparams != null else null
-	if fp != null and ap_ev > 0.0:
-		fire_ev *= clampf(fp.dmg_rate * target.health_controller.max_hp / (ap_ev * total_rate), 0.0, 1.0)
+	var burn: float = fire_burn_s(target)
+	var burning: float = fire * burn
+	var fire_ev: float = fire / total_rate * fire_dps(target) * burn * (minf(1.0, fire_zones(target) / burning) if burning > 0.0 else 1.0)
 	var he_ev: float = value[1] / total_rate + fire_ev
 	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": fire_ev, "he_landed": landed_he / total_rate,
 		"ap_dps": ap_ev * total_rate, "he_dps": he_ev * total_rate}
@@ -303,7 +303,7 @@ static func _register(ship: Ship) -> void:
 	var rp := fm.rparams.p() as ResistanceParams if fm != null and fm.rparams != null else null
 	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
 	_model.set_hull(id, table["ev"] if table != null and (table as Dictionary).has("ev") else {}, hp,
-		rp.max_buildup if rp != null else 0.0, fp.dmg_rate * hp if fp != null else 0.0)
+		rp.max_buildup if rp != null else 0.0, fire_dps(ship), fire_burn_s(ship), fire_zones(ship))
 	var hpp := ship.health_controller.params.p() as HPParams if ship.health_controller.params != null else null
 	if hpp != null:
 		_model.set_repair(id, hpp.light_repair, hpp.pen_repair, hpp.citadel_repair)
@@ -330,6 +330,24 @@ static func _register(ship: Ship) -> void:
 		curve.append_array([hd.x, hd.y])
 		r += SHELL_RANGE_STEP_M
 	_model.set_shooter(id, SHELL_RANGE_STEP_M, curve, float(m["rate"]), ammo)
+
+
+## HP per second one fire takes off `ship`, its build included.
+static func fire_dps(ship: Ship) -> float:
+	var fm = ship.fire_manager
+	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
+	return fp.dmg_rate * ship.health_controller.max_hp if fp != null else 0.0
+
+
+static func fire_burn_s(ship: Ship) -> float:
+	var fm = ship.fire_manager
+	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
+	return fp.dur * FIRE_BURN_SHARE if fp != null else 0.0
+
+
+## Fire zones: no more fires than this burn at once.
+static func fire_zones(ship: Ship) -> float:
+	return float(ship.fire_manager.get_child_count()) if ship.fire_manager != null else 0.0
 
 
 static func _raw_fire_chance(shell: ShellParams, target: Ship) -> float:
@@ -1040,7 +1058,7 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 					lands[ci] += l * rate
 					if ammo == 1:
 						var fc: float = _fire_chance(shell, target, cands[ci])
-						fire[ci] += fc * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE * l * rate
+						fire[ci] += fc * fire_dps(target) * fire_burn_s(target) * l * rate
 						chance[ci] += fc * l * rate
 	for ammo in 2:
 		for ci in n:
@@ -1065,22 +1083,14 @@ static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
 		fire: PackedFloat64Array, chance: PackedFloat64Array, total_rate: float, target: Ship) -> Dictionary:
 	var n := cands.size()
 	var ap_mean := _weighted_mean(value[0], landed[0], null, 0.0)
-	var fire_scale: float = 1.0
-	var ap_dps: float = ap_mean * total_rate
-	if ap_dps > 0.0:
-		var fp := target.fire_manager.fparams.p() as DOTParams \
-			if target.fire_manager != null and target.fire_manager.fparams != null else null
-		if fp != null:
-			var fire_dps: float = fp.dmg_rate * target.health_controller.max_hp
-			fire_scale = clampf(fire_dps / ap_dps, 0.0, 1.0)
-	var he_mean := _weighted_mean(value[1], landed[1], fire, fire_scale)
+	var he_mean := _weighted_mean(value[1], landed[1], fire, 1.0)
 	var center := Vector3(0.0, (target.aabb.position.y + target.aabb.size.y) * 0.25, 0.0)
 	for ammo in ([1, 0] if he_mean > ap_mean else [0, 1]):
 		var best: float = 0.0
 		for ci in n:
 			var v: float = value[ammo][ci]
 			if ammo == 1:
-				v += fire[ci] * fire_scale
+				v += fire[ci]
 			best = maxf(best, v)
 		if best <= 0.0:
 			continue
@@ -1089,7 +1099,7 @@ static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
 		for ci in n:
 			var v: float = value[ammo][ci]
 			if ammo == 1:
-				v += fire[ci] * fire_scale
+				v += fire[ci]
 			if v < best * (1.0 - CENTER_PULL):
 				continue
 			var dist: float = cands[ci].distance_to(center)
@@ -1099,8 +1109,8 @@ static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
 		if best_ci >= 0:
 			var v: float = value[ammo][best_ci]
 			if ammo == 1:
-				v += fire[best_ci] * fire_scale
-			var fire_ev: float = fire[best_ci] * fire_scale if ammo == 1 else 0.0
+				v += fire[best_ci]
+			var fire_ev: float = fire[best_ci] if ammo == 1 else 0.0
 			return {"offset": cands[best_ci], "ammo": ammo, "payout": v, "landed": landed[ammo][best_ci],
 				"fire_chance": chance[best_ci] if ammo == 1 else 0.0, "fire_ev": fire_ev}
 	return {}
@@ -1138,30 +1148,72 @@ static func _zeros(n: int) -> PackedFloat64Array:
 
 ## One entry per calibre that reaches `range_m`: shells, dispersion params,
 ## sigma, shells per second, citadel guarantee fraction.
-static func _batteries(shooter: Ship, kind: int, range_m: float) -> Array:
+static func _batteries(shooter: Ship, kind: int, range_m: float, bearing_deg: float = NAN) -> Array:
 	var found: Array = []
 	if kind == KIND_SECONDARY:
 		var sec = shooter.secondary_controller
 		if sec == null or not is_instance_valid(sec):
 			return found
 		var mod := _peak_target_mod(shooter, sec.target_mod, true)
-		for sc in sec.sub_controllers:
-			if sc == null or not is_instance_valid(sc):
+		var counts := _sec_bearing(shooter, sec, bearing_deg)
+		for i in sec.sub_controllers.size():
+			var sc = sec.sub_controllers[i]
+			if sc == null or not is_instance_valid(sc) or counts[i] == 0:
 				continue
 			found.append(_battery(sc.get_params(), sc.get_base_params(), mod,
-				(sc.guns as Array).size(), range_m, 0.0))
+				counts[i], range_m, 0.0))
 	else:
 		var ac = shooter.artillery_controller
 		if ac == null or not is_instance_valid(ac):
 			return found
 		found.append(_battery(ac.get_params(), ac.get_base_params(),
-			_peak_target_mod(shooter, ac.target_mod, false), ac.guns.size(), range_m,
+			_peak_target_mod(shooter, ac.target_mod, false), barrels(ac.guns), range_m,
 			CITADEL_GUARANTEE_FRAC))
 	var live: Array = []
 	for b in found:
 		if b != null:
 			live.append(b)
 	return live
+
+
+## Shells one salvo of `guns` fires: one per muzzle.
+static func barrels(guns: Array) -> int:
+	var n := 0
+	for g in guns:
+		n += maxi(g.muzzles.size(), 1)
+	return n
+
+
+## [scene path, bearing] -> barrels per sub-controller bearing on the better side.
+static var _sec_bearing_cache: Dictionary = {}
+
+static func _sec_bearing(shooter: Ship, sec, bearing_deg: float) -> PackedInt32Array:
+	var all := PackedInt32Array()
+	for sc in sec.sub_controllers:
+		all.append(barrels(sc.guns) if sc != null and is_instance_valid(sc) else 0)
+	if is_nan(bearing_deg):
+		return all
+	var key := [shooter.scene_file_path, snappedf(bearing_deg, 0.5)]
+	if _sec_bearing_cache.has(key):
+		return _sec_bearing_cache[key]
+	var best := PackedInt32Array()
+	var best_n := -1
+	for side in [1.0, -1.0]:
+		var counts := PackedInt32Array()
+		var n := 0
+		for i in all.size():
+			var c := 0
+			if all[i] > 0:
+				for g in sec.sub_controllers[i].guns:
+					if BotBehavior.gun_bears(shooter, g, bearing_deg, side):
+						c += barrels([g])
+			counts.append(c)
+			n += c
+		if n > best_n:
+			best = counts
+			best_n = n
+	_sec_bearing_cache[key] = best
+	return best
 
 
 ## Peak rather than live TargetMod: ramping skills would freeze the answer at

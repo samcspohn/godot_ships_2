@@ -301,7 +301,7 @@ func _process(delta):
 	# Calculate ship speed
 	if _ship:
 		var velocity = _ship.linear_velocity
-		ship_speed = velocity.length() * 1.94384 / ShipMovementV2.SHIP_SPEED_MODIFIER # Convert m/s to knots
+		ship_speed = velocity.length() * 1.94384 / ShipMovementV4.SHIP_SPEED_MODIFIER # Convert m/s to knots
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		current_mode = CameraMode.FREE_LOOK
@@ -579,7 +579,7 @@ func _spectate_input(event: InputEvent) -> bool:
 		if not event.pressed or event.echo:
 			return true
 		match event.keycode:
-			KEY_TAB:
+			KEY_C:
 				spectate_cycle(-1 if event.shift_pressed else 1)
 			KEY_SPACE:
 				_spectate_center()

@@ -64,6 +64,9 @@ func recent_damage_from(owner: Ship) -> float:
 		return 0.0
 	return rec[0] * exp(-(SimClock.now() - rec[1]) / DAMAGE_MEMORY_SEC)
 const SHELL_DAMAGE_RADIUS_MOD: float = 17.0
+const DMG_MOD_REF_SHIP_PER_CAL_SQ: float = 40000000.0 / (406.0 * 406.0)
+const DMG_MOD_SMALL: float = 0.7
+const DMG_MOD_SMALL_RATIO: float = 0.1
 
 func _recalculate_healable_damage() -> void:
 	healable_damage = light_damage
@@ -167,8 +170,8 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		return [0, false]
 
 	# ship.update_static_mods = true
-	var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
-	var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
+	var size_ratio = (ship.mass / (shell_cal * shell_cal)) / DMG_MOD_REF_SHIP_PER_CAL_SQ
+	var dmg_mod = minf(remap(size_ratio, DMG_MOD_SMALL_RATIO, 1.0, DMG_MOD_SMALL, 1.0), 1.0)
 	dmg *= dmg_mod
 	dmg /= params.p().mult
 	base_dmg *= dmg_mod
