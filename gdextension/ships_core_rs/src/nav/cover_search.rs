@@ -17,6 +17,9 @@ pub(crate) struct CoverArgs {
     /// Only cells nearer than near_d to near_pos; near_d INF, any.
     pub near_pos: Vector2,
     pub near_d: f32,
+    /// Enemies that see us: a cell must lie within clip_half of each one's bearing to the search origin.
+    pub clip_pos: Vec<Vector2>,
+    pub clip_half: f32,
 }
 
 impl CoverArgs {
@@ -31,6 +34,8 @@ impl CoverArgs {
             need: o.get("need").map_or(0, |v| v.to::<i32>().max(0) as u32),
             near_pos: o.get("near_pos").map_or(Vector2::ZERO, |v| v.to::<Vector2>()),
             near_d: f("near_d", f32::INFINITY),
+            clip_pos: o.get("clip_pos").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
+            clip_half: f("clip_half", 35f32.to_radians()),
         }
     }
 
@@ -39,6 +44,9 @@ impl CoverArgs {
     pub(crate) fn cost(&self, from: Vector2, p: Vector2) -> Option<f32> {
         let d = from.distance_to(p);
         if self.near_d.is_finite() && p.distance_to(self.near_pos) >= self.near_d {
+            return None;
+        }
+        if !self.in_clip(from, p) {
             return None;
         }
         if !self.axis.is_finite() || d < 1.0 {
@@ -55,6 +63,17 @@ impl CoverArgs {
     }
 }
 
+impl CoverArgs {
+    /// Whether `p` is inside every clip cone pointed from its enemy at `from`.
+    pub(crate) fn in_clip(&self, from: Vector2, p: Vector2) -> bool {
+        self.clip_pos.iter().all(|&c| {
+            let (a, b) = (from - c, p - c);
+            b.length() < 1.0
+                || crate::nav::types::angle_difference(a.x.atan2(a.y), b.x.atan2(b.y)).abs() <= self.clip_half
+        })
+    }
+}
+
 /// An enemy this far past its gun range is taken to close it before we leave.
 const ADVANCE_M: f32 = 2000.0;
 
@@ -62,7 +81,7 @@ const ADVANCE_M: f32 = 2000.0;
 /// threat off it, seen when some threat sees it and an island stops every gun
 /// in or near range; None when one of those guns lands. Spotting is the team's:
 /// one threat seeing us lays every gun on us. Threats are the `heavy` enemies:
-/// det_r is how far each sees us, los_r its radar.
+/// det_r is how far each sees us, los_r its radar; only `shells` ones' guns break a shield.
 pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark: bool) -> Option<(bool, bool)> {
     let p = g.centres[k];
     let (mut dark, mut seen, mut blind) = (true, false, false);
@@ -79,7 +98,7 @@ pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark:
             continue;
         }
         seen = true;
-        blind = blind || i >= 64 || inp.fire.as_ref().is_none_or(|f| !f.known(i));
+        blind = blind || (e.shells && (i >= 64 || inp.fire.as_ref().is_none_or(|f| !f.known(i))));
     }
     if !seen {
         return Some((dark, false));
@@ -91,7 +110,7 @@ pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark:
     // One mask for every enemy: ReachLookup::hits recomputes the whole mask per call.
     let (known, hit) = (f.known_mask(), f.mask(p));
     for (i, e) in inp.enemies.iter().enumerate().take(64) {
-        if !e.heavy || known & (1 << i) == 0 {
+        if !e.heavy || !e.shells || known & (1 << i) == 0 {
             continue;
         }
         let d = p.distance_to(e.pos);

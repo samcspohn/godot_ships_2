@@ -123,7 +123,7 @@ impl INode for ProjectileManager {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
-            shell_time_multiplier: 2.5,
+            shell_time_multiplier: 2.0,
             current_time: 0.0,
             client_time: 0.0,
             next_id: 0,

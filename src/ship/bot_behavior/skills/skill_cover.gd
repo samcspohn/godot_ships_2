@@ -8,8 +8,10 @@ extends SkillPosition
 ## away cells costing AWAY_RATIO times their distance. OFFENSE also needs a
 ## target in reach and never goes dark: its guns would bloom it.
 ## Dark water is also at least DARK_MARGIN_M farther from each threat than we are now.
+## Only enemies with heavy_guns break a shielded cell. A station lost en route is searched on from.
 ## Params: mode, cone_axis, cone_half, away_ratio (INF: no away cone), allow_dark, fire_en_route, refs,
 ## near_pos + near_d (new stations only nearer than near_d to near_pos).
+## Enemies that see us clip the search (CLIP_HALF) and drop a held station outside their cones.
 
 enum Mode { OFFENSE, DEFENSE }
 
@@ -25,6 +27,8 @@ const COVER_BLIND_S := 10.0
 const SPOTTER_REACH := 1.3
 const RESEARCH_MS := 1000
 const DARK_MARGIN_M := 500.0
+## Each enemy that sees us clips the search to this either side of its bearing to us: no cover past it.
+const CLIP_HALF := deg_to_rad(35.0)
 
 var mode: int = Mode.OFFENSE
 var _dark: bool = false
@@ -36,6 +40,7 @@ var _cells: int = 0
 var _targets: Dictionary = {}  # Ship -> true: what the held station shoots
 ## The last search's {here, axis, opts, ms}, for the debug overlay.
 var last_sweep: Dictionary = {}
+var _resume := Vector2.INF
 
 func reset() -> void:
 	super()
@@ -43,6 +48,7 @@ func reset() -> void:
 	_seen = false
 	_searched_ms = -100000
 	_targets = {}
+	_resume = Vector2.INF
 
 ## Whether the held station keeps us unseen, rather than only out of the fire.
 func wants_concealment() -> bool:
@@ -78,7 +84,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var now: float = SimClock.now()
 	if _has_station:
 		var ev: Dictionary = vis.cover_eval(Vector2(_station.x, _station.z), opts.pos, opts)
-		if not bool(ev.ok):
+		if not _in_clip(here, Vector2(_station.x, _station.z), opts.clip_pos):
+			_drop()
+		elif not bool(ev.ok):
+			_resume = Vector2(_station.x, _station.z)
 			_drop()
 		else:
 			_dark = bool(ev.dark)
@@ -91,9 +100,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var now_ms: int = SimClock.now_ms()
 	if not _has_station and now_ms - _searched_ms >= RESEARCH_MS:
 		_searched_ms = now_ms
-		var axis := _axis(ctx, params, here)
-		last_sweep = {"here": here, "axis": axis, "opts": opts, "ms": Time.get_ticks_msec()}
-		var r: Dictionary = vis.cover_search(here, axis, opts.pos, opts)
+		var from := _resume if _resume.is_finite() else here
+		_resume = Vector2.INF
+		var axis := _axis(ctx, params, from)
+		last_sweep = {"here": from, "axis": axis, "opts": opts, "ms": Time.get_ticks_msec()}
+		var r: Dictionary = vis.cover_search(from, axis, opts.pos, opts)
 		_cells = int(r.get("cells", 0))
 		if bool(r.found):
 			var p: Vector2 = r.pos
@@ -106,7 +117,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if not _has_station:
 		return _decline()
 	_claim(team_id, ship.get_instance_id(), now_ms)
-	return _intent(ctx, field, team_id, params.merged({"jitter_radius": COVER_HOLD_M}))
+	var intent := _intent(ctx, field, team_id, params.merged({"jitter_radius": COVER_HOLD_M}))
+	intent.free_route = true
+	return intent
 
 ## Toward where the ship was headed: the shared hold seed, else the caller's axis, else the priority.
 func _axis(ctx: SkillContext, params: Dictionary, here: Vector2) -> float:
@@ -127,19 +140,24 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	var seen_from: float = maxf(conceal, float(g.get("range", 0.0))) if params.get("fire_en_route", false) else conceal
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var opts := {"pos": PackedVector2Array(), "det_r": PackedFloat32Array(), "dark_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
-		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shootable": PackedByteArray(), "ids": PackedInt64Array()}
+		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shells": PackedByteArray(), "shootable": PackedByteArray(),
+		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array()}
+	var lit: bool = ship.is_detected()
 	for b in belief:
 		var e: Ship = b.ship
 		var spread: float = b.spread
 		var force: float = float(b.force_spot)
 		opts.pos.append(b.pos)
-		opts.det_r.append(seen_from + spread)
+		opts.det_r.append(maxf(seen_from - spread, 0.0))
 		opts.dark_r.append(here.distance_to(b.pos) + DARK_MARGIN_M)
-		opts.los_r.append(force + spread if force > 0.0 else 0.0)
+		opts.los_r.append(maxf(force - spread, 0.0) if force > 0.0 else 0.0)
 		opts.spot_r.append(0.0)
 		opts.heavy.append(1)
+		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship) else 0)
 		opts.shootable.append(1)
 		opts.ids.append(e.get_instance_id())
+		if lit and here.distance_to(b.pos) <= maxf(seen_from, force):
+			opts.clip_pos.append(b.pos)
 	for r in params.get("refs", []):
 		opts.pos.append(r.pos)
 		opts.det_r.append(0.0)
@@ -147,14 +165,23 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.los_r.append(0.0)
 		opts.spot_r.append(0.0)
 		opts.heavy.append(0)
+		opts.shells.append(0)
 		opts.shootable.append(1)
 		opts.ids.append(int(r.id))
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
 		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false))),
-		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF))}, true)
+		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF)),
+		"clip_half": CLIP_HALF}, true)
 	return opts
+
+## Whether `p` is within CLIP_HALF of each seeing enemy's bearing to `from`, as cover_search clips.
+static func _in_clip(from: Vector2, p: Vector2, clip_pos: PackedVector2Array) -> bool:
+	for c in clip_pos:
+		if p.distance_to(c) >= 1.0 and absf(angle_difference((from - c).angle(), (p - c).angle())) > CLIP_HALF:
+			return false
+	return true
 
 ## What this station shoots, so a dark spell can be waited out while a friend can spot it.
 func _note_targets(ids: PackedInt64Array, mask: int) -> void:

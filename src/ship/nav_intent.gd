@@ -57,6 +57,8 @@ var heading_weight: float = 0.0
 ## Circles the route must stay out of (centre, radius); empty leaves routing to the controller.
 var avoid_origins: PackedVector2Array = PackedVector2Array()
 var avoid_radii: PackedFloat32Array = PackedFloat32Array()
+## The navigator routes ignoring threat and detection: the destination was chosen for a safe approach angle.
+var free_route: bool = false
 
 
 ## Create a navigation intent

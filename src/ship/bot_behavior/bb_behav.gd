@@ -48,7 +48,11 @@ func _apply_gun_policy(ctx: SkillContext, _sit: Dictionary) -> void:
 	# side effect — deducing a concealed spotter from unexplained bloom.
 	_probe_concealment(ctx.server)
 
-## Opening: fight where the unseen enemy is presumed to be; failing a station, down our own flank.
-func _opening(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+## Opening: fight where the unseen enemy is presumed to be; failing a station, the engaged arm.
+func _opening(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var intent := _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.STATION, "presumed": true})
-	return intent if intent != null else _fight(ctx)
+	return intent if intent != null else _select_engaged_skill(ctx, sit)
+
+## The engaged arm: island cover toward the priority first, as a cruiser; open water failing it.
+func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _fight(ctx, {"prefer_cover": true})

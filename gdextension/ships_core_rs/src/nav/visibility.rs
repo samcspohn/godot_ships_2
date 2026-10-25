@@ -347,7 +347,7 @@ impl VisibilityGrid {
         let f32s = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedFloat32Array>().ok()).unwrap_or_default();
         let (det, spot, los, dark) = (f32s("det_r"), f32s("spot_r"), f32s("los_r"), f32s("dark_r"));
         let bytes = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default();
-        let (shoot, heavy) = (bytes("shootable"), bytes("heavy"));
+        let (shoot, heavy, shells) = (bytes("shootable"), bytes("heavy"), o.get("shells").and_then(|v| v.try_to::<PackedByteArray>().ok()));
         let (d, s, l, sh, hv) = (det.as_slice(), spot.as_slice(), los.as_slice(), shoot.as_slice(), heavy.as_slice());
         let field = o.get("reach_field").and_then(|v| v.try_to::<Gd<ReachField>>().ok());
         let ids = o.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).unwrap_or_default();
@@ -361,6 +361,7 @@ impl VisibilityGrid {
                 spot_r: s.get(i).copied().unwrap_or(0.0),
                 los_r: l.get(i).copied().unwrap_or(0.0),
                 heavy: hv.get(i).is_some_and(|&b| b != 0),
+                shells: shells.as_ref().map_or(hv.get(i).is_some_and(|&b| b != 0), |a| a.as_slice().get(i).is_some_and(|&b| b != 0)),
                 shootable: sh.get(i).is_some_and(|&b| b != 0),
             }).collect(),
             clearance: o.get("clearance").map_or(0.0, |v| v.to_f32()),

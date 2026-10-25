@@ -11,7 +11,7 @@ extends BotSkill
 ## close on our priority.
 ## Whichever search answers, the sailed destination eases from the last one
 ## toward it at our top speed plus EASE_GAIN_MPS for every second it has held still, never jumping.
-## Params: only (run that Mode alone), prefer_cover (OFFENSE cover first), and
+## Params: only (run that Mode alone), prefer_cover (advancing OFFENSE cover first), and
 ## each search's own.
 
 enum Mode { STATION, COVER, SPOT }
@@ -39,6 +39,8 @@ var _goal := Vector2.INF
 var _goal_since: float = -INF
 
 func reset() -> void:
+	_checkpoint_d = INF
+	_idle_since = INF
 	station.reset()
 	cover.reset()
 	spot.reset()
@@ -80,7 +82,7 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if only >= 0:
 		return _run(ctx, only, params)
 	if bool(params.get("prefer_cover", false)):
-		var held := _run(ctx, Mode.COVER, cover_params(ctx, SkillCover.Mode.OFFENSE))
+		var held := _run(ctx, Mode.COVER, _checkpoint(ctx, advance_cover_params(ctx)))
 		if held != null:
 			return held
 	var b: BotBehavior = ctx.behavior
@@ -146,6 +148,36 @@ static func advance_cover_params(ctx: SkillContext) -> Dictionary:
 	if is_instance_valid(target):
 		near = maxf(near, b.desired(target).x)
 	return p.merged({"near_pos": to, "near_d": near})
+
+## Holding cover this long without our priority to shoot moves on to cover CHECKPOINT_STEP_M nearer the priority.
+const COVER_IDLE_S := 10.0
+const CHECKPOINT_STEP_M := 1000.0
+var _idle_since: float = INF
+## The ratchet: cover farther than this from the priority is not taken until the priority is shootable.
+var _checkpoint_d: float = INF
+var _checkpoint_at := Vector2.INF
+
+func _checkpoint(ctx: SkillContext, p: Dictionary) -> Dictionary:
+	if not p.has("near_pos"):
+		return p
+	var to: Vector2 = p.near_pos
+	var idle: bool = ctx.behavior.shootable_priority() == null
+	if not idle or not _checkpoint_at.is_finite() \
+			or _checkpoint_at.distance_to(to) > CHECKPOINT_STEP_M:
+		_checkpoint_d = INF
+		_idle_since = INF
+	_checkpoint_at = to
+	var now: float = SimClock.now()
+	if idle and mode == Mode.COVER and cover.has_station():
+		var st: Vector3 = cover.station_position()
+		var stv := Vector2(st.x, st.z)
+		if stv.distance_to(Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)) <= CHECKPOINT_STEP_M:
+			_idle_since = minf(_idle_since, now)
+			if now - _idle_since >= COVER_IDLE_S:
+				_idle_since = INF
+				_checkpoint_d = minf(_checkpoint_d, stv.distance_to(to) - CHECKPOINT_STEP_M)
+				cover.reset()
+	return p.merged({"near_d": minf(float(p.near_d), _checkpoint_d)})
 
 ## Runs one search, resetting the last on a switch so its claim and station go.
 func _run(ctx: SkillContext, m: int, params: Dictionary) -> NavIntent:

@@ -16,7 +16,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var radii := PackedFloat32Array()
 	for b in belief:
 		pos.append(b.pos)
-		radii.append(FightStation.radius_for(ctx, b.ship, b.pos, params) + float(b.spread) if FightStation.threatens(b.ship) else 0.0)
+		radii.append(maxf(FightStation.radius_for(ctx, b.ship, b.pos, params) - float(b.spread), 0.0) if FightStation.threatens(b.ship) else 0.0)
 	var pt: Ship = ctx.behavior.priority_target()
 	var pp: Vector3 = ctx.behavior.priority_point()
 	var band_m: float = FightStation.radius_for(ctx, pt, Vector2(pp.x, pp.z), params) if pt != null and pp.is_finite() else radii[0]

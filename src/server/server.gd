@@ -85,6 +85,10 @@ var match_elapsed: float = 0.0
 var _match_timer_sync_timer: float = 0.0
 const MATCH_TIMER_SYNC_INTERVAL: float = 5.0
 const POINTS_WIN: int = 1000
+## Every team gains POINTS_TICK every POINTS_TICK_S, standing in for capture points.
+const POINTS_TICK: int = 2
+const POINTS_TICK_S: float = 6.0
+var _points_accrued_s: float = 0.0
 # WoWS Random/Co-op values. CV is unsourced; uses BB.
 const KILL_POINTS_GAINED: Dictionary = {
 	Ship.ShipClass.BB: 40,
@@ -1501,6 +1505,11 @@ func _physics_process(_delta: float) -> void:
 	# Tick match timer (server advances elapsed time and broadcasts it)
 	if _Utils.authority() and match_active and not match_ended:
 		match_elapsed += _delta
+		_points_accrued_s += _delta
+		while _points_accrued_s >= POINTS_TICK_S:
+			_points_accrued_s -= POINTS_TICK_S
+			for t in teams:
+				t.points += POINTS_TICK
 		_match_timer_sync_timer -= _delta
 		if _match_timer_sync_timer <= 0.0:
 			_match_timer_sync_timer = MATCH_TIMER_SYNC_INTERVAL

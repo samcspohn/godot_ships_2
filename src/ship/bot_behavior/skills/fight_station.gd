@@ -120,7 +120,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	for b in belief:
 		var e: Ship = b.ship
 		pos.append(b.pos)
-		band.append(_ring_for(ctx, b, params, gun_range, conceal) + float(b.spread) if threatens(e) else 0.0)
+		band.append(maxf(_ring_for(ctx, b, params, gun_range, conceal) - float(b.spread), 0.0) if threatens(e) else 0.0)
 		reach.append(gun_range)
 		# Lit, only this flank's enemies make a station; remembered and presumed
 		# ones are kept out of, except when fighting the presumed, at any range.
@@ -281,13 +281,13 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		ins.append_array(n)
 		value.append(0.0 if live[i] == 0 else float(belief[i].weight) if guess
 			else 1.0 if rank.has(e) else MARCH_OTHER_VALUE)
-		det.append(maxf(conceal, float(belief[i].force_spot)) + float(belief[i].spread))
+		det.append(maxf(maxf(conceal, float(belief[i].force_spot)) - float(belief[i].spread), 0.0))
 		threat.append(1 if threatens(e) else 0)
 		aggro.append(_aggro(ctx, e, belief[i].pos, friends))
 		var f := _front(ctx.ship, belief[i].pos, friends)
 		front.append(f.x)
 		front_hp.append(f.y)
-		chase_ring.append(conceal + float(belief[i].spread) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
+		chase_ring.append(maxf(conceal - float(belief[i].spread), 0.0) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
 		walk_r.append(rings[i] + WALK_MARGIN_M if rings[i] > 0.0 else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
 	return _walk_opts(ctx, ship, float(g.range)).merged({"det_r": det, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
 		"reach_field": NavigationMapManager.get_reach_field(), "team": ship.team.team_id,

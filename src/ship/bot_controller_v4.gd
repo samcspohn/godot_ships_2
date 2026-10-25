@@ -452,6 +452,7 @@ func _update_nav_intent() -> void:
 		_last_intent.forbid_reverse = new_intent.forbid_reverse
 		_last_intent.avoid_origins = new_intent.avoid_origins
 		_last_intent.avoid_radii = new_intent.avoid_radii
+		_last_intent.free_route = new_intent.free_route
 		destination = _last_intent.target_position
 		return
 
@@ -767,7 +768,7 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 ## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
 func _sync_threat_subscription() -> void:
 	var want: bool = behavior != null and server_node != null and behavior.wants_stealth \
-		and server_node.threat_registry != null
+		and server_node.threat_registry != null and not (_last_intent != null and _last_intent.free_route)
 	if want == _stealth_routing:
 		return
 	if _stealth_routing:
@@ -1324,7 +1325,7 @@ func _emit_debug_draws() -> void:
 					continue
 				ringed[e] = true
 				var trade: float = float(behavior._trade(e).best)
-				var ring: float = FightStation._ring_for(rctx, b, {}, float(g.range), conceal) + float(b.spread)
+				var ring: float = maxf(FightStation._ring_for(rctx, b, {}, float(g.range), conceal) - float(b.spread), 0.0)
 				var col := Color(0.2, 1.0, 0.3, 0.7) if trade >= BotBehavior.TRADE_MARGIN \
 					else Color(1.0, 0.25, 0.2, 0.7) if behavior.dangerous(e) else Color(1.0, 0.85, 0.2, 0.7)
 				Debug.draw_circle(Vector3(b.pos.x, 12.0, b.pos.y), ring, col, 64)

@@ -13,7 +13,7 @@ class_name ReplayBallistics
 
 ## Projectiles run at this multiple of real (wall-clock) time.
 ## Matches ProjectileManager.get_shell_time_multiplier() in the live game.
-const TIME_MULTIPLIER: float = 2.0
+const TIME_MULTIPLIER: float = 3.0
 
 ## Any shell whose Y position is below this is considered to have hit the water.
 ## Set to the visible water surface (y = 0) so shells are removed the moment

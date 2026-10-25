@@ -19,6 +19,8 @@ pub(crate) struct Enemy {
     pub los_r: f32,
     /// Its shells count for AVOID_FIRE.
     pub heavy: bool,
+    /// Its guns can break a shielded cover cell; `shells` input, else `heavy`.
+    pub shells: bool,
     pub shootable: bool,
 }
 

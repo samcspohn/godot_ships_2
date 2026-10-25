@@ -11,7 +11,7 @@ extends Node3D
 
 ## Simulation speed multiplier applied to torpedo flight time.
 ## Must match _TorpedoManager.TORPEDO_SPEED_MULTIPLIER in the live game.
-const TORPEDO_SPEED_MULTIPLIER: float = 3.0
+const TORPEDO_SPEED_MULTIPLIER: float = 4.0
 
 ## Knots → metres-per-second conversion factor.
 const KNOTS_TO_MS: float = 0.514444

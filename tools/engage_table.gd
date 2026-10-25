@@ -110,7 +110,7 @@ func _physics_process(_delta: float) -> void:
 	var md := PackedStringArray()
 	md.append("# Engagement table\n\nRows: us. Columns: the enemy. Ranges in km, times in s, full HP, %s.\n" % ("bare hulls" if _bare else "bot builds"))
 	md.append(_hull_sheet())
-	md.append(_matrix("Desired range (W win, E even, L lose: outside their guns), ENGAGE_TTK_S %d s" % int(BotBehavior.ENGAGE_TTK_S), _desired))
+	md.append(_matrix("Desired range (W win, E even, L lose)", _desired))
 	var u := _names.find(_us)
 	if u >= 0:
 		md.append(_curve(u, "Trade ratio", "ratios", _ratio))
@@ -141,16 +141,31 @@ func _physics_process(_delta: float) -> void:
 
 
 func _hull_sheet() -> String:
-	var rows := PackedStringArray(["## Hulls\n", "| hull | class | HP | gun km | sec km | conceal km | speed m/s | bear fore° | bear aft° | turrets x barrels | reload s | AP / HE dmg | raw main AP / HE dpm | raw sec HE dpm (one side) |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"])
+	var rows := PackedStringArray(["## Hulls\n", "| hull | class | HP | gun km | sec km | conceal km | speed m/s | bear fore° | bear aft° | turrets x barrels | reload s | AP / HE dmg | raw main AP / HE dpm | raw sec HE dpm (one side) | torps: tubes/beam x dmg, reload s, km, kn |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"])
 	for i in _hulls.size():
 		var s := _hulls[i]
 		var conceal: float = (s.concealment.params.p() as ConcealmentParams).radius if s.concealment != null else 0.0
 		var bear := BotBehavior.guns_bear_angles(s)
 		var raw := _raw(s)
-		rows.append("| %s | %s | %d | %s | %s | %s | %.1f | %.1f | %.1f | %s |" % [_names[i], Ship.ShipClass.keys()[s.ship_class],
+		rows.append("| %s | %s | %d | %s | %s | %s | %.1f | %.1f | %.1f | %s | %s |" % [_names[i], Ship.ShipClass.keys()[s.ship_class],
 			int(s.health_controller.max_hp), _km(s.artillery_controller.get_params()._range),
-			_km(BotBehavior._secondary_range(s)), _km(conceal), s.movement_controller.max_speed, bear.x, bear.y, raw])
+			_km(BotBehavior._secondary_range(s)), _km(conceal), s.movement_controller.max_speed, bear.x, bear.y, raw, _torps(s)])
 	return "\n".join(rows) + "\n"
+
+
+static func _torps(s: Ship) -> String:
+	var tc: TorpedoController = s.torpedo_controller if is_instance_valid(s.torpedo_controller) else null
+	if tc == null or tc.launchers.is_empty():
+		return "-"
+	var tubes := 0
+	for side in [1.0, -1.0]:
+		var n := 0
+		for l in tc.launchers:
+			if BotBehavior.gun_bears(s, l, 90.0, side):
+				n += l.muzzles.size()
+		tubes = maxi(tubes, n)
+	var t := tc.get_torp_params()
+	return "%d x %d, %.0f, %s, %.0f" % [tubes, int(t.damage), tc.get_params().reload_time, _km(tc.get_max_range()), t.speed_knts]
 
 
 func _desired(i: int, j: int, _t) -> String:
@@ -218,19 +233,19 @@ static func _raw(s: Ship) -> String:
 
 
 ## priority_score with every enemy `r` off in open water at full HP: shootable inside our guns.
-func _prio(i: int, j: int, r: float) -> Vector3:
+func _prio(i: int, j: int, r: float) -> Vector4:
 	return _bots[i].priority_parts(_hulls[j], r, r, r <= _hulls[i].artillery_controller.get_params()._range)
 
 
-static func _score(p: Vector3) -> float:
-	return p.x * p.y * p.z
+static func _score(p: Vector4) -> float:
+	return BotBehavior.priority_value(p)
 
 
 func _priority_section(r: float) -> String:
-	var title := "Priority at %s km, (%%HP/s)²: score = threat x chance x reach" % _km(r)
+	var title := "Priority at %s km, alone, (%%HP/s)²: score = threat x chance x reach x (1 + harm)" % _km(r)
 	var md := _matrix(title, func(i, j, _t):
 		var p := _prio(i, j, r)
-		return "%.2f = %.2fx%.2fx%.2f" % [_score(p), p.x, p.y, p.z])
+		return "%.2f = %.2fx%.2fx%.2fx%.2f" % [_score(p), p.x, p.y, p.z, 1.0 + BotBehavior.PRIORITY_FOCUS_W * p.w])
 	var rows := PackedStringArray(["### Order at %s km\n" % _km(r), "| us | order |", "|---|---|"])
 	for i in _hulls.size():
 		var js: Array = range(_hulls.size())
@@ -245,14 +260,14 @@ func _write_priority(path: String) -> void:
 	var f := FileAccess.open("res://" + path, FileAccess.WRITE)
 	if f == null:
 		return
-	f.store_line("us,them,range_m,our_gun_m,threat,chance,reach,score")
+	f.store_line("us,them,range_m,our_gun_m,threat,chance,reach,harm,score")
 	for i in _hulls.size():
 		var gun: float = _hulls[i].artillery_controller.get_params()._range
 		for j in _hulls.size():
 			var r := BotBehavior.POINT_BLANK_M
 			while r <= PRIO_CURVE_MAX_M:
 				var p := _prio(i, j, r)
-				f.store_line("%s,%s,%d,%d,%.4f,%.4f,%.3f,%.5f" % [_names[i], _names[j], int(r), int(gun), p.x, p.y, p.z, _score(p)])
+				f.store_line("%s,%s,%d,%d,%.4f,%.4f,%.3f,%.3f,%.5f" % [_names[i], _names[j], int(r), int(gun), p.x, p.y, p.z, p.w, _score(p)])
 				r += CURVE_STEP_M
 	print("written %s" % path)
 
@@ -277,7 +292,7 @@ func _matrix(title: String, cell: Callable) -> String:
 	return "\n".join(rows) + "\n"
 
 
-## Every pair's trade curve every CURVE_STEP_M, as _trade prices it, for tools/engage_plot.py.
+## Every pair's kill rates every CURVE_STEP_M, torpedoes included, for tools/engage_plot.py.
 func _write_curves(path: String) -> void:
 	var f := FileAccess.open("res://" + path, FileAccess.WRITE)
 	if f == null:
@@ -290,9 +305,9 @@ func _write_curves(path: String) -> void:
 			var them := _hulls[j]
 			var their_gun: float = them.artillery_controller.get_params()._range
 			var r := BotBehavior.POINT_BLANK_M
-			while r <= maxf(our_gun, their_gun):
-				var out: float = _bots[i].outgoing_dps(them, r, BotBehavior.guns_bear_aspect(them)) / them.health_controller.max_hp
-				var inc: float = _bots[i].incoming_dps(them, r, BotBehavior.guns_bear_aspect(us)) / us.health_controller.max_hp
+			while r <= maxf(BotBehavior.reach_m(us), BotBehavior.reach_m(them)):
+				var out: float = BotBehavior.kill_rate(us, them, r)
+				var inc: float = BotBehavior.kill_rate(them, us, r)
 				f.store_line("%s,%s,%d,%d,%d,%s,%s" % [_names[i], _names[j], int(r), int(our_gun), int(their_gun), _secs(out), _secs(inc)])
 				r += CURVE_STEP_M
 	print("written %s" % path)

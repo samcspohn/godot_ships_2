@@ -89,7 +89,9 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if not _fighting(SkillFight.Mode.COVER) or not _skill_fight.cover.has_station() \
 			or (sit.threat < _doc().cover_release_threat and not priority_dark()):
 		return null
-	var held := _run_skill(&"Fight", ctx, SkillFight.cover_params(ctx, _skill_fight.cover.mode).merged({"only": SkillFight.Mode.COVER}))
+	var p := SkillFight.advance_cover_params(ctx) if _skill_fight.cover.mode == SkillCover.Mode.OFFENSE \
+		else SkillFight.cover_params(ctx, _skill_fight.cover.mode)
+	var held := _run_skill(&"Fight", ctx, p.merged({"only": SkillFight.Mode.COVER}))
 	if held != null:
 		sit["arm"] = &"engaged"
 	return held
@@ -110,4 +112,4 @@ func try_use_consumable():
 
 ## Opening: hidden cover with the priority's spawn reference in reach.
 func _opening(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Fight", ctx, SkillFight.cover_params(ctx, SkillCover.Mode.OFFENSE).merged({"only": SkillFight.Mode.COVER}))
+	return _run_skill(&"Fight", ctx, SkillFight.advance_cover_params(ctx).merged({"only": SkillFight.Mode.COVER}))

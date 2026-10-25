@@ -1,7 +1,7 @@
 extends Node
 class_name ShipMovementV4
 
-const SHIP_SPEED_MODIFIER: float = 2.5 # Adjust to calibrate ship speed display
+const SHIP_SPEED_MODIFIER: float = 3.0 # Adjust to calibrate ship speed display
 
 var debug_log: bool = false
 

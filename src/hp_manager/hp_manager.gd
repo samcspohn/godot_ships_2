@@ -68,6 +68,11 @@ const DMG_MOD_REF_SHIP_PER_CAL_SQ: float = 40000000.0 / (406.0 * 406.0)
 const DMG_MOD_SMALL: float = 0.7
 const DMG_MOD_SMALL_RATIO: float = 0.1
 
+## Damage share a shell of `caliber` mm does to a hull of `mass` kg: less to a small hull from a big gun.
+static func size_mod(mass: float, caliber: float) -> float:
+	var size_ratio: float = (mass / maxf(caliber * caliber, 1.0)) / DMG_MOD_REF_SHIP_PER_CAL_SQ
+	return minf(remap(size_ratio, DMG_MOD_SMALL_RATIO, 1.0, DMG_MOD_SMALL, 1.0), 1.0)
+
 func _recalculate_healable_damage() -> void:
 	healable_damage = light_damage
 	if casemate:
@@ -170,8 +175,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		return [0, false]
 
 	# ship.update_static_mods = true
-	var size_ratio = (ship.mass / (shell_cal * shell_cal)) / DMG_MOD_REF_SHIP_PER_CAL_SQ
-	var dmg_mod = minf(remap(size_ratio, DMG_MOD_SMALL_RATIO, 1.0, DMG_MOD_SMALL, 1.0), 1.0)
+	var dmg_mod := size_mod(ship.mass, shell_cal)
 	dmg *= dmg_mod
 	dmg /= params.p().mult
 	base_dmg *= dmg_mod

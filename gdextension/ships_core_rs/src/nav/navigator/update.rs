@@ -556,7 +556,7 @@ impl ShipNavigator {
             let mut min_sdf = f32::INFINITY;
             {
                 let m = self.map.as_ref().unwrap().bind();
-                for pt in &arc {
+                for pt in arc.iter().skip(1) {
                     let sdf = m.get_distance_impl(pt.position.x, pt.position.y);
                     if sdf < min_sdf {
                         min_sdf = sdf;

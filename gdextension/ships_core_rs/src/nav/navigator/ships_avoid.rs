@@ -2,7 +2,7 @@ use godot::prelude::*;
 
 use super::arc::obb_obb_overlap_2d;
 use super::{ShipNavigator, SteeringChoice};
-use crate::nav::types::{angle_difference, ArcPoint};
+use crate::nav::types::{angle_difference, normalize_angle, ArcPoint};
 
 /// Other ships are only avoided this far ahead; past it, re-steering every frame handles them.
 pub const SHIP_HORIZON_S: f32 = 25.0;
@@ -29,8 +29,8 @@ impl ShipNavigator {
         }
     }
 
-    /// Where the bow is steering: stance's heading, else the waypoint, else (arrived) where it points.
-    pub(crate) fn steer_goal(&self) -> f32 {
+    /// Where the bow is steering: stance's heading, else the waypoint (stern on it astern), else (arrived) where it points.
+    pub(crate) fn steer_goal(&self, astern: bool) -> f32 {
         let wp = if self.path_valid && self.current_wp_index < self.current_path.waypoints.len() as i32 {
             self.current_path.waypoints[self.current_wp_index as usize]
         } else {
@@ -42,6 +42,8 @@ impl ShipNavigator {
             self.target.heading
         } else if arrived || to.length() < 1.0 {
             self.state.heading
+        } else if astern {
+            normalize_angle(to.x.atan2(to.y) + std::f32::consts::PI)
         } else {
             to.x.atan2(to.y)
         }
@@ -90,38 +92,44 @@ impl ShipNavigator {
 
     /// None when the way to the goal heading meets no ship. Else the heading
     /// nearest the goal whose turn and run stay clear of ships and land, steered
-    /// for; with none clear, the one meeting a ship latest.
-    pub(crate) fn steer_around_ships(&mut self, throttle: i32, hard_clearance: f32) -> Option<SteeringChoice> {
+    /// for, trying the other direction of travel if none is; with none clear, the
+    /// one meeting a ship latest at the asked throttle.
+    pub(crate) fn steer_around_ships(&mut self, throttle: i32, hard_clearance: f32) -> Option<(SteeringChoice, Vec<ArcPoint>)> {
         if self.ships.is_empty() || self.skip_ship_obstacles {
             return None;
         }
-        let goal = self.steer_goal();
-        let (arc, _) = self.heading_path(goal, throttle);
-        if self.ship_contact(&arc).is_infinite() {
-            return None;
-        }
         let prefer = if self.turn_latch != 0.0 { self.turn_latch } else { self.state.current_rudder.signum() };
-        let mut fallback: Option<(f32, f32, f32)> = None;
+        let prefer = if prefer == 0.0 { 1.0 } else { prefer };
+        let mut fallback: Option<(f32, f32, f32, Vec<ArcPoint>)> = None;
         let steps = (std::f32::consts::PI / HEADING_STEP).round() as i32;
-        for k in 1..=steps {
-            // Sides in rudder terms: the latched or current turn is tried first at each step.
-            for side in [prefer, -prefer] {
-                let side = if side == 0.0 { 1.0 } else { side };
-                let h = goal - side * k as f32 * HEADING_STEP;
-                let (arc, rudder) = self.heading_path(h, throttle);
-                if self.aground(&arc, hard_clearance) {
-                    continue;
-                }
-                let contact = self.ship_contact(&arc);
-                if contact.is_infinite() {
-                    return Some(self.steer_to(h, rudder, throttle));
-                }
-                if fallback.is_none_or(|f| contact > f.0) {
-                    fallback = Some((contact, h, rudder));
+        for t in [throttle, if throttle < 0 { 4 } else { -1 }] {
+            let goal = self.steer_goal(t < 0);
+            for k in 0..=steps {
+                // Sides in rudder terms: the latched or current turn is tried first at each step.
+                let sides: &[f32] = if k == 0 { &[1.0] } else { &[prefer, -prefer] };
+                for &side in sides {
+                    let h = goal - side * k as f32 * HEADING_STEP;
+                    let (arc, rudder) = self.heading_path(h, t);
+                    if k == 0 && t == throttle {
+                        if self.ship_contact(&arc).is_infinite() {
+                            return None;
+                        }
+                        continue;
+                    }
+                    if self.aground(&arc, hard_clearance) {
+                        continue;
+                    }
+                    let contact = self.ship_contact(&arc);
+                    if contact.is_infinite() {
+                        return Some((self.steer_to(h, rudder, t), arc));
+                    }
+                    if t == throttle && fallback.as_ref().is_none_or(|f| contact > f.0) {
+                        fallback = Some((contact, h, rudder, arc));
+                    }
                 }
             }
         }
-        fallback.map(|(_, h, rudder)| self.steer_to(h, rudder, throttle))
+        fallback.map(|(_, h, rudder, arc)| (self.steer_to(h, rudder, throttle), arc))
     }
 
     fn steer_to(&self, h: f32, rudder: f32, throttle: i32) -> SteeringChoice {

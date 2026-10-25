@@ -146,15 +146,15 @@ impl ShipNavigator {
         // is entering a tight region.  Halving the simulated clearance lets the
         // planner find arcs through the passage instead of disqualifying every
         // candidate and oscillating in place.
-        if sdf_here < hard_clearance * 1.5 {
-            hard_clearance *= 0.75;
-        } else if sdf_here < hard_clearance {
+        if sdf_here < hard_clearance {
             hard_clearance *= 0.5;
+        } else if sdf_here < hard_clearance * 1.5 {
+            hard_clearance *= 0.75;
         }
 
         // --- Parked-ship filter ---
         self.skip_ship_obstacles =
-            self.state.current_speed.abs() < PARKED_SPEED_THRESHOLD && desired_throttle <= 0;
+            self.state.current_speed.abs() < PARKED_SPEED_THRESHOLD && desired_throttle == 0;
         self.refresh_ships();
 
         // --- Fast early-exit: skip when clearly safe and no threats at all ---
@@ -172,8 +172,8 @@ impl ShipNavigator {
         });
 
         if !torpedo_near {
-            if let Some(choice) = self.steer_around_ships(desired_throttle, hard_clearance) {
-                self.winning_arc = self.predict_arc_internal(choice.rudder, choice.throttle, lookahead);
+            if let Some((choice, arc)) = self.steer_around_ships(desired_throttle, hard_clearance) {
+                self.winning_arc = arc;
                 self.arm_turn_latch(&choice, turn_err);
                 return choice;
             }
@@ -641,7 +641,8 @@ impl ShipNavigator {
                 if let Some(map) = self.map.as_ref() {
                     let mb = map.bind();
                     if mb.is_built() {
-                        for pt in &arc {
+                        // Every arc shares the start point; counting it ties all arcs moving away.
+                        for pt in arc.iter().skip(1) {
                             let sdf = mb.get_distance_impl(pt.position.x, pt.position.y);
                             if sdf < min_sdf {
                                 min_sdf = sdf;
@@ -780,7 +781,7 @@ impl ShipNavigator {
         if throttle < 0 {
             return 0.0;
         }
-        angle_difference(self.state.heading, self.steer_goal()).abs()
+        angle_difference(self.state.heading, self.steer_goal(false)).abs()
     }
 
     /// A big turn keeps its side until near done: from far off, port and

@@ -164,6 +164,7 @@ max_angle = 5.856732865638026
 [node name="ship" unique_id=610402273 instance=ExtResource("1_t160k")]
 collision_layer = 4
 collision_mask = 5
+mass = 10230000.0
 contact_monitor = true
 max_contacts_reported = 4
 ship_name = "Smolensk"

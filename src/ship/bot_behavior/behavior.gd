@@ -614,6 +614,8 @@ const PRIORITY_COVER_S: float = 45.0
 ## What an enemy can do from a nearer range counts from here, fading by e per this long it sails to get there.
 const PRIORITY_CLOSE_S: float = 120.0
 const PRIORITY_DANGER_MAX_M: float = 40000.0
+const PRIORITY_FOCUS_W: float = 1.0
+const PRIORITY_HARM_CAP: float = 4.0
 
 ## The enemy this bot answers for, held while dark: {ship, pos, ref}, ship null
 ## for an anonymous spawn reference. The first of `priorities`.
@@ -633,6 +635,7 @@ func update_priorities(server: GameServer) -> void:
 	for k in priorities.size():
 		rank[_priority_key(priorities[k])] = k
 	var fresh: Array[Dictionary] = []
+	var allies: Array = server.get_team_ships(team_id).filter(func(s): return s != _ship and is_instance_valid(s) and s.is_alive())
 	for b in server._team_belief(team_id):
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
@@ -641,7 +644,7 @@ func update_priorities(server: GameServer) -> void:
 		var shoot: bool = d <= _ship.artillery_controller.get_params()._range and _aimable(b.ship) and can_hit_target(b.ship)
 		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
 		fresh.append({"ship": b.ship, "pos": b.pos, "d": d if shoot else PRIORITY_ROUTE_W * sail,
-			"score": priority_score(b.ship, b.pos, sail, shoot)})
+			"score": priority_score(b.ship, b.pos, sail, shoot, allies)})
 	for r in server.anonymous_refs(team_id):
 		var proxy := _ref_proxy(server, int(r.id))
 		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
@@ -690,25 +693,44 @@ func update_priorities(server: GameServer) -> void:
 ## What `enemy` (believed `at`) is worth attending to now, in (%HP/s)²: the
 ## damage its guns would do to us, by its danger_curve, times how fast ours kill
 ## it, from where we stand or our gun range: shooting first what does most harm
-## per second spent killing it takes least harm overall. One we cannot shoot now
-## (out of range, behind land, or dark) fades by e per PRIORITY_SAIL_S of PRIORITY_COVER_S plus the route past our guns.
-func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool) -> float:
+## per second spent killing it takes least harm overall. Raised by the share of
+## our HP it would take while the team kills it, PRIORITY_FOCUS_W per hull's worth:
+## a ship slow to kill is focused before it does that harm.
+## One we cannot shoot now (out of range, behind land, or dark) fades by e per
+## PRIORITY_SAIL_S of PRIORITY_COVER_S plus the route past our guns.
+## `allies`: friends whose guns count toward the team's kill.
+func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, allies: Array = []) -> float:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
 		return 0.0
 	var r: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-	var p := priority_parts(enemy, r, sail_m, shootable)
-	return p.x * p.y * p.z
+	var help := 0.0
+	for a: Ship in allies:
+		help += _curve_at(dps_curve(a, enemy), at.distance_to(Vector2(a.global_position.x, a.global_position.z)))
+	return priority_value(priority_parts(enemy, r, sail_m, shootable, help))
 
-## priority_score's terms: (threat %HP/s, chance %HP/s, reach).
-func priority_parts(enemy: Ship, r: float, sail_m: float, shootable: bool) -> Vector3:
-	var threat: float = _curve_at(danger_curve(enemy, _ship), r) / maxf(_ship.health_controller.current_hp, 1.0)
-	var c := dps_curve(_ship, enemy)
-	var ours: float = c[clampi(roundi((r - POINT_BLANK_M) / DESIRED_STEP_M), 0, c.size() - 1)] if not c.is_empty() else 0.0
-	var reach := 1.0
+static func priority_value(p: Vector4) -> float:
+	return p.x * p.y * p.z * (1.0 + PRIORITY_FOCUS_W * p.w)
+
+## priority_score's terms: (threat %HP/s, chance %HP/s, reach, harm: share of our HP it takes
+## while we and `allied_dps` kill it, at most PRIORITY_HARM_CAP).
+func priority_parts(enemy: Ship, r: float, sail_m: float, shootable: bool, allied_dps: float = 0.0) -> Vector4:
+	var p := score_parts(_ship, enemy, r, allied_dps)
 	if not shootable:
 		var past: float = maxf(sail_m - _ship.artillery_controller.get_params()._range, 0.0) / maxf(_ship.movement_controller.max_speed, 1.0)
-		reach = exp(-(PRIORITY_COVER_S + past) / PRIORITY_SAIL_S)
-	return Vector3(100.0 * threat, 100.0 * ours / maxf(enemy.health_controller.current_hp, 1.0), reach)
+		p.z = exp(-(PRIORITY_COVER_S + past) / PRIORITY_SAIL_S)
+	return p
+
+## priority_parts as `scorer` would rank `target` `r` off, shootable.
+static func score_parts(scorer: Ship, target: Ship, r: float, allied_dps: float = 0.0) -> Vector4:
+	var threat: float = _curve_at(danger_curve(target, scorer), r) / maxf(scorer.health_controller.current_hp, 1.0) \
+		+ torpedo_rate(target, scorer, r)
+	var c := dps_curve(scorer, target)
+	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	var at: float = minf(r, reach_m(scorer))
+	var ours: float = (c[clampi(roundi((at - POINT_BLANK_M) / DESIRED_STEP_M), 0, c.size() - 1)] if not c.is_empty() else 0.0) / hp \
+		+ torpedo_rate(scorer, target, at)
+	var harm: float = minf(threat / maxf(ours + allied_dps / hp, 1e-6), PRIORITY_HARM_CAP)
+	return Vector4(100.0 * threat, 100.0 * ours, 1.0, harm)
 
 ## Length of the sea route from `here` to `to` for contact `key`, re-planned
 ## when either end moves PRIORITY_PATH_MOVE_M or after PRIORITY_PATH_TTL_S;
@@ -2428,12 +2450,8 @@ const UNREACHABLE_THREAT: float = 0.03
 ## A range is ours to fight at when we take this many times its HP share per second as it takes of ours.
 const TRADE_MARGIN: float = 1.5
 const RADIUS_STEP_M: float = 1000.0
-## Under DISENGAGE_THREAT every ring moves toward its desired range this fast.
+## Every ring moves toward its desired range this fast.
 const RING_SHRINK_MPS: float = 5.0
-## Over DISENGAGE_THREAT the rings of those shooting us that we do not out-trade
-## nearer grow to their range; this much past us over RING_GROW_THREAT.
-const RING_GROW_THREAT: float = 0.5
-const RING_EASE_OUT_M: float = 500.0
 const RADIUS_TTL_S: float = 5.0
 ## Probe distance and sweep step for guns_bear_aspect.
 const BEAR_PROBE_M: float = 5000.0
@@ -2693,18 +2711,57 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		sit["forced"] = true
 	return intent
 
-## Lit above DISENGAGE_THREAT a ship gets out, whatever it was doing, until below REENGAGE_THREAT.
+## Lit, a ship gets out once it would die before beating its priority (time_to_win), and stays
+## out until it would outlive that by STAY_MARGIN; with no priority to beat, above DISENGAGE_THREAT until below REENGAGE_THREAT.
 const DISENGAGE_THREAT: float = 0.4
 const REENGAGE_THREAT: float = 0.35
+const STAY_MARGIN: float = 1.25
 
 func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var leaving: bool = _active_skill_name == &"Disengage"
-	if not ctx.ship.is_detected() or sit.threat <= (REENGAGE_THREAT if leaving else DISENGAGE_THREAT):
+	if not ctx.ship.is_detected():
+		return null
+	var win := time_to_win(ctx)
+	if win < 0.0:
+		if sit.threat <= (REENGAGE_THREAT if leaving else DISENGAGE_THREAT):
+			return null
+	elif time_to_die(ctx) >= win * (STAY_MARGIN if leaving else 1.0):
 		return null
 	var out := _disengage(ctx, sit)
 	if out != null:
 		sit["arm"] = &"close"
 	return out
+
+## Seconds until the fire on us sinks us, from get_threat_score.
+func time_to_die(ctx: SkillContext) -> float:
+	var t: float = get_threat_score(ctx)
+	return INF if t <= 0.0 else threat_horizon(ctx.server) / -log(1.0 - minf(t, 0.999999))
+
+## Seconds to sail into gun range of our priority and sink it at its desired range with the team; while the
+## priority is unnamed, the quickest identified enemy; -1 with none.
+func time_to_win(ctx: SkillContext) -> float:
+	if priority_target() != null:
+		return _time_to_beat(ctx, priority_target(), priority.pos)
+	var best := -1.0
+	for c: Dictionary in priorities:
+		if c.ship != null and is_instance_valid(c.ship) and c.ship.is_alive():
+			var t := _time_to_beat(ctx, c.ship, c.pos)
+			best = t if best < 0.0 else minf(best, t)
+	return best
+
+func _time_to_beat(ctx: SkillContext, p: Ship, at: Vector2) -> float:
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var d: float = here.distance_to(at)
+	var want: float = desired(p).x
+	var rate: float = kill_rate(_ship, p, want)
+	for f: Ship in ctx.server.get_team_ships(_ship.team.team_id):
+		if f != _ship and is_instance_valid(f) and f.is_alive() and f.artillery_controller != null:
+			rate += _curve_at(dps_curve(f, p), at.distance_to(Vector2(f.global_position.x, f.global_position.z))) \
+				/ maxf(p.health_controller.current_hp, 1.0)
+	if rate <= 0.0:
+		return INF
+	var close: float = maxf(d - maxf(want, _ship.artillery_controller.get_params()._range), 0.0)
+	return close / maxf(_ship.movement_controller.max_speed, 1.0) + 1.0 / rate
 
 ## Gone dark by disengaging, the guns stay quiet until a lit ship here would sit under DISENGAGE_THREAT.
 var _dark_latch: bool = false
@@ -2821,11 +2878,32 @@ func _log_skill_time(intent: NavIntent) -> void:
 	if intent != null and _active_skill_name == &"Fight":
 		_skill_key += ":" + SkillFight.Mode.keys()[_skill_fight.mode]
 
+var _trace_at: float = -INF
+func _trace(intent: NavIntent, ctx: SkillContext, sit: Dictionary) -> void:
+	var want := OS.get_environment("BOT_TRACE")
+	if want.is_empty() or not String(ctx.ship.ship_name).contains(want) or SimClock.now() - _trace_at < 5.0:
+		return
+	_trace_at = SimClock.now()
+	var at: Vector3 = ctx.ship.global_position
+	var pt := priority_target()
+	var pp := priority_point()
+	var dest: Vector3 = intent.target_position if intent != null else Vector3.INF
+	print("TRACE t=%d %s#%s team=%d hp=%.2f at=(%.1f,%.1f) skill=%s arm=%s dest=(%.1f,%.1f) prio=%s pd=%.1f want=%.1f threat=%.2f tgt=%s | %s" % [
+		SimClock.now(), ctx.ship.ship_name, ctx.ship.name, ctx.ship.team.team_id,
+		ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp,
+		at.x / 1000, at.z / 1000, _skill_key, sit.get("arm", ""), dest.x / 1000, dest.z / 1000,
+		pt.ship_name if pt != null else str(priority.get("ref", "-")),
+		Vector2(pp.x - at.x, pp.z - at.z).length() / 1000 if pp.is_finite() else -1.0,
+		desired(pt).x / 1000 if pt != null else -1.0, sit.get("threat", -1.0),
+		ctx.target.ship_name if ctx.target != null else "-",
+		_skill_fight.debug_text() if _active_skill_name == &"Fight" else ""])
+
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
 func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
 	var d := _doc()
 	_log_skill_time(intent)
+	_trace(intent, ctx, sit)
 
 	# Camp holds a position lock; switching away has to drop it or the next
 	# activation reuses a stale spot.
@@ -3184,59 +3262,55 @@ static func gun_bears(ship: Ship, g: Turret, bearing_deg: float, side: float) ->
 	var yaw: float = (ship.global_basis.inverse() * g.global_basis).get_euler().y
 	return g.is_angle_in_fire_arcs(yaw + g.get_angle_to_target(at))
 
-## A fight we would not finish inside this long is not worth closing for.
-const ENGAGE_TTK_S: float = 150.0
 ## Below a win, a trade this even still holds its ground.
-## A winning range trading at this share of the best is as good; the fastest kill among them is taken.
-const WIN_NEAR_BEST: float = 1.0
 const EVEN_TRADE: float = 0.8
 const DESIRED_STEP_M: float = 250.0
 const LOSE_MARGIN_M: float = 500.0
 enum Desire { WIN, EVEN, LOSE }
 
 ## Where to fight `enemy` at current HP, both sides at guns_bear_aspect: Vector2(range, Desire).
-## WIN: inside both batteries, killing it first within ENGAGE_TTK_S, the fastest kill among
-## ranges trading within WIN_NEAR_BEST of the best; failing that, just past its guns if ours still kill it in time there.
-## EVEN: else the farthest range inside its guns killing it in time at EVEN_TRADE or better.
-## LOSE: else LOSE_MARGIN_M outside its guns.
+## WIN: the best trade inside both reaches when we out-trade it; failing that, just past its reach.
+## EVEN: else the farthest range trading at EVEN_TRADE or better.
+## LOSE: else the best trade we have, or LOSE_MARGIN_M past its guns with none.
+## Damage taken moves all but the past-its-reach win out toward the edge of its guns, or ours if nearer.
 func desired_range(enemy: Ship) -> Vector2:
 	var our_gun: float = _ship.artillery_controller.get_params()._range
 	var their_gun: float = enemy.artillery_controller.get_params()._range
 	var our_hp: float = maxf(_ship.health_controller.current_hp, 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
-	var c_out := dps_curve(_ship, enemy)
-	var c_in := dps_curve(enemy, _ship)
-	var wins: Array[Vector3] = []
-	var top := 0.0
+	var our_reach: float = reach_m(_ship)
+	var their_reach: float = reach_m(enemy)
+	var best_r := -1.0
+	var best := 0.0
 	var even := -1.0
 	var r := POINT_BLANK_M
-	while r <= minf(our_gun, their_gun):
-		var out: float = _curve_at(c_out, r) / their_hp
-		var theirs: float = _curve_at(c_in, r) / our_hp
-		if out * ENGAGE_TTK_S >= 1.0:
-			if out > theirs:
-				var ratio: float = out / theirs if theirs > 0.0 else INF
-				wins.append(Vector3(r, ratio, out))
-				top = maxf(top, wins[-1].y)
-			if out >= EVEN_TRADE * theirs:
-				even = r
+	while r <= minf(our_reach, their_reach):
+		var out: float = kill_rate(_ship, enemy, r)
+		var theirs: float = kill_rate(enemy, _ship, r)
+		var ratio: float = out / theirs if theirs > 0.0 else (INF if out > 0.0 else 0.0)
+		if ratio > best:
+			best = ratio
+			best_r = r
+		if ratio >= EVEN_TRADE:
+			even = r
 		r += DESIRED_STEP_M
-	if not wins.is_empty():
-		var pick := Vector3(-1.0, 0.0, -INF)
-		for w in wins:
-			if (w.y >= WIN_NEAR_BEST * top if is_finite(top) else is_inf(w.y)) and w.z > pick.z:
-				pick = w
-		return Vector2(pick.x, Desire.WIN)
-	var past: float = their_gun + DESIRED_STEP_M
-	if past <= our_gun and _curve_at(c_out, past) / their_hp * ENGAGE_TTK_S >= 1.0:
+	var hurt: float = 1.0 - clampf(our_hp / maxf(_ship.health_controller.max_hp, 1.0), 0.0, 1.0)
+	var edge: float = minf(their_gun + LOSE_MARGIN_M, our_gun)
+	var eased := func(at: float) -> float: return lerpf(at, maxf(at, edge), hurt)
+	if best > 1.0:
+		return Vector2(eased.call(best_r), Desire.WIN)
+	var past: float = their_reach + DESIRED_STEP_M
+	if past <= our_reach and kill_rate(_ship, enemy, past) > 0.0:
 		return Vector2(past, Desire.WIN)
 	if even > 0.0:
-		return Vector2(even, Desire.EVEN)
+		return Vector2(eased.call(even), Desire.EVEN)
+	if best_r > 0.0:
+		return Vector2(eased.call(best_r), Desire.LOSE)
 	return Vector2(their_gun + LOSE_MARGIN_M, Desire.LOSE)
 
 ## [shooter id, target id] -> what the shooter's main and secondary batteries do
 ## to the target per second, both at guns_bear_aspect, every DESIRED_STEP_M from
-## POINT_BLANK_M to the shooter's gun range. HP does not enter, so it never goes stale.
+## POINT_BLANK_M to the shooter's gun range, scaled by HPManager.size_mod. HP does not enter, so it never goes stale.
 static var _dps_curves: Dictionary = {}
 
 static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
@@ -3245,11 +3319,14 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	if not c.is_empty() or shooter.artillery_controller == null:
 		return c
 	var aspect: float = guns_bear_aspect(target)
-	var top: float = shooter.artillery_controller.get_params()._range
+	var p = shooter.artillery_controller.get_params()
+	var shell: ShellParams = p.shell1 if p.shell1 != null else p.shell2
+	var main_mod: float = HPManager.size_mod(target.mass, shell.caliber) if shell != null else 1.0
+	var sec_mod: float = HPManager.size_mod(target.mass, secondary_caliber(shooter))
 	var r := POINT_BLANK_M
-	while r <= top:
-		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * dodge(target, shooter, r)
-			+ _secondary_dps(shooter, target, r, aspect))
+	while r <= p._range:
+		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * dodge(target, shooter, r) * main_mod
+			+ _secondary_dps(shooter, target, r, aspect) * sec_mod)
 		r += DESIRED_STEP_M
 	_dps_curves[key] = c
 	return c
@@ -3272,6 +3349,86 @@ static func danger_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	_danger_curves[key] = out
 	return out
 
+## Radians between neighbouring torpedoes of a spread (TorpedoLauncher.fire).
+const TORP_LANE_RAD: float = 0.012
+## Share of torpedoes a target stepping aside with a full turn to spare still takes.
+const TORP_DODGE_KEEP: float = 0.2
+## A target holds the course a spread was aimed at for about this long.
+const TORP_COURSE_S: float = 90.0
+
+## [shooter id, target id] -> the damage one spread from every launcher of
+## `shooter` lands on `target`, every DESIRED_STEP_M out to its torpedo range:
+## launchers fire in turn, the ship turning for each between long reloads, so
+## every tube counts. A torpedo lands when its lane crosses the hull shown at
+## guns_bear_aspect, the target has not stepped aside since sighting it, and it
+## held its course for the run. HP does not enter.
+static var _torp_curves: Dictionary = {}
+
+static func torpedo_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
+	var key := [shooter.get_instance_id(), target.get_instance_id()]
+	if _torp_curves.has(key):
+		return _torp_curves[key]
+	var c := PackedFloat32Array()
+	var tc: TorpedoController = shooter.torpedo_controller if is_instance_valid(shooter.torpedo_controller) else null
+	if tc != null and not tc.launchers.is_empty():
+		var torp: TorpedoParams = tc.get_torp_params()
+		var mc = target.movement_controller
+		var width: float = mc.ship_length * sin(deg_to_rad(guns_bear_aspect(target))) + mc.ship_beam
+		var shift_s: float = sqrt(2.0 * mc._p().turning_circle_radius * mc.ship_length) / maxf(mc.max_speed, 1.0)
+		var r := POINT_BLANK_M
+		while r <= tc.get_max_range():
+			var lanes: float = 1.0 + width / maxf(r * TORP_LANE_RAD, 1.0)
+			var tubes := 0.0
+			for l in tc.launchers:
+				tubes += minf(l.muzzles.size(), lanes)
+			var warn: float = minf(r, torp.detection_range) / maxf(torp.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
+			var reactable: float = clampf((warn - mc._p().rudder_response_time) / maxf(shift_s, 0.1), 0.0, 1.0)
+			c.append(tubes * torp.damage * lerpf(1.0, TORP_DODGE_KEEP, reactable) * exp(-r / maxf(torp.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0) / TORP_COURSE_S))
+			r += DESIRED_STEP_M
+	_torp_curves[key] = c
+	return c
+
+## Share of `target`'s HP `shooter`'s torpedoes take per second at `range_m`:
+## the first spread loaded, then whole reloads until the HP left is gone.
+static func torpedo_rate(shooter: Ship, target: Ship, range_m: float) -> float:
+	var salvo: float = _curve_at(torpedo_curve(shooter, target), range_m)
+	if salvo <= 0.0:
+		return 0.0
+	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	var tc: TorpedoController = shooter.torpedo_controller
+	var run: float = range_m / maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
+	return 1.0 / (run + tc.get_params().reload_time * maxf(hp / salvo - 1.0, 0.0))
+
+## Guns that would sink `target` within this long at their best range can break a shielded cover cell.
+const HEAVY_GUNS_TTK_S: float = 600.0
+
+static func heavy_guns(shooter: Ship, target: Ship) -> bool:
+	var best := 0.0
+	for v in dps_curve(shooter, target):
+		best = maxf(best, v)
+	return best * HEAVY_GUNS_TTK_S >= maxf(target.health_controller.max_hp, 1.0)
+
+## Share of `target`'s HP `shooter` takes per second at `range_m`: guns and torpedoes.
+static func kill_rate(shooter: Ship, target: Ship, range_m: float) -> float:
+	return _curve_at(dps_curve(shooter, target), range_m) / maxf(target.health_controller.current_hp, 1.0) \
+		+ torpedo_rate(shooter, target, range_m)
+
+## How far `shooter` does anything to `target`: its guns, or its torpedoes past them.
+static func reach_m(shooter: Ship) -> float:
+	var tc: TorpedoController = shooter.torpedo_controller if is_instance_valid(shooter.torpedo_controller) else null
+	return maxf(shooter.artillery_controller.get_params()._range, tc.get_max_range() if tc != null and not tc.launchers.is_empty() else 0.0)
+
+## The biggest secondary shell `ship` fires, in mm; 0 without secondaries.
+static func secondary_caliber(ship: Ship) -> float:
+	var cal := 0.0
+	if is_instance_valid(ship.secondary_controller):
+		for sc in ship.secondary_controller.sub_controllers:
+			var sp = sc.get_params()
+			for sh: ShellParams in [sp.shell1, sp.shell2]:
+				if sh != null:
+					cal = maxf(cal, sh.caliber)
+	return cal
+
 static func _curve_at(c: PackedFloat32Array, range_m: float) -> float:
 	var k: int = roundi((range_m - POINT_BLANK_M) / DESIRED_STEP_M)
 	return c[k] if k >= 0 and k < c.size() else 0.0
@@ -3283,6 +3440,7 @@ static func warm_dps_curves(ships: Array) -> void:
 			if a != b and is_instance_valid(a) and is_instance_valid(b) and a.team != null and b.team != null \
 					and a.team.team_id != b.team.team_id:
 				danger_curve(a, b)
+				torpedo_curve(a, b)
 
 ## Enemy instance id -> [time, desired_range].
 var _desired_cache: Dictionary = {}
@@ -3302,16 +3460,14 @@ func ring(_ctx: SkillContext, enemy: Ship, _at: Vector2) -> float:
 	var h: Array = _ring_held.get(enemy.get_instance_id(), [])
 	return float(h[0]) if not h.is_empty() else desired(enemy).x
 
-## Every enemy we believe in, every tick: under DISENGAGE_THREAT each ring moves
-## toward its desired range at RING_SHRINK_MPS, or holds where we are inside it
-## while that enemy is not shooting us; above it the ring of each one
-## shooting us that we do not out-trade nearer grows to where it is now,
-## RING_EASE_OUT_M past us over RING_GROW_THREAT.
+## Every enemy we believe in, every tick. Shooting us, its ring moves toward its
+## desired range at RING_SHRINK_MPS. Else, while a friend outranks us in its
+## priorities, the ring shrinks at once to its aggro_radius and grows back at
+## RING_SHRINK_MPS; failing that it holds where we are inside desired range.
 func update_rings(ctx: SkillContext) -> void:
 	if _ship.team == null or ctx.server == null:
 		return
 	var now: float = SimClock.now()
-	var threat: float = get_threat_score(ctx)
 	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
 	for b in ctx.server._team_belief(_ship.team.team_id):
 		var e: Ship = b.ship
@@ -3323,13 +3479,54 @@ func update_rings(ctx: SkillContext) -> void:
 		var r: float = want.x if h.is_empty() else float(h[0])
 		var dt: float = 0.0 if h.is_empty() else maxf(now - float(h[1]), 0.0)
 		var dist: float = here.distance_to(b.pos)
-		if threat < DISENGAGE_THREAT and dist < want.x and not active_shooters_at_me.has(e):
+		var shot: bool = active_shooters_at_me.has(e)
+		var aggro: float = INF if shot else aggro_radius(ctx, e, b.pos, want.x)
+		if aggro < want.x:
+			r = aggro if aggro < r else move_toward(r, aggro, RING_SHRINK_MPS * dt)
+		elif dist < want.x and not shot:
 			r = dist
-		elif threat < DISENGAGE_THREAT:
+		else:
 			r = move_toward(r, want.x, RING_SHRINK_MPS * dt)
-		elif active_shooters_at_me.has(e) and int(want.y) != Desire.WIN:
-			r = maxf(r, dist + (RING_EASE_OUT_M if threat > RING_GROW_THREAT else 0.0))
 		_ring_held[id] = [r, now]
+
+## A friend tanking an enemy's focus lets us this near it, as it would rank us
+## (score_parts) against the friend it ranks highest: where it would not switch
+## to us (PRIORITY_SWITCH over the friend), when what it lands on us while we
+## back out to where it switches back is under AGGRO_BUDGET of our HP, else
+## where it would switch back; searched inside `within`. INF with no friend it ranks.
+const AGGRO_BUDGET: float = 0.1
+const AGGRO_TTL_S: float = 1.0
+## Enemy instance id -> [time, radius].
+var _aggro_cache: Dictionary = {}
+
+func aggro_radius(ctx: SkillContext, e: Ship, at: Vector2, within: float) -> float:
+	var now: float = SimClock.now()
+	var c: Array = _aggro_cache.get(e.get_instance_id(), [])
+	if not c.is_empty() and now - float(c[0]) < AGGRO_TTL_S:
+		return c[1]
+	var tank := 0.0
+	for f: Ship in ctx.server.get_team_ships(_ship.team.team_id):
+		if f != _ship and is_instance_valid(f) and f.is_alive():
+			tank = maxf(tank, priority_value(score_parts(e, f, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))))
+	var out := INF
+	if tank > 0.0:
+		var take := -1.0
+		var release := -1.0
+		var r: float = minf(reach_m(e), within)
+		while r >= POINT_BLANK_M:
+			var mine: float = priority_value(score_parts(e, _ship, r))
+			if mine > tank * PRIORITY_SWITCH:
+				break
+			take = r
+			if mine <= tank / PRIORITY_SWITCH:
+				release = r
+			r -= DESIRED_STEP_M
+		if take > 0.0:
+			var back: float = maxf(_ship.movement_controller.max_speed * _ship.movement_controller._p().reverse_speed_ratio, 1.0)
+			var cost: float = kill_rate(e, _ship, take) * maxf(release - take, 0.0) / back
+			out = take if cost <= AGGRO_BUDGET or release < 0.0 else release
+	_aggro_cache[e.get_instance_id()] = [now, out]
+	return out
 
 static func _secondary_range(e: Ship) -> float:
 	return e.secondary_controller.get_max_range() if is_instance_valid(e.secondary_controller) else 0.0

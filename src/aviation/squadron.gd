@@ -788,10 +788,8 @@ func _fire() -> void:
 			continue
 		any_fired = true
 		recall_after = plane.fire_ordnance(attack_direction) and recall_after
-	# Only a one-shot release actually expends anything - a spotter arriving on
-	# station has "fired" in the sense of reaching its mark, and goes back up
-	# needing nothing but a free deck.
-	ordnance_spent = any_fired and recall_after
+	# OR: don't clear a spend already owed from launch (spotters).
+	ordnance_spent = ordnance_spent or (any_fired and recall_after)
 	if recall_after:
 		returning = true
 		attack_point = null
