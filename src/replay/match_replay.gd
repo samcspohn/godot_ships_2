@@ -182,7 +182,11 @@ func _ready() -> void:
 	var map_path = "res://src/Maps/map.tscn" if map_id == 0 else "res://src/Maps/map2.tscn"
 	var map_scene = load(map_path)
 	if map_scene:
-		world_3d.add_child(map_scene.instantiate())
+		var map_node: Node = map_scene.instantiate()
+		world_3d.add_child(map_node)
+		# Islands and SDF tiles in the bot overlay sample the nav map, which only the server builds.
+		if not NavigationMapManager.is_map_ready() and map_node.islands.size() > 0:
+			NavigationMapManager.build_map(map_node.islands, Rect2(-17500, -17500, 35000, 35000))
 
 	# Hand the replay camera to the unified particle system so its back-to-front
 	# sort uses the right viewpoint. The system lives in the main viewport, so
@@ -280,30 +284,27 @@ func _process(_delta: float) -> void:
 func _update_bot_debug() -> void:
 	if playback.reader == null or not Debug.debug_enabled:
 		return
-	var idx: int = playback.reader.bot_debug_index(_follow_ship_id, playback.current_time)
-	var rec: Array = playback.reader.bot_debug_record(_follow_ship_id, idx)
-	var gs: Node3D = ghost_ships[_follow_ship_id] if _follow_ship_id >= 0 and _follow_ship_id < ghost_ships.size() else null
-	if rec[1].is_empty() or gs == null:
-		Debug.show_buffers(rec[0])
-		return
-	var fwd: Vector3 = -gs.global_transform.basis.z
-	var pose: Dictionary = Debug.capture(_draw_bot_pose.bind(rec[1], gs.global_position, atan2(fwd.x, fwd.z)))
-	var merged: Dictionary = rec[0].duplicate()
-	for t in pose:
-		merged[t] = merged.get(t, PackedByteArray()) + pose[t]
-	Debug.show_buffers(merged)
-
-func _draw_bot_pose(state: Dictionary, pos: Vector3, heading: float) -> void:
-	BotControllerV4.draw_state(state, pos, heading)
-	BotControllerV4.draw_trajectory(ShipNavigator.simulate_debug_arc(state.get("arc", PackedFloat32Array()), pos, heading))
+	var r := playback.reader
 	var t: float = playback.current_time
-	var team: int = playback.reader.ships[_follow_ship_id].get("team_id", -1)
-	var enemies := {}
-	for e in playback.reader.ships:
-		if e.get("team_id", -1) != team:
-			enemies[e.ship_id] = true
-	BotControllerV4.draw_shell_threats(shell_replayer.threats_near(Vector2(pos.x, pos.z), BotControllerV4.SHELL_QUERY_RANGE, enemies, t))
-	BotControllerV4.draw_torpedo_threats(torpedo_replayer.threat_points(pos, enemies, t))
+	var gs: Node3D = ghost_ships[_follow_ship_id] if _follow_ship_id >= 0 and _follow_ship_id < ghost_ships.size() else null
+	var state: Dictionary = r.bot_debug_record(_follow_ship_id, r.bot_debug_index(_follow_ship_id, t))
+	if state.is_empty() or gs == null:
+		Debug.show_buffers({})
+		return
+	var team_id: int = r.ships[_follow_ship_id].get("team_id", -1)
+	var team_stream: int = BotDebugCodec.TEAM_STREAM + team_id
+	var w := ReplayBotWorld.new()
+	w.ghosts = ghost_ships
+	w.own = gs
+	w.state = state
+	w.time = t
+	w.shells = shell_replayer
+	w.torpedos = torpedo_replayer
+	for e in r.ships:
+		if e.get("team_id", -1) != team_id:
+			w.enemies[e.ship_id] = true
+	var team: Dictionary = r.bot_debug_record(team_stream, r.bot_debug_index(team_stream, t))
+	Debug.show_buffers(Debug.capture(BotDebugView.draw.bind(state, team, w)))
 
 
 func _update_camera() -> void:

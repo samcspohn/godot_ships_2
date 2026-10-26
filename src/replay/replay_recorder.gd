@@ -57,12 +57,15 @@ func begin_match(ships: Array, map_id: int) -> void:
 	# --- build ship index -------------------------------------------------
 	_ships = []
 	_ship_to_id = {}
+	_teams = []
 	_ship_gun_counts = []
 	_ship_secondary_gun_counts = []
 	for i in range(ships.size()):
 		var ship: Ship = ships[i]
 		_ships.append(ship)
 		_ship_to_id[ship] = i
+		if ship.team != null and not _teams.has(ship.team.team_id):
+			_teams.append(ship.team.team_id)
 		_ship_gun_counts.append(
 			ship.artillery_controller.guns.size() if ship.artillery_controller else 0
 		)
@@ -199,10 +202,17 @@ func _physics_process(delta: float) -> void:
 		_write_snapshot()
 		_snapshot_timer = 0.0
 
-	_bot_debug_timer += delta
-	if _bot_debug and _bot_debug_timer >= BOT_DEBUG_INTERVAL:
-		_bot_debug_timer = 0.0
-		_write_bot_debug()
+	# Bots are staggered across the interval: capturing all of them in one frame hitches.
+	if _bot_debug and not _ships.is_empty():
+		var n: int = _ships.size() + _teams.size()
+		var prev := int(_bot_debug_timer)
+		_bot_debug_timer += delta / BOT_DEBUG_INTERVAL * n
+		for k in range(prev, mini(int(_bot_debug_timer), prev + n)):
+			var slot: int = k % n
+			if slot < _ships.size():
+				_write_bot_debug(slot)
+			else:
+				_write_team_debug(_teams[slot - _ships.size()])
 
 	# Emit DETECTION_CHANGED whenever a ship's detection state changes
 	for ship in _ships:
@@ -218,25 +228,33 @@ func _physics_process(delta: float) -> void:
 			_file.store_8(dt)
 			_file.store_8(1 if ve else 0)
 
-## ship_id -> [StreamPeerBuffer records, PackedFloat32Array times, Dictionary prev commands]
+## stream id -> [StreamPeerBuffer records, PackedFloat32Array times, Dictionary prev groups]
 var _bot_chunks: Dictionary = {}
+var _teams: PackedInt32Array = []
 
-func _write_bot_debug() -> void:
-	for i in _ships.size():
-		var ship: Ship = _ships[i]
-		if not is_instance_valid(ship) or not ship.is_alive():
-			_flush_bot_debug(i)
-			continue
-		var bot := ship.get_node_or_null("Modules/BotController") as BotControllerV4
-		if bot == null or bot.behavior == null:
-			continue
-		if not _bot_chunks.has(i):
-			_bot_chunks[i] = [StreamPeerBuffer.new(), PackedFloat32Array(), {}]
-		var c: Array = _bot_chunks[i]
-		BotDebugCodec.encode_record(c[0], c[2], Debug.capture(bot._emit_debug_draws.bind(false, false)), bot.debug_state())
-		c[1].append(_current_time())
-		if c[1].size() >= BotDebugCodec.CHUNK_RECORDS:
-			_flush_bot_debug(i)
+func _write_bot_debug(i: int) -> void:
+	var ship: Ship = _ships[i]
+	if not is_instance_valid(ship) or not ship.is_alive():
+		_flush_bot_debug(i)
+		return
+	var bot := ship.get_node_or_null("Modules/BotController") as BotControllerV4
+	if bot == null or bot.behavior == null:
+		return
+	_append_debug(i, bot.debug_state(_ship_to_id))
+
+func _write_team_debug(team_id: int) -> void:
+	var server: GameServer = get_node_or_null("/root/Server")
+	if server != null:
+		_append_debug(BotDebugCodec.TEAM_STREAM + team_id, BotDebugView.team_state(server, team_id, _ship_to_id))
+
+func _append_debug(stream: int, state: Dictionary) -> void:
+	if not _bot_chunks.has(stream):
+		_bot_chunks[stream] = [StreamPeerBuffer.new(), PackedFloat32Array(), {}]
+	var c: Array = _bot_chunks[stream]
+	BotDebugCodec.encode_record(c[0], c[2], state, BotDebugCodec.schema(stream))
+	c[1].append(_current_time())
+	if c[1].size() >= BotDebugCodec.CHUNK_RECORDS:
+		_flush_bot_debug(stream)
 
 ## [u8 ship_id][u8 n][n × f32 time][u32 raw_len][u32 len][zstd BotDebugCodec records]
 func _flush_bot_debug(ship_id: int) -> void:

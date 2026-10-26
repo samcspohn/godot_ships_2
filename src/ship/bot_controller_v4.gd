@@ -104,9 +104,6 @@ const MIN_BEHAVIOR_INTERVAL: float = 0.3
 const MAX_BEHAVIOR_INTERVAL: float = 2.0
 var _behavior_timer: float = 0.0
 var bot_id: int = 0
-## Enemy debug labels anchor where the HP tag does (CameraUIScene, 20 m up) and sit this many pixels above it.
-const ENEMY_LABEL_Y: float = 20.0
-const ENEMY_LABEL_UP_PX: float = 50.0
 var _last_intent: NavIntent = null
 
 ## The raw intent returned by the behavior BEFORE validation adjusts it.
@@ -1075,282 +1072,35 @@ func _update_debug_vectors(rudder: float) -> void:
 # Immediate-mode debug drawing — pushes draw commands to Debug autoload
 # ---------------------------------------------------------------------------
 
-func _emit_debug_draws(with_state: bool = true, with_projectiles: bool = true) -> void:
-	var ship_pos: Vector3 = _ship.global_position
-	if with_projectiles:
-		draw_shell_threats(_debug_shell_obstacles)
-
-	if with_state and behavior != null:
-		draw_state(debug_state(), ship_pos, get_ship_heading())
-
-	# --- a3) Disengage's destination and its cones, toward and away (GREEN) ---
-	if behavior != null:
-		var lift := Vector3(0.0, 30.0, 0.0)
-		if behavior._active_skill_name == &"Disengage" and _last_intent != null:
-			Debug.draw_line(ship_pos + lift, Vector3(_last_intent.target_position.x, 0.0, _last_intent.target_position.z) + lift, Color.GREEN)
-			var axis: float = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis))
-			if is_finite(axis):
-				# The cone searched toward runs AWAY_RATIO times as far as the one away.
-				for end in [0.0, PI]:
-					for side in [-1.0, 1.0]:
-						var b: float = axis + end + side * SkillDisengage.CONE
-						var reach: float = SkillCover.REACH_M if end == 0.0 else SkillCover.REACH_M / SkillCover.AWAY_RATIO
-						Debug.draw_line(ship_pos + lift, ship_pos + lift + Vector3(sin(b), 0.0, cos(b)) * reach,
-							Color(0.0, 1.0, 0.0, 0.5))
-
-	# --- f) Target indicator (red diamond cone above target ship) ---
-	if target != null and is_instance_valid(target):
-		var target_pos = target.global_position
-		target_pos.y += 150.0
-		Debug.draw_cone(target_pos, Vector3(PI, 0.0, 0.0), 60.0, 0.0, 30.0, Color.RED, 4)
-
-	# --- g) Destination marker (green cone pointing down) ---
-	# if destination != Vector3.ZERO:
-	var dest = _last_intent.target_position if _last_intent else Vector3.ZERO
-	Debug.draw_cone(Vector3(dest.x, 120.0, dest.z), Vector3(PI, 0.0, 0.0), 80.0, 0.0, 40.0, Color(0.0, 1.0, 0.4, 0.9), 4)
-
-	# --- Navigator-dependent draws ---
-	if navigator != null:
-		# --- h) Nav path (line strip with spheres) ---
-		var nav_path = navigator.get_current_path()
-		if nav_path.size() > 0:
-			var full_path = PackedVector3Array([_ship.global_position])
-			for pt in nav_path:
-				full_path.append(Vector3(pt.x, 50.0, pt.z))
-			full_path[0].y = 50.0
-			Debug.draw_path(full_path, Color(1.0, 0.6, 1.0, 0.7), 1, 20.0)
-
-		# --- i) Simulated path (cyan) ---
-		var sim_path = navigator.get_simulated_path()
-		if sim_path.size() >= 2:
-			var raised_path = PackedVector3Array()
-			for pt in sim_path:
-				raised_path.append(Vector3(pt.x, 40.0, pt.z))
-			var stride = maxi(raised_path.size() / 30, 1)
-			Debug.draw_path(raised_path, Color(0.0, 0.9, 0.9, 0.8), stride, 12.0)
-
-		if with_state:
-			draw_trajectory(navigator.get_predicted_trajectory())
-
-		var clearance_r = navigator.get_clearance_radius()
-
-		# --- l) SDF tile overlay (client samples its local NavigationMap) ---
-		if clearance_r > 0.0:
-			_emit_sdf_tiles(clearance_r)
-
-		# --- o) Detection is drawn by the Ctrl+R DETECTION overlay (Debug autoload) ---
+class LiveWorld extends BotDebugView.World:
+	var bot: BotControllerV4
+	var ships: Array
+	func _init(b: BotControllerV4, all_ships: Array) -> void:
+		bot = b
+		ships = all_ships
+	func own_pos() -> Vector3: return bot._ship.global_position
+	func own_heading() -> float: return bot.get_ship_heading()
+	func ship_pos(id: int) -> Vector3:
+		if id < 0 or id >= ships.size() or not is_instance_valid(ships[id]):
+			return Vector3.INF
+		return ships[id].global_position
+	func trajectory() -> PackedVector3Array: return bot.navigator.get_predicted_trajectory()
+	func shell_threats() -> Array: return bot._debug_shell_obstacles
+	func torpedo_threats() -> Array: return bot.navigator.get_debug_torpedo_threat_points()
 
 
-		if with_projectiles:
-			draw_torpedo_threats(navigator.get_debug_torpedo_threat_points())
-
-	# --- m2) Station / Cover: the held cell and its score breakdown ---
-	if behavior != null:
-		var st_skill: SkillPosition = null
-		match behavior._active_skill_name:
-			&"Fight": st_skill = behavior._skill_fight.current()
-			&"Disengage": st_skill = behavior._skill_disengage.cover()
-		if behavior._active_skill_name == &"Disengage":
-			Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), behavior._skill_disengage.debug_text(), Color(1.0, 0.8, 1.0), 14)
-		Debug.draw_label(ship_pos + Vector3(0.0, 160.0, 0.0), behavior._skill_stance.debug_text(), Color(1.0, 1.0, 0.6), 14)
-		if st_skill != null:
-			var counts := st_skill.trail_counts()
-			for t in st_skill.trails().size():
-				var trail: PackedVector2Array = st_skill.trails()[t]
-				var n: PackedInt32Array = counts[t] if t < counts.size() else PackedInt32Array()
-				for i in trail.size():
-					if i > 0:
-						Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
-							Color(0.4, 0.8, 1.0, 0.6))
-					if i < n.size() and n[i] > 0:
-						Debug.draw_label(Vector3(trail[i].x, 40.0, trail[i].y), str(n[i]), Color(0.6, 0.9, 1.0), 14)
-		if st_skill != null and st_skill.has_station():
-			var st_pos: Vector3 = st_skill.station_position()
-			var st_col := Color(0.2, 1.0, 0.9)
-			if st_skill is SkillCover:
-				st_col = Color(0.3, 1.0, 0.3)
-			elif st_skill is FightStation:
-				st_col = Color(1.0, 0.5, 0.1)
-			elif st_skill is SkillSpot:
-				st_col = Color(0.4, 0.8, 1.0)
-			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
-			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
-			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)
-
-	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
-	if server_node != null:
-		var my_team_id: int = _ship.team.team_id if _ship.team else -1
-		var now_sec: float = SimClock.now()
-		const STALE_MAX: float = 120.0  # seconds until fully faded
-
-		# Spotted enemies — bright red circle + sphere at their live position
-		var spotted_enemies = server_node.get_valid_targets(my_team_id)
-		for enemy in spotted_enemies:
-			if not is_instance_valid(enemy):
-				continue
-			var epos := Vector3(enemy.global_position.x, 20.0, enemy.global_position.z)
-			Debug.draw_im_sphere(epos, 30.0, Color(1.0, 0.1, 0.1, 0.9))
-			Debug.draw_circle(epos, 350.0, Color(1.0, 0.2, 0.2, 0.5), 16)
-
-		# Fight's ring round each enemy that shoots (shrunk while a lit friend nearer it screens us): green we push in, yellow we hold at our best trade, red we keep out of its fire.
-		# One label per enemy, its priority above its ring: separate labels at fixed screen size overlap at range.
-		var rank := {}
-		if behavior != null:
-			for k in behavior.priorities.size():
-				if behavior.priorities[k].ship != null:
-					rank[behavior.priorities[k].ship] = k
-		var ringed := {}
-		var g: Dictionary = NavigationMapManager.reach_gun(_ship)
-		if behavior != null and not g.is_empty():
-			var rctx := SkillContext.create(_ship, null, server_node, behavior)
-			var conceal: float = NavigationMapManager.reach_conceal_radius(_ship)
-			for b in server_node._team_belief(my_team_id):
-				var e: Ship = b.ship
-				if not is_instance_valid(e) or not FightStation.threatens(e):
-					continue
-				ringed[e] = true
-				var trade: float = float(behavior._trade(e).best)
-				var ring: float = maxf(FightStation._ring_for(rctx, b, {}, float(g.range), conceal) - float(b.spread), 0.0)
-				var col := Color(0.2, 1.0, 0.3, 0.7) if trade >= BotBehavior.TRADE_MARGIN \
-					else Color(1.0, 0.25, 0.2, 0.7) if behavior.dangerous(e) else Color(1.0, 0.85, 0.2, 0.7)
-				Debug.draw_circle(Vector3(b.pos.x, 12.0, b.pos.y), ring, col, 64)
-				var text := "%.1fk x%.2f" % [ring / 1000.0, trade]
-				if rank.has(e):
-					var c: Dictionary = behavior.priorities[rank[e]]
-					text = "P%d %.2f\n%s" % [rank[e] + 1, float(c.get("score", 0.0)), text]
-				Debug.draw_label(Vector3(b.pos.x, ENEMY_LABEL_Y, b.pos.y), text,
-					Color(col, 1.0), 12 if rank.get(e, 99) < BotBehavior.PRIORITY_COUNT else 9, ENEMY_LABEL_UP_PX)
-
-		# How far each enemy spots us now, unbloomed: our concealment, or its radar/hydro while that reaches further.
-		if _ship.concealment != null:
-			var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
-			for b in server_node._team_belief(my_team_id):
-				Debug.draw_circle(Vector3(b.pos.x, 14.0, b.pos.y), maxf(conceal, float(b.force_spot)), Color(0.3, 0.7, 1.0, 0.6), 64)
-
-		# Priority order for enemies without a ring above: the top BotBehavior.PRIORITY_COUNT are what Fight and Spot try for.
-		if behavior != null:
-			for i in behavior.priorities.size():
-				var c: Dictionary = behavior.priorities[i]
-				if ringed.has(c.ship):
-					continue
-				var top: bool = i < BotBehavior.PRIORITY_COUNT
-				# Score as % of HP a second, theirs on us plus ours on them.
-				Debug.draw_label(Vector3(c.pos.x, ENEMY_LABEL_Y, c.pos.y), "P%d%s %.2f" % [i + 1, "" if c.ship != null else "?", float(c.get("score", 0.0))],
-					Color(1.0, 0.95, 0.3) if top else Color(0.7, 0.7, 0.7, 0.7), 13 if top else 9, ENEMY_LABEL_UP_PX)
-
-		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness
-		var unspotted_enemies: Dictionary = server_node.get_unspotted_enemies(my_team_id)
-		var unspotted_times: Dictionary = server_node.get_unspotted_enemy_times(my_team_id)
-		for enemy in unspotted_enemies:
-			if not is_instance_valid(enemy):
-				continue
-			var lkp: Vector3 = unspotted_enemies[enemy]
-			var last_time: float = unspotted_times.get(enemy, now_sec)
-			var staleness: float = clampf((now_sec - last_time) / STALE_MAX, 0.0, 1.0)
-			var alpha: float = lerpf(0.7, 0.15, staleness)
-			var lkp_pos := Vector3(lkp.x, 20.0, lkp.z)
-			Debug.draw_im_sphere(lkp_pos, 20.0, Color(1.0, 0.85, 0.0, alpha))
-			Debug.draw_circle(lkp_pos, 350.0, Color(1.0, 0.85, 0.0, alpha * 0.5), 16)
-
-		# Nearby islands
-		if NavigationMapManager.is_map_ready():
-			var islands = NavigationMapManager.get_islands()
-			var my_pos = _ship.global_position
-			for isl in islands:
-				var center_2d: Vector2 = isl["center"]
-				var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
-				var isl_radius: float = isl["radius"]
-				var eff_dist = isl_pos.distance_to(my_pos) - isl_radius
-				if eff_dist <= 10000.0:
-					Debug.draw_circle(Vector3(isl_pos.x, 9.0, isl_pos.z), isl_radius, Color(0.0, 0.8, 0.9, 0.35), 48)
-					Debug.draw_im_sphere(Vector3(isl_pos.x, 28.0, isl_pos.z), 15.0, Color(0.0, 0.9, 1.0, 0.6))
-
-	# --- r) Danger center (red circle + arrow + spotted/unspotted label) ---
-	if behavior != null:
-		var danger_dc: Vector3 = behavior._get_spotted_danger_center()
-		if danger_dc != Vector3.ZERO:
-			var dc_pos := Vector3(danger_dc.x, 10.0, danger_dc.z)
-			var to_dc: Vector3 = danger_dc - ship_pos
-			to_dc.y = 0.0
-			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
-			var src_label: String = "spotted"
-			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
-					"Danger [%s]" % src_label, Color.RED)
+func _emit_debug_draws() -> void:
+	if behavior == null or server_node == null:
+		return
+	var ships: Array = server_node.get_all_ships()
+	var ids := {}
+	for i in ships.size():
+		ids[ships[i]] = i
+	BotDebugView.draw(debug_state(ids), BotDebugView.team_state(server_node, _ship.team.team_id, ids), LiveWorld.new(self, ships))
 
 
-## Navigator winning arc; replays rebuild it with ShipNavigator.simulate_debug_arc.
-static func draw_trajectory(trajectory: PackedVector3Array) -> void:
-	for i in range(trajectory.size()):
-		var t = float(i) / float(max(trajectory.size() - 1, 1))
-		Debug.draw_im_sphere(trajectory[i], 15.0, Color(0.0, 1.0 - t * 0.5, 0.0))
-
-
-## Navigator torpedo threat points; replays rebuild them from TorpedoReplayer.
-static func draw_torpedo_threats(threat_lines: Array) -> void:
-	for t_pt in threat_lines:
-		var landing_x: float = t_pt.get("landing_x", 0.0)
-		var landing_z: float = t_pt.get("landing_z", 0.0)
-		var time_remaining: float = t_pt.get("time_remaining", 0.0)
-		var caliber: float = t_pt.get("caliber", 0.0)
-		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
-
-		var has_line: bool = t_pt.has("line_start_x")
-		if has_line:
-			var sx: float = t_pt.get("line_start_x", 0.0)
-			var sz: float = t_pt.get("line_start_z", 0.0)
-			var ex: float = t_pt.get("line_end_x", 0.0)
-			var ez: float = t_pt.get("line_end_z", 0.0)
-			var is_torp: bool = caliber >= 500.0
-			var line_color: Color
-			if is_torp:
-				line_color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.4, 0.9, urgency))
-			else:
-				line_color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
-			var draw_y: float = 5.0
-			Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), line_color)
-			# Small sphere at the center for reference
-			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 4.0, line_color)
-		else:
-			var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
-			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
-			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
-
-
-## ProjectileManager.get_shells_near_position entries; replays rebuild them from ShellReplayer.
-static func draw_shell_threats(shells: Array) -> void:
-	for s in shells:
-		var landing_x: float = s.get("landing_x", 0.0)
-		var landing_z: float = s.get("landing_z", 0.0)
-		var time_remaining: float = s.get("time_remaining", 0.0)
-		var caliber: float = s.get("caliber", 0.0)
-		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
-		var color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
-		# Draw the threat line using landing velocity direction and threat_half_len
-		var vx: float = s.get("landing_vx", 0.0)
-		var vz: float = s.get("landing_vz", 0.0)
-		var spd: float = sqrt(vx * vx + vz * vz)
-		var half_len: float = s.get("threat_half_len", 15.0)
-		if spd > 1e-6 and half_len > 1.0:
-			var dir_x: float = vx / spd
-			var dir_z: float = vz / spd
-			# Line trails backward from landing point and extends 15m past it
-			var overshoot: float = 15.0
-			var sx: float = landing_x - dir_x * half_len * 2.0
-			var sz: float = landing_z - dir_z * half_len * 2.0
-			var ex: float = landing_x + dir_x * overshoot
-			var ez: float = landing_z + dir_z * overshoot
-			var draw_y: float = 5.0
-			Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), color)
-			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 5.0, color)
-		else:
-			# Fallback: draw as a circle if no velocity data
-			var radius: float = clampf(caliber * 0.2, 30.0, 120.0)
-			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), radius, color)
-			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 8.0, color)
-
-
-## Compact state behind the ship-anchored overlay; replays record this in place of its geometry.
-func debug_state() -> Dictionary:
+## Everything BotDebugView.draw needs from this bot; ids maps Ship to the index World.ship_pos takes.
+func debug_state(ids: Dictionary) -> Dictionary:
 	var st: Vector2 = behavior._skill_stance.debug_heading()
 	var s := {
 		"dest": behavior.dest_heading,
@@ -1364,7 +1114,6 @@ func debug_state() -> Dictionary:
 		"clear": navigator.get_clearance_radius() if navigator != null else 0.0,
 		"soft_clear": navigator.get_soft_clearance_radius() if navigator != null else 0.0,
 		"nav": navigator.get_nav_state() if navigator != null else -1,
-		"arc": navigator.get_debug_arc_inputs() if navigator != null else PackedFloat32Array(),
 		"agg": behavior.aggression(),
 		"apt": "", "apt_name": "",
 	}
@@ -1424,107 +1173,66 @@ func debug_state() -> Dictionary:
 	var stats: Stats = _ship.get_node("Modules/Stats")
 	s.dmg = int(stats.total_damage)
 	s.pot = int(stats.potential_damage)
+
+	var arc: PackedFloat32Array = navigator.get_debug_arc_inputs() if navigator != null else PackedFloat32Array()
+	s.arc_ship = arc.slice(0, 8)
+	s.arc = arc.slice(8)
+	var no_id := BotDebugView.NO_ID
+	s.tgt = ids.get(target, no_id) if is_instance_valid(target) else no_id
+	var dest: Vector3 = _last_intent.target_position if _last_intent else Vector3.ZERO
+	s.dest_pos = Vector2(dest.x, dest.z)
+	var disengaging: bool = behavior._active_skill_name == &"Disengage"
+	s.dis_on = disengaging and _last_intent != null
+	s.dis_axis = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis)) if s.dis_on else INF
+	s.dis_text = behavior._skill_disengage.debug_text() if disengaging else ""
+	s.stance_text = behavior._skill_stance.debug_text()
+	var path := PackedVector2Array()
+	if navigator != null:
+		for wp in navigator.get_current_path():
+			path.append(Vector2(wp.x, wp.z))
+	s.path = path
+	var dc: Vector3 = behavior._get_spotted_danger_center()
+	s.danger = Vector2(dc.x, dc.z) if dc != Vector3.ZERO else Vector2.INF
+	s.conceal = (_ship.concealment.params.p() as ConcealmentParams).radius if _ship.concealment != null else -1.0
+
+	var st_skill: SkillPosition = null
+	match behavior._active_skill_name:
+		&"Fight": st_skill = behavior._skill_fight.current()
+		&"Disengage": st_skill = behavior._skill_disengage.cover()
+	s.trails = []
+	s.st_kind = BotDebugView.Station.NONE
+	s.st_pos = Vector2.INF
+	s.st_text = ""
+	if st_skill != null:
+		var counts := st_skill.trail_counts()
+		for t in st_skill.trails().size():
+			s.trails.append({"pts": st_skill.trails()[t], "n": counts[t] if t < counts.size() else PackedInt32Array()})
+		if st_skill.has_station():
+			var sp: Vector3 = st_skill.station_position()
+			s.st_pos = Vector2(sp.x, sp.z)
+			s.st_text = st_skill.debug_text()
+			s.st_kind = BotDebugView.Station.COVER if st_skill is SkillCover else BotDebugView.Station.FIGHT if st_skill is FightStation \
+				else BotDebugView.Station.SPOT if st_skill is SkillSpot else BotDebugView.Station.OTHER
+
+	s.prio = []
+	for c in behavior.priorities:
+		var known: bool = c.ship != null
+		s.prio.append({"id": ids.get(c.ship, no_id) if known else no_id, "pos": Vector2.INF if known else c.pos,
+			"score": float(c.get("score", 0.0))})
+	s.rings = []
+	var g: Dictionary = NavigationMapManager.reach_gun(_ship)
+	if server_node != null and not g.is_empty():
+		var rctx := SkillContext.create(_ship, null, server_node, behavior)
+		var conceal: float = NavigationMapManager.reach_conceal_radius(_ship)
+		for b in server_node._team_belief(_ship.team.team_id):
+			var e: Ship = b.ship
+			if not is_instance_valid(e) or not FightStation.threatens(e) or not ids.has(e):
+				continue
+			var trade: float = float(behavior._trade(e).best)
+			var ring: float = maxf(FightStation._ring_for(rctx, b, {}, float(g.range), conceal) - float(b.spread), 0.0)
+			s.rings.append({"id": ids[e], "r": ring, "trade": trade,
+				"cls": 0 if trade >= BotBehavior.TRADE_MARGIN else 1 if behavior.dangerous(e) else 2})
 	return s
-
-
-const POLICY_NAMES := ["STEALTH", "CONCEAL", "NO_DARK", "HOLD_GUNS", "HOLD_FIRE", "CORNERED"]
-
-static func _state_label(s: Dictionary) -> String:
-	var lines: PackedStringArray = PackedStringArray()
-	if s.apt_name != "":
-		lines.append("[%s] %sagg %+.2f" % [s.apt_name, s.apt + " · " if s.apt != "" else "", s.agg])
-	var state_names = ["NORMAL", "EMERGENCY"]
-	lines.append("Nav: %s" % state_names[s.nav] if s.nav >= 0 and s.nav < state_names.size() else "Nav: UNKNOWN(%d)" % s.nav)
-	if s.skill != "":
-		var threat_bar := ""
-		if s.threat >= 0.0:
-			var filled := int(round(s.threat * 10.0))
-			threat_bar = " [" + "█".repeat(filled) + "░".repeat(clamp(10 - filled, 0, 10)) + "] %.2f" % s.threat
-		lines.append("Skill: %s%s" % [s.skill, threat_bar])
-	if s.tgt_d >= 0.0:
-		var dist_m := int(s.tgt_d)
-		var dist_str := "%.1fk" % (dist_m / 1000.0) if dist_m >= 1000 else "%dm" % dist_m
-		lines.append("→ %s %s  ·  %s" % [s.tgt_cls, s.tgt_name, dist_str])
-	if s.p_d >= 0.0:
-		lines.append("P: %s  ·  %.1fk%s" % [s.p_name, int(s.p_d) / 1000.0, " (dark)" if s.p_dark else ""])
-	var flags: PackedStringArray = PackedStringArray()
-	if s.hp >= 0:
-		flags.append("HP:%d%%" % s.hp)
-	flags.append("VISIBLE" if s.visible else "HIDDEN")
-	if s.cover:
-		flags.append("COVER")
-	lines.append(" · ".join(flags))
-	var policy: PackedStringArray = PackedStringArray()
-	for i in POLICY_NAMES.size():
-		if s.policy & (1 << i):
-			policy.append(POLICY_NAMES[i])
-	lines.append(" · ".join(policy) if not policy.is_empty() else "guns free · no stealth")
-	if s.torp >= 0.0:
-		var filled := int(round(s.torp * 10.0))
-		lines.append("Torps: [%s] %d%%" % ["█".repeat(filled) + "░".repeat(10 - filled), int(s.torp * 100.0)])
-	lines.append("Dmg: %d  Pot: %d" % [s.dmg, s.pot])
-	return "\n".join(lines)
-
-
-## The ship-anchored overlay, from debug_state() and a pose (live ship or replay ghost).
-static func draw_state(s: Dictionary, ship_pos: Vector3, heading: float) -> void:
-	var fwd := Vector3(sin(heading), 0.0, cos(heading))
-	var dir := func(a: float) -> Vector3: return Vector3(sin(a), 0.0, cos(a))
-
-	# Desired heading (GREEN); stance's held heading (ORANGE, length = throttle); away from the fire (RED).
-	Debug.draw_arrow(ship_pos + Vector3(0.0, 100.0, 0.0), dir.call(s.dest), 200.0, Color.GREEN, 10.0)
-	if is_finite(s.stance):
-		Debug.draw_arrow(ship_pos + Vector3(0.0, 150.0, 0.0), dir.call(s.stance), 200.0 * s.stance_t, Color(1.0, 0.6, 0.0), 10.0)
-	if is_finite(s.away):
-		Debug.draw_arrow(ship_pos + Vector3(0.0, 170.0, 0.0), dir.call(s.away), 400.0, Color.RED, 12.0)
-
-	# Heading + rudder (CYAN); collision threat (ORANGE) and away from it (TEAL).
-	if is_finite(s.rudder):
-		Debug.draw_arrow(ship_pos + Vector3(0.0, 80.0, 0.0), dir.call(s.rudder), 180.0, Color.CYAN, 8.0)
-	if is_finite(s.threat_dir):
-		Debug.draw_arrow(ship_pos + Vector3(0.0, 60.0, 0.0), dir.call(s.threat_dir), 200.0 * s.threat_w, Color(1.0, 0.3, 0.0), 8.0)
-		Debug.draw_arrow(ship_pos + Vector3(0.0, 60.0, 0.0), -dir.call(s.threat_dir), 200.0 * s.threat_w, Color(0.0, 1.0, 0.5), 8.0)
-
-	# Throttle
-	var throttle_pos := ship_pos + Vector3(0.0, 120.0, 0.0)
-	if s.throttle == 0:
-		Debug.draw_im_sphere(throttle_pos, 15.0, Color.RED)
-	elif s.throttle == -1:
-		Debug.draw_arrow(throttle_pos, -fwd, 100.0, Color.YELLOW, 9.0)
-	elif s.throttle == 4:
-		Debug.draw_arrow(throttle_pos, fwd, 200.0, Color(0.0, 0.4, 1.0), 9.0)
-	else:
-		Debug.draw_arrow(throttle_pos, fwd, 200.0 * (float(s.throttle) / 4.0), Color(0.0, 1.0, 0.3), 9.0)
-
-	# The OBB the navigator scores shell hits against: hull edges, keel and beam lines.
-	var hsl: float = s.length * 0.5
-	var hsb: float = s.beam * 0.5
-	var stbd := Vector3(cos(heading), 0.0, -sin(heading))
-	var ctr := Vector3(ship_pos.x, 3.0, ship_pos.z)
-	var col := Color(1.0, 1.0, 1.0, 0.85)
-	var dim := Color(1.0, 1.0, 1.0, 0.35)
-	var bs := ctr + fwd * hsl + stbd * hsb
-	var bp := ctr + fwd * hsl - stbd * hsb
-	var sp := ctr - fwd * hsl - stbd * hsb
-	var ss := ctr - fwd * hsl + stbd * hsb
-	Debug.draw_line(bs, bp, col)
-	Debug.draw_line(bp, sp, col)
-	Debug.draw_line(sp, ss, col)
-	Debug.draw_line(ss, bs, col)
-	Debug.draw_line(ctr + fwd * hsl, ctr - fwd * hsl, dim)
-	Debug.draw_line(ctr + stbd * hsb, ctr - stbd * hsb, dim)
-
-	if s.clear > 0.0:
-		Debug.draw_circle(Vector3(ship_pos.x, 5.0, ship_pos.z), s.clear, Color(0.2, 0.8, 1.0, 0.7), 64)
-	if s.soft_clear > 0.0:
-		Debug.draw_circle(Vector3(ship_pos.x, 4.0, ship_pos.z), s.soft_clear, Color(1.0, 0.8, 0.0, 0.5), 64)
-
-	Debug.draw_label(ship_pos + Vector3(-100, 100, 0), _state_label(s))
-
-
-## Enqueue a client-side SDF overlay command; tile sampling happens on the client.
-func _emit_sdf_tiles(clearance: float) -> void:
-	Debug.draw_sdf_tiles(_ship.global_position, clearance, 1000.0, 3.0)
 
 
 ## Get the debug heading vector (for local access by camera)

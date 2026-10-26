@@ -34,7 +34,7 @@ const BOT_DEBUG         = 0x70
 # File format magic / version
 # ---------------------------------------------------------------------------
 const MAGIC: int   = 0x52455050  # "REPP"
-const VERSION: int = 7
+const VERSION: int = 8
 
 # ---------------------------------------------------------------------------
 # Ship manifest entry (populated from the header when reading a replay)

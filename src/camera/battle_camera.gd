@@ -631,63 +631,7 @@ func _calculate_target_info():
 	var ray_length: float = 200000.0
 
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		if current_aim_mode == AimMode.AERIAL or _get_sniper_type_view() == aviation_view:
-			aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
-		else:
-			# Compute the ballistically correct lead position for the locked target.
-			var lead_pos: Vector3
-			var shell_params: ShellParams = player_controller.current_weapon_controller.get_shell_params()
-			if shell_params != null:
-				var gun_pos: Vector3 = _ship.global_position
-				gun_pos.y += _ship.movement_controller.ship_draft * 0.5
-
-				# Divide target velocity by shell_time_multiplier so the lead matches the
-				# accelerated projectile simulation used by ProjectileManager.
-				var lead_result: Array = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-					gun_pos,
-					locked_target.global_position,
-					locked_target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
-					shell_params
-				)
-
-				# [launch_vector, flight_time, predicted_target_position] or [null, -1, null]
-				if lead_result[0] != null:
-					lead_pos = lead_result[2] as Vector3
-			else:
-				lead_pos = locked_target.global_position
-
-			# Billboard plane at the lead point, normal facing the camera.
-			# Aiming at any part of this plane gives a physically motivated aim position.
-			var plane_hit: Variant = _ray_billboard_plane(ray_origin, aim_direction, lead_pos)
-
-			# Physical intersection with the locked ship's hull.
-			var ship_hit: Variant = _ray_locked_ship(ray_origin, aim_direction, ray_length)
-
-			# Water surface intersection.
-			var water_hit: Variant = _ray_water_plane(ray_origin, aim_direction)
-
-			var plane_dist: float = INF
-			var ship_dist: float = INF
-			var water_dist: float = INF
-			# if plane_hit != null:
-			# 	plane_dist = ((plane_hit as Vector3) - ray_origin).length()
-			if ship_hit != null:
-				ship_dist = ((ship_hit as Vector3) - ray_origin).length()
-			if water_hit != null:
-				water_dist = ((water_hit as Vector3) - ray_origin).length()
-
-			# Water wins when closest (aiming past the ship hits the sea).
-			# Ship hull wins over the plane (direct line-of-sight to the hull).
-			# Billboard plane is the normal aim-assist surface.
-			# Far point is the last-resort fallback.
-			if water_hit != null and water_dist < minf(plane_dist, ship_dist):
-				aim_position = water_hit
-			elif ship_hit != null and ship_dist <= plane_dist:
-				aim_position = ship_hit
-			elif plane_hit != null:
-				aim_position = plane_hit
-			else:
-				aim_position = ray_origin + aim_direction * ray_length
+		aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
 	else:
 		# Unlocked: existing physics raycast against land/armor/water.
 		var space_state = get_world_3d().direct_space_state
@@ -717,48 +661,6 @@ func _calculate_target_info():
 	terrain_hit = aim_data.terrain_hit
 	penetration_power = aim_data.penetration_power
 	time_to_target = aim_data.time_to_target
-
-
-# Intersects the ray with a billboard plane: perpendicular to ray_dir and
-# passing through 'center'. Normal faces the camera (-ray_dir).
-# Returns world-space hit, or null if the plane is parallel or behind the origin.
-func _ray_billboard_plane(ray_origin: Vector3, ray_dir: Vector3, center: Vector3) -> Variant:
-	var normal: Vector3 = -ray_dir
-	var plane := Plane(normal, normal.dot(center))
-	var p: Variant = plane.intersects_ray(ray_origin, ray_dir)
-	if p == null:
-		return null
-	if ((p as Vector3) - ray_origin).dot(ray_dir) <= 0.0:
-		return null
-	return p
-
-
-# Physics raycast that only accepts hits on the locked_target's collision bodies
-# (armor layer, 1 << 1). Excludes the player's own ship. Returns world-space hit
-# position, or null if the ray misses or hits a different ship first.
-func _ray_locked_ship(ray_origin: Vector3, ray_dir: Vector3, ray_length: float) -> Variant:
-	if locked_target == null or not is_instance_valid(locked_target):
-		return null
-	var space_state := get_world_3d().direct_space_state
-	var ray_params := PhysicsRayQueryParameters3D.new()
-	ray_params.from = ray_origin
-	ray_params.to = ray_origin + ray_dir * ray_length
-	ray_params.collision_mask = 1 << 1  # armor layer
-	ray_params.collide_with_bodies = true
-	ray_params.collide_with_areas = true
-	if ray_exclude.size() == 0:
-		ray_exclude = recurs_collision_bodies(_ship)
-	ray_params.exclude = ray_exclude
-	var result: Dictionary = space_state.intersect_ray(ray_params)
-	if not result:
-		return null
-	# Walk the scene tree to confirm the hit belongs to locked_target.
-	var node: Node = result.collider
-	while node != null:
-		if node == locked_target:
-			return result.position
-		node = node.get_parent()
-	return null
 
 
 func _ray_water_plane(ray_origin: Vector3, ray_dir: Vector3) -> Variant:

@@ -247,10 +247,20 @@ func get_build_time_ms() -> float:
 
 ## Get all detected islands as an array of Dictionaries.
 ## Each dictionary has keys: id, center (Vector2), radius, area, edge_points (PackedVector2Array)
+var _islands: Array = []
+var _islands_of: NavigationMap = null
+
+## Shared and cached once the map is built; callers must not modify it.
 func get_islands() -> Array:
 	if _map == null:
 		return []
-	return Array(_map.get_islands())
+	if _islands_of == _map:
+		return _islands
+	var islands := Array(_map.get_islands())
+	if is_map_ready():
+		_islands = islands
+		_islands_of = _map
+	return islands
 
 ## Get the nearest island to a world XZ position.
 ## Returns a Dictionary with island data + "valid" key, or {"valid": false} if no islands.

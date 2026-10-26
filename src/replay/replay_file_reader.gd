@@ -99,7 +99,7 @@ func load_file(path: String) -> Error:
 	}
 	_ship_count = ship_count
 	_version = version
-	if version < 2 or version > 7:
+	if version < 2 or version > 8:
 		push_warning("ReplayFileReader: version %d loaded (expected 2-6); some fields may be missing or wrong" % version)
 
 	# ---- Ship manifest ----
@@ -282,18 +282,18 @@ func _index_bot_debug() -> void:
 
 ## Index of the last bot debug record for ship_id at or before t, or -1.
 func bot_debug_index(ship_id: int, t: float) -> int:
-	# v6 bot state predates the arc inputs; its layout no longer decodes.
-	if _version < 7 or not bot_debug.has(ship_id):
+	# Before v8 records held draw commands, not BotDebugView state.
+	if _version < 8 or not bot_debug.has(ship_id):
 		return -1
 	var times: PackedFloat32Array = bot_debug[ship_id][0]
 	var i: int = times.bsearch(t, false) - 1
 	return i if i >= 0 and t - times[i] <= BOT_DEBUG_STALE_S else -1
 
 
-## [debug draw buffers (Dictionary[DrawType, PackedByteArray]), BotControllerV4.debug_state()] of a record from bot_debug_index().
-func bot_debug_record(ship_id: int, idx: int) -> Array:
+## BotDebugView state of a record from bot_debug_index(), or {}; ship_id is a BotDebugCodec stream id.
+func bot_debug_record(ship_id: int, idx: int) -> Dictionary:
 	if idx < 0 or not bot_debug.has(ship_id):
-		return [{}, {}]
+		return {}
 	var at: int = bot_debug[ship_id][1][idx]
 	var cached: Array = _bot_debug_chunk.get(ship_id, [])
 	if cached.is_empty() or cached[0] != at:
@@ -305,11 +305,11 @@ func bot_debug_record(ship_id: int, idx: int) -> Array:
 		var prev := {}
 		var payloads := []
 		while src.get_position() < src.get_size():
-			payloads.append(BotDebugCodec.decode_record(src, prev))
+			payloads.append(BotDebugCodec.decode_record(src, prev, BotDebugCodec.schema(ship_id)))
 		cached = [at, payloads]
 		_bot_debug_chunk[ship_id] = cached
 	var k: int = bot_debug[ship_id][2][idx]
-	return cached[1][k] if k < cached[1].size() else [{}, {}]
+	return cached[1][k] if k < cached[1].size() else {}
 
 
 # ---------------------------------------------------------------------------

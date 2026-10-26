@@ -179,13 +179,14 @@ func _torpedo_color_for(owner_ship_id: int, local_team_id: int) -> Color:
 	return Color(1.0, 0.2, 0.2, 0.9)
 
 
+var _team_of: Dictionary = {}
+
 func _team_id_for(ship_id: int) -> int:
-	for gs in ghost_ships:
-		if gs == null or not is_instance_valid(gs):
-			continue
-		if int(gs.ship_entry.get("ship_id", -1)) == ship_id:
-			return int(gs.ship_entry.get("team_id", -1))
-	return -1
+	if _team_of.is_empty():
+		for gs in ghost_ships:
+			if gs != null and is_instance_valid(gs):
+				_team_of[int(gs.ship_entry.get("ship_id", -1))] = int(gs.ship_entry.get("team_id", -1))
+	return _team_of.get(ship_id, -1)
 
 
 func _get_followed_ghost() -> GhostShip:

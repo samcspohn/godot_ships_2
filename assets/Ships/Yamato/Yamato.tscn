@@ -81,7 +81,6 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 script = ExtResource("disp_script")
 sigma = 2.0
 h_disp = 190.0
-v_disp = 120.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_pue0t"]

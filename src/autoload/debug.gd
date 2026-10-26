@@ -848,23 +848,16 @@ func _build_key(draw_type: int, cmd: Array) -> String:
 			# cmd: [pos, radius, color, segments]
 			return "circle:%.1f:%d" % [cmd[1], cmd[3]]
 		DrawType.LINE:
-			# cmd: [from, to, color]
-			var f: Vector3 = cmd[0]
-			var t: Vector3 = cmd[1]
-			return "line:%.0f,%.0f,%.0f:%.0f,%.0f,%.0f" % [f.x, f.y, f.z, t.x, t.y, t.z]
+			return "line"
 		DrawType.PATH:
 			# cmd: [points, color, sphere_interval, sphere_radius]
-			var pts: PackedVector3Array = cmd[0]
-			var pc := pts.size()
-			if pc >= 2:
-				return "path:%d:%.0f,%.0f:%.0f,%.0f:%d:%.1f" % [pc, pts[0].x, pts[0].z, pts[pc-1].x, pts[pc-1].z, cmd[2], cmd[3]]
-			return "path:%d" % pc
+			return "path:%d:%d:%.1f" % [cmd[0].size(), cmd[2], cmd[3]]
 		DrawType.SQUARE:
 			# cmd: [pos, width, height, color, filled]
 			return "square:%.1f:%.1f:%s" % [cmd[1], cmd[2], "f" if cmd[4] else "o"]
 		DrawType.LABEL:
 			# cmd: [pos, text, color, font_size]
-			return "label:%s:%d" % [cmd[1], cmd[3]]
+			return "label:%d" % cmd[3]
 		DrawType.CONE:
 			# cmd: [pos, rot, cone_height, top_radius, bottom_radius, color, radial_segments]
 			return "cone:%.1f:%.1f:%.1f:%d" % [cmd[2], cmd[3], cmd[4], cmd[6]]
@@ -1225,9 +1218,9 @@ func _update_node(draw_type: int, cmd: Array, node: Node3D) -> void:
 		DrawType.CIRCLE:
 			_update_circle_node(cmd, node)
 		DrawType.LINE:
-			_update_color_only(cmd, node, 2)  # color at index 2
+			_update_line_node(cmd, node)
 		DrawType.PATH:
-			pass  # Paths are baked in world space
+			_update_path_node(cmd, node)
 		DrawType.SQUARE:
 			_update_square_node(cmd, node)
 		DrawType.LABEL:
@@ -1297,6 +1290,37 @@ func _update_sdf_tiles_node(cmd: Array, node: Node3D) -> void:
 	# cmd: [center, clearance, half_range, draw_y]
 	var center: Vector3 = cmd[0]
 	node.global_position = _get_sdf_snapped_origin(center)
+
+## Lines and paths keep their node and refill its mesh: rebuilding nodes every frame for moving geometry is the cost.
+func _update_line_node(cmd: Array, node: Node3D) -> void:
+	_update_color_only(cmd, node, 2)
+	var im := (node as MeshInstance3D).mesh as ImmediateMesh
+	if node.get_meta(&"ends", null) == [cmd[0], cmd[1]]:
+		return
+	node.set_meta(&"ends", [cmd[0], cmd[1]])
+	im.clear_surfaces()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	im.surface_add_vertex(cmd[0])
+	im.surface_add_vertex(cmd[1])
+	im.surface_end()
+
+func _update_path_node(cmd: Array, node: Node3D) -> void:
+	var points: PackedVector3Array = cmd[0]
+	if node.get_meta(&"points", PackedVector3Array()) == points:
+		return
+	node.set_meta(&"points", points)
+	var k := 0
+	for child in node.get_children():
+		if child.name == &"PathLine":
+			var im := (child as MeshInstance3D).mesh as ImmediateMesh
+			im.clear_surfaces()
+			im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+			for pt in points:
+				im.surface_add_vertex(pt)
+			im.surface_end()
+		else:
+			child.position = points[k * int(cmd[2])]
+			k += 1
 
 func _update_label_node(cmd: Array, node: Node3D) -> void:
 	# cmd: [pos, text, color, font_size, screen_up]
