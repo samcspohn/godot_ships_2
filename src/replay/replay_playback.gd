@@ -176,13 +176,14 @@ func seek(t: float) -> void:
 		torpedo_replayer.clear_all()
 
 	var lookback_start: float = maxf(0.0, t - _LOOKBACK_SECONDS)
-	var past_events: Array    = reader.read_events_in_range(lookback_start, t)
+	var past_events: Array    = reader.read_events_in_range(lookback_start, t, true)
 
-	# Build a set of torpedo_ids that were destroyed before t.
-	var destroyed_torp_ids: Dictionary = {}
+	# Torpedo ids are reused once destroyed, so only the latest FIRED of an id that no DESTROYED follows is still running.
+	var running_torps: Dictionary = {}
 	for ev in past_events:
-		if ev.get("type") == ReplayEvent.TORPEDO_DESTROYED:
-			destroyed_torp_ids[ev.get("torpedo_id", -1)] = true
+		match ev.get("type", -1):
+			ReplayEvent.TORPEDO_FIRED: running_torps[ev.get("torpedo_id", -1)] = ev
+			ReplayEvent.TORPEDO_DESTROYED: running_torps.erase(ev.get("torpedo_id", -1))
 
 	# Build a set of shell UIDs that have already hit something before t.
 	# UIDs are globally unique (never reused), so a simple set is correct.
@@ -219,10 +220,12 @@ func seek(t: float) -> void:
 				if torpedo_replayer == null:
 					continue
 				var tid: int = ev.get("torpedo_id", -1)
-				if not destroyed_torp_ids.has(tid):
+				if running_torps.get(tid) == ev:
 					torpedo_replayer.spawn_torpedo(ev)
 					# Re-apply armed / detected state if those events already happened.
 					for state_ev in past_events:
+						if state_ev.timestamp < ev.timestamp:
+							continue
 						match state_ev.get("type", -1):
 							ReplayEvent.TORPEDO_ARMED:
 								if state_ev.get("torpedo_id", -1) == tid:

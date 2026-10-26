@@ -270,6 +270,62 @@ impl P {
         result
     }
 
+    /// Where a target `t` shell-seconds out will be: heading turning at `yaw_rate`, speed along
+    /// `fwd` from `speed` under acceleration that decays from `accel.x` toward its mean `accel.y`
+    /// with time constant `accel.z` (INF: constant `accel.x`), clamped to `speed_range`.
+    /// Rates are per real second; a shell-second is 1/`time_mult` of one.
+    pub(crate) fn advance_motion(pos: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64, accel: Vector3,
+        speed_range: Vector2, time_mult: f64, t: f64) -> Vector3 {
+        const STEP_S: f64 = 0.25;
+        let t = t / time_mult.max(1e-6);
+        let n = ((t / STEP_S).ceil() as usize).clamp(1, 64);
+        let dt = t / n as f64;
+        let (ac, am, tau) = (accel.x as f64, accel.y as f64, accel.z as f64);
+        let (fx, fz) = (fwd.x as f64, fwd.z as f64);
+        let (mut x, mut z) = (pos.x as f64, pos.z as f64);
+        for i in 0..n {
+            let tm = (i as f64 + 0.5) * dt;
+            let dv = if tau.is_finite() && tau > 0.0 { am * tm + (ac - am) * tau * (1.0 - (-tm / tau).exp()) } else { ac * tm };
+            let s = (speed + dv).clamp(speed_range.x as f64, speed_range.y as f64);
+            let (sn, cs) = (yaw_rate * tm).sin_cos();
+            x += (fx * cs + fz * sn) * s * dt;
+            z += (fz * cs - fx * sn) * s * dt;
+        }
+        Vector3::new(x as f32, pos.y, z as f32)
+    }
+
+    pub(crate) fn calculate_leading_launch_vector_motion_impl(
+        start_pos: Vector3, target_pos: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64, accel: Vector3,
+        speed_range: Vector2, time_mult: f64, shell_params: &Gd<Resource>,
+    ) -> VarArray {
+        let Some((v0, _beta, _vt, _tau)) = Self::extract_params(shell_params) else {
+            return no_solution3();
+        };
+        let initial_result = crate::ballistics::physics::ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, v0);
+        if initial_result.at(0).is_nil() {
+            return no_solution3();
+        }
+        let mut time_estimate: f64 = initial_result.at(1).to_f64();
+        let at = |t: f64| Self::advance_motion(target_pos, fwd, speed, yaw_rate, accel, speed_range, time_mult, t);
+        for _ in 0..3 {
+            let iter_result = Self::calculate_launch_vector_impl(start_pos, at(time_estimate), shell_params);
+            if iter_result.at(0).is_nil() {
+                return no_solution3();
+            }
+            time_estimate = iter_result.at(1).to_f64();
+        }
+        let final_target_pos = at(time_estimate);
+        let final_result = Self::calculate_launch_vector_impl(start_pos, final_target_pos, shell_params);
+        if final_result.at(0).is_nil() {
+            return no_solution3();
+        }
+        let mut result = VarArray::new();
+        result.push(&final_result.at(0));
+        result.push(&final_result.at(1));
+        result.push(&final_target_pos.to_variant());
+        result
+    }
+
     pub(crate) fn calculate_impact_position_impl(
         start_pos: Vector3, launch_velocity: Vector3, shell_params: &Gd<Resource>,
     ) -> Vector3 {

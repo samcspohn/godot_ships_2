@@ -186,6 +186,11 @@ deferred torpedo-exposure work.
 3. **Crossfire bonus and `need`** (open / LOS cover / shield).
 4. **Roles**: `spot_value`, radar, `torp_value`.
 5. **Collapse**: delete the absorbed skills, doctrine to Fight/Retreat.
+6. **Terrain tuck** (skill-gated): finer reach/LOS near coast so a ship can sit against an
+   island with only bow or stern guns open; navigator allowed to ram the shore to get covered;
+   leaves the tuck when unspotted or HP allows.
+7. **Match plan** (after the heatmap): per spawn, a route of islands to take in order;
+   hold each until its enemies are dead or pushed back, then advance to the next.
 
 ## Open questions
 - RING_DECAY_MPS: 5 m/s takes ~3 min to give back 1 km.

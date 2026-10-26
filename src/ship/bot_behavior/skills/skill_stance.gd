@@ -212,9 +212,9 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 		var swing: float = absf(left) if way == short else TAU - absf(left)
 		var track := _escape_track(start, hdg, goal, want, vmax, vmax, w * way, p.rudder_response_time, swing, false, clearance, reach)
 		if not track.is_empty():
-			_turn_cost = minf(_turn_cost, _track_taken(track, vmax))
+			_turn_cost = minf(_turn_cost, _track_taken(track, vmax, ctx.ship.team.team_id))
 	var back := _escape_track(start, near, goal, want, vmax, vmax * p.reverse_speed_ratio, 0.0, 0.0, 0.0, true, clearance, reach)
-	_astern_cost = _track_taken(back, vmax) if not back.is_empty() else INF
+	_astern_cost = _track_taken(back, vmax, ctx.ship.team.team_id) if not back.is_empty() else INF
 	return _turn_cost < _astern_cost
 
 
@@ -252,10 +252,12 @@ func _escape_track(at: Vector2, hdg: float, goal: float, want: float, vmax: floa
 
 
 ## Whole salvos landing along `track`, each on its shooter's clock: at the hull's
-## aspect to it then, nothing once out of its range, less what speed dodges.
-func _track_taken(track: Array, vmax: float) -> float:
+## aspect to it then, nothing once out of its range or behind land from it, less what speed dodges.
+func _track_taken(track: Array, vmax: float, team_id: int) -> float:
 	var end: float = track.size() * ESCAPE_DT
 	var sum: float = 0.0
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var masks := {}
 	for sh in _shooters:
 		var reload: float = sh.reload
 		var t: float = float(sh.next)
@@ -263,7 +265,11 @@ func _track_taken(track: Array, vmax: float) -> float:
 			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
 			var at: Vector2 = track[k][0]
 			var to: Vector2 = sh.pos - at
-			if to.length() <= float(sh.range):
+			var bit: int = int(sh.bit)
+			if bit >= 0 and field != null and not masks.has(k):
+				masks[k] = field.exposure_mask(team_id, at)
+			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
+			if to.length() <= float(sh.range) and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
 				sum += reload * float(sh.weight) * sh.rows[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 			t += reload
@@ -564,13 +570,22 @@ func _survey(ctx: SkillContext) -> bool:
 		weight[s] = 1.0
 	for s in ctx.behavior.salvo_clock.aimers:
 		weight[s] = 1.0
-	if weight.is_empty():
-		return false
+	# Nobody on us: only guns the land is stopping count, so leaving a tuck is priced.
+	var tucked: bool = weight.is_empty()
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var ids: PackedInt64Array = field.get_team_enemy_ids(ship.team.team_id) if field != null and field.is_built() else PackedInt64Array()
+	var here: int = field.exposure_mask(ship.team.team_id, Vector2(ship.global_position.x, ship.global_position.z)) if not ids.is_empty() else -1
 	for e in ctx.server.get_valid_targets(ship.team.team_id):
 		if weight.has(e) or not is_instance_valid(e) or e.artillery_controller == null:
 			continue
-		if ship.global_position.distance_to(e.global_position) <= e.artillery_controller.get_params()._range:
-			weight[e] = BYSTANDER_WEIGHT
+		if ship.global_position.distance_to(e.global_position) > e.artillery_controller.get_params()._range:
+			continue
+		var bit: int = ids.find(e.get_instance_id())
+		if tucked and (bit < 0 or bit >= 63 or here & (1 << bit) != 0):
+			continue
+		weight[e] = BYSTANDER_WEIGHT
+	if weight.is_empty():
+		return false
 	var now: float = SimClock.now()
 	for s in weight.keys():
 		if not (s is Ship) or not is_instance_valid(s) or not s.is_alive():
@@ -581,7 +596,8 @@ func _survey(ctx: SkillContext) -> bool:
 			continue
 		var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
 		var next: float = ctx.behavior.salvo_clock.next_landing(s, now)
-		_shooters.append({"bearing": atan2(to.x, to.z), "rows": rows, "weight": float(weight[s]),
+		var b: int = ids.find(s.get_instance_id())
+		_shooters.append({"bearing": atan2(to.x, to.z), "rows": rows, "weight": float(weight[s]), "bit": b if b < 63 else -1,
 			"pos": Vector2(s.global_position.x, s.global_position.z), "range": s.artillery_controller.get_params()._range,
 			"reload": reload, "next": next if is_finite(next) else reload * 0.5})
 	return not _shooters.is_empty()

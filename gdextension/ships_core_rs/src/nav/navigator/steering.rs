@@ -172,8 +172,10 @@ impl ShipNavigator {
         });
 
         if !torpedo_near {
-            if let Some((choice, arc)) = self.steer_around_ships(desired_throttle, hard_clearance) {
+            if let Some((choice, arc, mut inputs)) = self.steer_around_ships(desired_throttle, hard_clearance) {
+                inputs.end_t = arc.last().map_or(0.0, |p| p.time);
                 self.winning_arc = arc;
+                self.winning_arc_inputs = inputs;
                 self.arm_turn_latch(&choice, turn_err);
                 return choice;
             }
@@ -181,8 +183,8 @@ impl ShipNavigator {
 
         if terrain_safe && !torpedo_near {
             let fast_path_lookahead = self.params.turning_circle_radius * 1.5;
-            self.winning_arc =
-                self.predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
+            self.set_winning_arc(
+                self.predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead), desired_rudder, desired_throttle);
             self.perf_last_steering_candidates_total = 1;
             self.perf_last_steering_candidates_simulated = 1;
             self.perf_last_steering_terrain_rejects = 0;
@@ -654,7 +656,7 @@ impl ShipNavigator {
                     least_bad_sdf = min_sdf;
                     result.rudder = candidates[i].rudder;
                     result.throttle = candidates[i].throttle;
-                    self.winning_arc = arc;
+                    self.set_winning_arc(arc, candidates[i].rudder, candidates[i].throttle);
                 }
             }
             result.collision_imminent = true;
@@ -745,7 +747,7 @@ impl ShipNavigator {
         result.throttle = pass_data[best_idx as usize].throttle;
 
         // Re-simulate winning arc for visualization
-        self.winning_arc = self.predict_arc_internal(result.rudder, result.throttle, sim_lookahead);
+        self.set_winning_arc(self.predict_arc_internal(result.rudder, result.throttle, sim_lookahead), result.rudder, result.throttle);
 
         result.collision_imminent =
             any_collision || (result.rudder != desired_rudder) || (result.throttle != desired_throttle);

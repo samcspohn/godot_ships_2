@@ -1,7 +1,7 @@
 use godot::prelude::*;
 
 use super::arc::obb_obb_overlap_2d;
-use super::{ShipNavigator, SteeringChoice};
+use super::{ArcInputs, ShipNavigator, SteeringChoice};
 use crate::nav::types::{angle_difference, normalize_angle, ArcPoint};
 
 /// Other ships are only avoided this far ahead; past it, re-steering every frame handles them.
@@ -9,7 +9,7 @@ pub const SHIP_HORIZON_S: f32 = 25.0;
 const HEADING_STEP: f32 = std::f32::consts::PI / 36.0;
 /// Within this of the chosen heading the rudder eases off instead of holding hard over.
 const EASE_RUDDER: f32 = 0.17;
-const EXTEND_DT: f32 = 1.0;
+pub const EXTEND_DT: f32 = 1.0;
 
 impl ShipNavigator {
     /// This frame's ships: near enough to meet within the horizon, and friendly or spotted.
@@ -50,7 +50,7 @@ impl ShipNavigator {
     }
 
     /// Hard over toward `h` the short way (bow `h` while backing), then on along it, to the horizon.
-    fn heading_path(&self, h: f32, throttle: i32) -> (Vec<ArcPoint>, f32) {
+    fn heading_path(&self, h: f32, throttle: i32) -> (Vec<ArcPoint>, f32, f32) {
         let diff = angle_difference(self.state.heading, h);
         let astern = throttle < 0;
         // Negative rudder raises heading going ahead and lowers it going astern.
@@ -66,7 +66,7 @@ impl ShipNavigator {
             t += EXTEND_DT;
             arc.push(ArcPoint::new(last.position + fwd * (last.speed * (t - last.time)), last.heading, last.speed, t));
         }
-        (arc, rudder)
+        (arc, rudder, last.time)
     }
 
     /// First moment `arc` meets a ship, INF if never.
@@ -94,13 +94,13 @@ impl ShipNavigator {
     /// nearest the goal whose turn and run stay clear of ships and land, steered
     /// for, trying the other direction of travel if none is; with none clear, the
     /// one meeting a ship latest at the asked throttle.
-    pub(crate) fn steer_around_ships(&mut self, throttle: i32, hard_clearance: f32) -> Option<(SteeringChoice, Vec<ArcPoint>)> {
+    pub(crate) fn steer_around_ships(&mut self, throttle: i32, hard_clearance: f32) -> Option<(SteeringChoice, Vec<ArcPoint>, ArcInputs)> {
         if self.ships.is_empty() || self.skip_ship_obstacles {
             return None;
         }
         let prefer = if self.turn_latch != 0.0 { self.turn_latch } else { self.state.current_rudder.signum() };
         let prefer = if prefer == 0.0 { 1.0 } else { prefer };
-        let mut fallback: Option<(f32, f32, f32, Vec<ArcPoint>)> = None;
+        let mut fallback: Option<(f32, f32, f32, Vec<ArcPoint>, f32)> = None;
         let steps = (std::f32::consts::PI / HEADING_STEP).round() as i32;
         for t in [throttle, if throttle < 0 { 4 } else { -1 }] {
             let goal = self.steer_goal(t < 0);
@@ -109,7 +109,7 @@ impl ShipNavigator {
                 let sides: &[f32] = if k == 0 { &[1.0] } else { &[prefer, -prefer] };
                 for &side in sides {
                     let h = goal - side * k as f32 * HEADING_STEP;
-                    let (arc, rudder) = self.heading_path(h, t);
+                    let (arc, rudder, turn_t) = self.heading_path(h, t);
                     if k == 0 && t == throttle {
                         if self.ship_contact(&arc).is_infinite() {
                             return None;
@@ -121,15 +121,15 @@ impl ShipNavigator {
                     }
                     let contact = self.ship_contact(&arc);
                     if contact.is_infinite() {
-                        return Some((self.steer_to(h, rudder, t), arc));
+                        return Some((self.steer_to(h, rudder, t), arc, self.arc_inputs(rudder, t, turn_t)));
                     }
                     if t == throttle && fallback.as_ref().is_none_or(|f| contact > f.0) {
-                        fallback = Some((contact, h, rudder, arc));
+                        fallback = Some((contact, h, rudder, arc, turn_t));
                     }
                 }
             }
         }
-        fallback.map(|(_, h, rudder, arc)| (self.steer_to(h, rudder, throttle), arc))
+        fallback.map(|(_, h, rudder, arc, turn_t)| (self.steer_to(h, rudder, throttle), arc, self.arc_inputs(rudder, throttle, turn_t)))
     }
 
     fn steer_to(&self, h: f32, rudder: f32, throttle: i32) -> SteeringChoice {

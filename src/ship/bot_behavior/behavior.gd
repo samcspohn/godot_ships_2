@@ -472,6 +472,9 @@ func _target_aim_error(target: Ship) -> Dictionary:
 		for k in _aim_error.keys():
 			if not is_instance_valid(k) or not k.is_alive():
 				_aim_error.erase(k)
+		for k in _motion.keys():
+			if not is_instance_valid(k) or not k.is_alive():
+				_motion.erase(k)
 	return rolled
 
 ## Believed turn rate for `target`, rad/sec about +Y. Zero unless this bot
@@ -495,17 +498,67 @@ func aim_lead_point(target: Ship, contact: Dictionary, aim_point: Vector3) -> Va
 	if shell_params == null:
 		return null
 	var err := _target_aim_error(target)
-	var believed_vel: Vector3 = contact.velocity * float(err.speed_mult) \
-		/ ProjectileManager.get_shell_time_multiplier()
-	var yaw_rate: float = _believed_yaw_rate(target, contact)
-	var lead_result: Array
-	if absf(yaw_rate) > 0.0:
-		lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector_turning(
-			_ship.global_position, aim_point, believed_vel, yaw_rate, shell_params)
-	else:
-		lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-			_ship.global_position, aim_point, believed_vel, shell_params)
-	return lead_result[2]
+	var mult: float = ProjectileManager.get_shell_time_multiplier()
+	var mc = target.movement_controller if is_instance_valid(target) else null
+	if contact.get("is_lkp", true) or mc == null:
+		var believed_vel: Vector3 = contact.velocity * float(err.speed_mult) / mult
+		return ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+			_ship.global_position, aim_point, believed_vel, shell_params)[2]
+	var fwd: Vector3 = -target.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var k: float = float(err.speed_mult)
+	var speeds := Vector2(-mc.max_speed * mc._p().reverse_speed_ratio, mc.max_speed) * k
+	var accel: Vector3 = _believed_accel(target, fwd)
+	accel.x *= k
+	accel.y *= k
+	return ProjectilePhysicsWithDragV2.calculate_leading_launch_vector_motion(
+		_ship.global_position, aim_point, fwd, target.linear_velocity.dot(fwd) * k,
+		_believed_yaw_rate(target, contact), accel, speeds, mult, shell_params)[2]
+
+## Forward acceleration, sampled every ACCEL_SAMPLE_S while we aim at a target; a gap over ACCEL_GAP_S starts over.
+const ACCEL_SAMPLE_S: float = 0.5
+const ACCEL_GAP_S: float = 2.0
+const ACCEL_HISTORY: int = 40
+## Persistence is read at this lag, in samples; accel_mix needs this many samples first.
+const ACCEL_LAG: int = 4
+const ACCEL_MIN_SAMPLES: int = 12
+var _motion: Dictionary = {}  # Ship -> {t, s, a: PackedFloat32Array}
+
+## How `target`'s forward acceleration is led: Vector3(current, mean, time constant) for
+## advance_motion. Without accel_mix the current one is held (INF); with it, the mean of the
+## history and its persistence: the lag autocorrelation as e^(-lag/tau), the MMSE blend for a mean-reverting juke.
+func _believed_accel(target: Ship, fwd: Vector3) -> Vector3:
+	var now: float = SimClock.now()
+	var s: float = target.linear_velocity.dot(fwd)
+	var m: Dictionary = _motion.get(target, {})
+	if m.is_empty() or now < float(m.t) or now - float(m.t) > ACCEL_GAP_S:
+		_motion[target] = {t = now, s = s, a = PackedFloat32Array()}
+		return Vector3(0.0, 0.0, INF)
+	var hist: PackedFloat32Array = m.a
+	if now - float(m.t) >= ACCEL_SAMPLE_S:
+		hist.append((s - float(m.s)) / (now - float(m.t)))
+		if hist.size() > ACCEL_HISTORY:
+			hist.remove_at(0)
+		_motion[target] = {t = now, s = s, a = hist}
+	if hist.is_empty():
+		return Vector3(0.0, 0.0, INF)
+	var cur: float = hist[hist.size() - 1]
+	if aptitude == null or not aptitude.accel_mix or hist.size() < ACCEL_MIN_SAMPLES:
+		return Vector3(cur, cur, INF)
+	var mean := 0.0
+	for v in hist:
+		mean += v
+	mean /= hist.size()
+	var num := 0.0
+	var den := 0.0
+	for i in hist.size():
+		var d: float = hist[i] - mean
+		den += d * d
+		if i >= ACCEL_LAG:
+			num += d * (hist[i - ACCEL_LAG] - mean)
+	var rho: float = clampf(num / den if den > 1e-6 else 0.0, 0.05, 0.95)
+	return Vector3(cur, mean, -ACCEL_LAG * ACCEL_SAMPLE_S / log(rho))
 
 ## Whether the guns should be offered this contact: a live spot always, an LKP
 ## only while fresh. Window depends on source — sensor-held (hydro/radar/air)
@@ -706,10 +759,10 @@ func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, al
 	var help := 0.0
 	for a: Ship in allies:
 		help += _curve_at(dps_curve(a, enemy), at.distance_to(Vector2(a.global_position.x, a.global_position.z)))
-	return priority_value(priority_parts(enemy, r, sail_m, shootable, help))
+	return priority_value(priority_parts(enemy, r, sail_m, shootable, help), aptitude.focus_w)
 
-static func priority_value(p: Vector4) -> float:
-	return p.x * p.y * p.z * (1.0 + PRIORITY_FOCUS_W * p.w)
+static func priority_value(p: Vector4, focus_w: float = PRIORITY_FOCUS_W) -> float:
+	return p.x * p.y * p.z * (1.0 + focus_w * p.w)
 
 ## priority_score's terms: (threat %HP/s, chance %HP/s, reach, harm: share of our HP it takes
 ## while we and `allied_dps` kill it, at most PRIORITY_HARM_CAP).
@@ -723,7 +776,7 @@ func priority_parts(enemy: Ship, r: float, sail_m: float, shootable: bool, allie
 ## priority_parts as `scorer` would rank `target` `r` off, shootable.
 static func score_parts(scorer: Ship, target: Ship, r: float, allied_dps: float = 0.0) -> Vector4:
 	var threat: float = _curve_at(danger_curve(target, scorer), r) / maxf(scorer.health_controller.current_hp, 1.0) \
-		+ torpedo_rate(target, scorer, r)
+		+ _curve_at(torpedo_danger(target, scorer), r)
 	var c := dps_curve(scorer, target)
 	var hp: float = maxf(target.health_controller.current_hp, 1.0)
 	var at: float = minf(r, reach_m(scorer))
@@ -2716,16 +2769,18 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 const DISENGAGE_THREAT: float = 0.4
 const REENGAGE_THREAT: float = 0.35
 const STAY_MARGIN: float = 1.25
+## Full aggression shrinks the time-to-win a ship must outlive by e^this; full caution grows it as much.
+const AGGRESSION_STAY: float = 0.7
 
 func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var leaving: bool = _active_skill_name == &"Disengage"
 	if not ctx.ship.is_detected():
 		return null
-	var win := time_to_win(ctx)
+	var win := time_to_win(ctx) if aptitude == null or aptitude.trade_disengage else -1.0
 	if win < 0.0:
 		if sit.threat <= (REENGAGE_THREAT if leaving else DISENGAGE_THREAT):
 			return null
-	elif time_to_die(ctx) >= win * (STAY_MARGIN if leaving else 1.0):
+	elif time_to_die(ctx) >= win * (STAY_MARGIN if leaving else 1.0) * exp(-AGGRESSION_STAY * aggression()):
 		return null
 	var out := _disengage(ctx, sit)
 	if out != null:
@@ -2737,7 +2792,8 @@ func time_to_die(ctx: SkillContext) -> float:
 	var t: float = get_threat_score(ctx)
 	return INF if t <= 0.0 else threat_horizon(ctx.server) / -log(1.0 - minf(t, 0.999999))
 
-## Seconds to sail into gun range of our priority and sink it at its desired range with the team; while the
+## Seconds to sail into gun range of our priority and sink it alone at its desired range (friends show
+## in time_to_die, splitting the fire); while the
 ## priority is unnamed, the quickest identified enemy; -1 with none.
 func time_to_win(ctx: SkillContext) -> float:
 	if priority_target() != null:
@@ -2749,15 +2805,11 @@ func time_to_win(ctx: SkillContext) -> float:
 			best = t if best < 0.0 else minf(best, t)
 	return best
 
-func _time_to_beat(ctx: SkillContext, p: Ship, at: Vector2) -> float:
+func _time_to_beat(_ctx: SkillContext, p: Ship, at: Vector2) -> float:
 	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var d: float = here.distance_to(at)
 	var want: float = desired(p).x
 	var rate: float = kill_rate(_ship, p, want)
-	for f: Ship in ctx.server.get_team_ships(_ship.team.team_id):
-		if f != _ship and is_instance_valid(f) and f.is_alive() and f.artillery_controller != null:
-			rate += _curve_at(dps_curve(f, p), at.distance_to(Vector2(f.global_position.x, f.global_position.z))) \
-				/ maxf(p.health_controller.current_hp, 1.0)
 	if rate <= 0.0:
 		return INF
 	var close: float = maxf(d - maxf(want, _ship.artillery_controller.get_params()._range), 0.0)
@@ -2888,15 +2940,15 @@ func _trace(intent: NavIntent, ctx: SkillContext, sit: Dictionary) -> void:
 	var pt := priority_target()
 	var pp := priority_point()
 	var dest: Vector3 = intent.target_position if intent != null else Vector3.INF
-	print("TRACE t=%d %s#%s team=%d hp=%.2f at=(%.1f,%.1f) skill=%s arm=%s dest=(%.1f,%.1f) prio=%s pd=%.1f want=%.1f threat=%.2f tgt=%s | %s" % [
+	print("TRACE t=%d %s#%s team=%d hp=%.2f at=(%.1f,%.1f) skill=%s arm=%s dest=(%.1f,%.1f) prio=%s pd=%.1f want=%.1f threat=%.2f agg=%+.2f tgt=%s | %s" % [
 		SimClock.now(), ctx.ship.ship_name, ctx.ship.name, ctx.ship.team.team_id,
 		ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp,
 		at.x / 1000, at.z / 1000, _skill_key, sit.get("arm", ""), dest.x / 1000, dest.z / 1000,
 		pt.ship_name if pt != null else str(priority.get("ref", "-")),
 		Vector2(pp.x - at.x, pp.z - at.z).length() / 1000 if pp.is_finite() else -1.0,
-		desired(pt).x / 1000 if pt != null else -1.0, sit.get("threat", -1.0),
+		desired(pt).x / 1000 if pt != null else -1.0, sit.get("threat", -1.0), aggression(),
 		ctx.target.ship_name if ctx.target != null else "-",
-		_skill_fight.debug_text() if _active_skill_name == &"Fight" else ""])
+		(_skill_fight.debug_text() if _active_skill_name == &"Fight" else "") + " | " + _skill_stance.debug_text()])
 
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
@@ -3262,8 +3314,44 @@ static func gun_bears(ship: Ship, g: Turret, bearing_deg: float, side: float) ->
 	var yaw: float = (ship.global_basis.inverse() * g.global_basis).get_euler().y
 	return g.is_angle_in_fire_arcs(yaw + g.get_angle_to_target(at))
 
-## Below a win, a trade this even still holds its ground.
+## Below a win, a trade this even still holds its ground; scaled by e^(-AGGRESSION_TRADE x aggression).
 const EVEN_TRADE: float = 0.8
+const AGGRESSION_TRADE: float = 0.5
+
+## Points lead at which the points outlook is tanh(1); and its weight at the start of the match, rising to 1 at the end.
+const OUTLOOK_POINTS: float = 150.0
+const OUTLOOK_POINTS_EARLY: float = 0.5
+const OUTLOOK_TTL_S: float = 1.0
+## Team id -> [time, Vector2(points, strength)].
+static var _outlook: Dictionary = {}
+
+## The team's standing, each -1..1: x the points outlook (+ behind, so press; - ahead, so keep it),
+## y the strength outlook (+ more alive hull than theirs, log2 of the ratio of alive max HP; public on the scoreboard).
+static func team_outlook(server: GameServer, team_id: int) -> Vector2:
+	var now: float = SimClock.now()
+	var c: Array = _outlook.get(team_id, [])
+	if not c.is_empty() and now >= float(c[0]) and now - float(c[0]) < OUTLOOK_TTL_S:
+		return c[1]
+	var lead: float = float(server.teams[team_id].points - server.teams[1 - team_id].points)
+	var late: float = clampf(1.0 - server.get_match_time_remaining() / server.MATCH_DURATION, 0.0, 1.0)
+	var pts: float = -tanh(lead / OUTLOOK_POINTS) * lerpf(OUTLOOK_POINTS_EARLY, 1.0, late)
+	var hull := [0.0, 0.0]
+	for t in 2:
+		for s: Ship in server.get_team_ships(t):
+			if is_instance_valid(s) and s.is_alive():
+				hull[t] += s.health_controller.max_hp
+	var strength: float = clampf(log(maxf(hull[team_id], 1.0) / maxf(hull[1 - team_id], 1.0)) / log(2.0), -1.0, 1.0)
+	var v := Vector2(pts, strength)
+	_outlook[team_id] = [now, v]
+	return v
+
+## How hard this bot presses, -1..1: the team outlook through its aptitude's points_sense and strength_sense.
+func aggression() -> float:
+	var server: GameServer = _ship.get_node_or_null("/root/Server") if is_instance_valid(_ship) else null
+	if server == null or _ship.team == null:
+		return 0.0
+	var o := team_outlook(server, _ship.team.team_id)
+	return clampf(aptitude.points_sense * o.x + aptitude.strength_sense * o.y, -1.0, 1.0)
 const DESIRED_STEP_M: float = 250.0
 const LOSE_MARGIN_M: float = 500.0
 enum Desire { WIN, EVEN, LOSE }
@@ -3274,6 +3362,31 @@ enum Desire { WIN, EVEN, LOSE }
 ## LOSE: else the best trade we have, or LOSE_MARGIN_M past its guns with none.
 ## Damage taken moves all but the past-its-reach win out toward the edge of its guns, or ours if nearer.
 func desired_range(enemy: Ship) -> Vector2:
+	var d := _desired_by_trade(enemy)
+	if aptitude != null and not aptitude.push_shares.is_empty():
+		var share: float = aptitude.push_shares[absi(hash(String(_ship.name))) % aptitude.push_shares.size()]
+		return Vector2(maxf(share * _ship.artillery_controller.get_params()._range, POINT_BLANK_M), Desire.WIN)
+	var hide: float = hide_range(enemy)
+	if d.x < hide and kill_rate(_ship, enemy, hide) > 0.0:
+		d.x = hide
+	return d
+
+## A torpedo boat fights a hull from where it cannot be seen: past its spotting of us, or its radar or hydro, by HIDE_MARGIN_M,
+## while its torpedoes or guns reach (desired_range checks); 0 without torpedoes.
+## Cover is not ringed, so island stations still let it in to point blank.
+const HIDE_MARGIN_M: float = 500.0
+
+func hide_range(enemy: Ship) -> float:
+	var tc: TorpedoController = _ship.torpedo_controller if is_instance_valid(_ship.torpedo_controller) else null
+	if tc == null or tc.launchers.is_empty() or _ship.concealment == null or _ship.concealment.params == null:
+		return 0.0
+	var seen: float = (_ship.concealment.params.p() as ConcealmentParams).radius
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
+	if server != null:
+		seen = maxf(seen, server._force_spot_reach(enemy))
+	return seen + HIDE_MARGIN_M
+
+func _desired_by_trade(enemy: Ship) -> Vector2:
 	var our_gun: float = _ship.artillery_controller.get_params()._range
 	var their_gun: float = enemy.artillery_controller.get_params()._range
 	var our_hp: float = maxf(_ship.health_controller.current_hp, 1.0)
@@ -3283,6 +3396,7 @@ func desired_range(enemy: Ship) -> Vector2:
 	var best_r := -1.0
 	var best := 0.0
 	var even := -1.0
+	var even_trade: float = EVEN_TRADE * exp(-AGGRESSION_TRADE * aggression())
 	var r := POINT_BLANK_M
 	while r <= minf(our_reach, their_reach):
 		var out: float = kill_rate(_ship, enemy, r)
@@ -3291,10 +3405,10 @@ func desired_range(enemy: Ship) -> Vector2:
 		if ratio > best:
 			best = ratio
 			best_r = r
-		if ratio >= EVEN_TRADE:
+		if ratio >= even_trade:
 			even = r
 		r += DESIRED_STEP_M
-	var hurt: float = 1.0 - clampf(our_hp / maxf(_ship.health_controller.max_hp, 1.0), 0.0, 1.0)
+	var hurt: float = aptitude.hurt_push * (1.0 - clampf(our_hp / maxf(_ship.health_controller.max_hp, 1.0), 0.0, 1.0))
 	var edge: float = minf(their_gun + LOSE_MARGIN_M, our_gun)
 	var eased := func(at: float) -> float: return lerpf(at, maxf(at, edge), hurt)
 	if best > 1.0:
@@ -3347,6 +3461,31 @@ static func danger_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 		best = maxf(best * fade, c[k] if k < c.size() else 0.0)
 		out[k] = best
 	_danger_curves[key] = out
+	return out
+
+## [shooter id, target id] -> [target HP bucket, curve]: danger_curve for torpedo_rate, rebuilt per TORP_DANGER_BUCKETS of HP.
+## Launches from inside the shooter's concealment do not count: closing that far in open water it is seen and shot first.
+static var _torp_danger: Dictionary = {}
+const TORP_DANGER_BUCKETS: int = 20
+
+static func torpedo_danger(shooter: Ship, target: Ship) -> PackedFloat32Array:
+	var key := [shooter.get_instance_id(), target.get_instance_id()]
+	var bucket: int = int(target.health_controller.current_hp / maxf(target.health_controller.max_hp, 1.0) * TORP_DANGER_BUCKETS)
+	var held: Array = _torp_danger.get(key, [])
+	if not held.is_empty() and int(held[0]) == bucket:
+		return held[1]
+	var reach: float = shooter.torpedo_controller.get_max_range() if is_instance_valid(shooter.torpedo_controller) else 0.0
+	var seen: float = (shooter.concealment.params.p() as ConcealmentParams).radius \
+		if shooter.concealment != null and shooter.concealment.params != null else 0.0
+	var fade: float = exp(-DESIRED_STEP_M / maxf(shooter.movement_controller.max_speed, 1.0) / PRIORITY_CLOSE_S)
+	var out := PackedFloat32Array()
+	out.resize(int((PRIORITY_DANGER_MAX_M - POINT_BLANK_M) / DESIRED_STEP_M) + 1)
+	var best := 0.0
+	for k in out.size():
+		var r: float = POINT_BLANK_M + k * DESIRED_STEP_M
+		best = maxf(best * fade, torpedo_rate(shooter, target, r) if r <= reach and r >= seen else 0.0)
+		out[k] = best
+	_torp_danger[key] = [bucket, out]
 	return out
 
 ## Radians between neighbouring torpedoes of a spread (TorpedoLauncher.fire).
@@ -3480,7 +3619,7 @@ func update_rings(ctx: SkillContext) -> void:
 		var dt: float = 0.0 if h.is_empty() else maxf(now - float(h[1]), 0.0)
 		var dist: float = here.distance_to(b.pos)
 		var shot: bool = active_shooters_at_me.has(e)
-		var aggro: float = INF if shot else aggro_radius(ctx, e, b.pos, want.x)
+		var aggro: float = INF if shot or not aptitude.aggro_aware else aggro_radius(ctx, e, b.pos, want.x)
 		if aggro < want.x:
 			r = aggro if aggro < r else move_toward(r, aggro, RING_SHRINK_MPS * dt)
 		elif dist < want.x and not shot:

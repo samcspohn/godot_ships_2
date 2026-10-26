@@ -191,6 +191,10 @@ func destroy_shell(id: int):
 	active_shell_count -= 1
 	shell_destroyed.emit(id)
 
+func destroy_all() -> void:
+	for id in range(next_slot):
+		destroy_shell(id)
+
 ## Check if a shell slot is active
 func is_shell_active(id: int) -> bool:
 	if id < 0 or id >= MAX_SHELLS:

@@ -20,6 +20,9 @@ pub(crate) struct CoverArgs {
     /// Enemies that see us: a cell must lie within clip_half of each one's bearing to the search origin.
     pub clip_pos: Vec<Vector2>,
     pub clip_half: f32,
+    /// Cells within exclude_r of one of these are not searched.
+    pub exclude: Vec<Vector2>,
+    pub exclude_r: f32,
 }
 
 impl CoverArgs {
@@ -36,6 +39,8 @@ impl CoverArgs {
             near_d: f("near_d", f32::INFINITY),
             clip_pos: o.get("clip_pos").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
             clip_half: f("clip_half", 35f32.to_radians()),
+            exclude: o.get("exclude").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
+            exclude_r: f("exclude_r", 0.0),
         }
     }
 
@@ -46,7 +51,7 @@ impl CoverArgs {
         if self.near_d.is_finite() && p.distance_to(self.near_pos) >= self.near_d {
             return None;
         }
-        if !self.in_clip(from, p) {
+        if !self.in_clip(from, p) || self.exclude.iter().any(|x| x.distance_to(p) < self.exclude_r) {
             return None;
         }
         if !self.axis.is_finite() || d < 1.0 {

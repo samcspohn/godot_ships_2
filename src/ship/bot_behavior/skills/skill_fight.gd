@@ -32,7 +32,7 @@ var _seed_at: float = -INF
 const EASE_GAP_S := 1.0
 var _shown := Vector2.INF
 var _shown_at: float = -INF
-const EASE_GAIN_MPS := 0.5
+const EASE_GAIN_MPS := 1.0
 ## A goal moving less than this is the same destination.
 const EASE_SAME_M := 50.0
 var _goal := Vector2.INF

@@ -6,7 +6,7 @@ extends SkillPosition
 ## by VisibilityGrid.cover_search in the cone toward where the ship was headed
 ## (the shared hold seed, else cone_axis, else the priority) and the cone away,
 ## away cells costing AWAY_RATIO times their distance. OFFENSE also needs a
-## target in reach and never goes dark: its guns would bloom it.
+## target in reach (one the guns can aim at, unless none is) and never goes dark: its guns would bloom it.
 ## Dark water is also at least DARK_MARGIN_M farther from each threat than we are now.
 ## Only enemies with heavy_guns break a shielded cell. A station lost en route is searched on from.
 ## Params: mode, cone_axis, cone_half, away_ratio (INF: no away cone), allow_dark, fire_en_route, refs,
@@ -27,6 +27,12 @@ const COVER_BLIND_S := 10.0
 const SPOTTER_REACH := 1.3
 const RESEARCH_MS := 1000
 const DARK_MARGIN_M := 500.0
+## A station a shell cannot leave for any target, by an exact ray from where the hull is (the
+## search reads 300 m cells), is not taken again for BLOCKED_TTL_S: at once when found, after BLOCKED_S on arrival.
+const ARRIVED_M := 200.0
+const BLOCKED_S := 5.0
+const BLOCKED_TTL_S := 60.0
+const VERIFY_TRIES := 3
 ## Each enemy that sees us clips the search to this either side of its bearing to us: no cover past it.
 const CLIP_HALF := deg_to_rad(35.0)
 
@@ -41,6 +47,8 @@ var _targets: Dictionary = {}  # Ship -> true: what the held station shoots
 ## The last search's {here, axis, opts, ms}, for the debug overlay.
 var last_sweep: Dictionary = {}
 var _resume := Vector2.INF
+var _blocked: Array = []  # [Vector2, expiry]
+var _blocked_since: float = INF
 
 func reset() -> void:
 	super()
@@ -81,7 +89,22 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var opts := search_opts(ctx, field, team_id, belief, g, params)
+	if not (opts.shootable as PackedByteArray).has(1):
+		opts = search_opts(ctx, field, team_id, belief, g, params, true)
 	var now: float = SimClock.now()
+	_blocked = _blocked.filter(func(b: Array) -> bool: return now < float(b[1]))
+	opts["exclude"] = PackedVector2Array(_blocked.map(func(b: Array) -> Vector2: return b[0]))
+	opts["exclude_r"] = COVER_HOLD_M
+	var want: int = _aim_bits(field, team_id, opts) if mode == Mode.OFFENSE else 0
+	if _has_station and want != 0:
+		var st := Vector2(_station.x, _station.z)
+		if here.distance_to(st) > ARRIVED_M or field.reach_mask_exact(team_id, opts.hull_key, here) & want != 0:
+			_blocked_since = INF
+		else:
+			_blocked_since = minf(_blocked_since, now)
+			if now - _blocked_since >= BLOCKED_S:
+				_block(st, now)
+				_drop()
 	if _has_station:
 		var ev: Dictionary = vis.cover_eval(Vector2(_station.x, _station.z), opts.pos, opts)
 		if not _in_clip(here, Vector2(_station.x, _station.z), opts.clip_pos):
@@ -104,9 +127,16 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		_resume = Vector2.INF
 		var axis := _axis(ctx, params, from)
 		last_sweep = {"here": from, "axis": axis, "opts": opts, "ms": Time.get_ticks_msec()}
-		var r: Dictionary = vis.cover_search(from, axis, opts.pos, opts)
+		var r: Dictionary = {}
+		for i in VERIFY_TRIES:
+			r = vis.cover_search(from, axis, opts.pos, opts)
+			if not bool(r.found) or want == 0 or field.reach_mask_exact(team_id, opts.hull_key, r.pos) & want != 0:
+				break
+			_block(r.pos, now)
+			opts.exclude.append(r.pos)
+			r = {}
 		_cells = int(r.get("cells", 0))
-		if bool(r.found):
+		if bool(r.get("found", false)):
 			var p: Vector2 = r.pos
 			_adopt(Vector3(p.x, 0.0, p.y), float(r.count), {})
 			_dark = bool(r.dark)
@@ -114,12 +144,26 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			_target_at = now
 			_targets = {}
 			_note_targets(opts.ids, int(r.mask))
+			_blocked_since = INF
 	if not _has_station:
 		return _decline()
 	_claim(team_id, ship.get_instance_id(), now_ms)
 	var intent := _intent(ctx, field, team_id, params.merged({"jitter_radius": COVER_HOLD_M}))
 	intent.free_route = true
 	return intent
+
+## Bits, in the reach field's enemy order, of the targets opts counts as shootable.
+func _aim_bits(field: ReachField, team_id: int, opts: Dictionary) -> int:
+	var order: PackedInt64Array = field.get_team_enemy_ids(team_id)
+	var bits := 0
+	for i in (opts.ids as PackedInt64Array).size():
+		var b: int = order.find(opts.ids[i])
+		if opts.shootable[i] == 1 and b >= 0 and b < 63:
+			bits |= 1 << b
+	return bits
+
+func _block(p: Vector2, now: float) -> void:
+	_blocked.append([p, now + BLOCKED_TTL_S])
 
 ## Toward where the ship was headed: the shared hold seed, else the caller's axis, else the priority.
 func _axis(ctx: SkillContext, params: Dictionary, here: Vector2) -> float:
@@ -132,8 +176,9 @@ func _axis(ctx: SkillContext, params: Dictionary, here: Vector2) -> float:
 	return atan2(pp.x - here.x, pp.z - here.y) if pp.is_finite() else INF
 
 ## cover_search's opts for this ship now.
+## Targets are what the guns can aim at; with `all_targets`, every contact and reference too.
 func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary], g: Dictionary,
-		params: Dictionary) -> Dictionary:
+		params: Dictionary, all_targets: bool = false) -> Dictionary:
 	var ship: Ship = ctx.ship
 	var conceal: float = NavigationMapManager.reach_conceal_radius(ship)
 	# Firing on the way, the bloom is what they see us from.
@@ -154,7 +199,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.spot_r.append(0.0)
 		opts.heavy.append(1)
 		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship) else 0)
-		opts.shootable.append(1)
+		opts.shootable.append(1 if all_targets or ctx.behavior._aimable(e) else 0)
 		opts.ids.append(e.get_instance_id())
 		if lit and here.distance_to(b.pos) <= maxf(seen_from, force):
 			opts.clip_pos.append(b.pos)
@@ -166,7 +211,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.spot_r.append(0.0)
 		opts.heavy.append(0)
 		opts.shells.append(0)
-		opts.shootable.append(1)
+		opts.shootable.append(1 if all_targets else 0)
 		opts.ids.append(int(r.id))
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),

@@ -53,6 +53,7 @@ var _speed_buttons: Array = []
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	add_child(playback)
+	Debug.set_replay_mode(true)
 
 	# Connect playback signals
 	playback.time_changed.connect(_on_time_changed)
@@ -137,6 +138,8 @@ func _ready() -> void:
 	# Hook up weapon replayers
 	playback.shell_replayer = shell_replayer
 	playback.torpedo_replayer = torpedo_replayer
+	ReplayBallistics.time_multiplier = playback.reader.shell_time_multiplier
+	torpedo_replayer.speed_multiplier = playback.reader.torpedo_speed_multiplier
 	shell_replayer.ghost_ships = ghost_ships
 
 	# Torpedo indicators (chevrons + proximity ring) — lives inside the
@@ -272,6 +275,36 @@ func _input(event: InputEvent) -> void:
 # ---------------------------------------------------------------------------
 func _process(_delta: float) -> void:
 	_update_camera()
+	_update_bot_debug()
+
+func _update_bot_debug() -> void:
+	if playback.reader == null or not Debug.debug_enabled:
+		return
+	var idx: int = playback.reader.bot_debug_index(_follow_ship_id, playback.current_time)
+	var rec: Array = playback.reader.bot_debug_record(_follow_ship_id, idx)
+	var gs: Node3D = ghost_ships[_follow_ship_id] if _follow_ship_id >= 0 and _follow_ship_id < ghost_ships.size() else null
+	if rec[1].is_empty() or gs == null:
+		Debug.show_buffers(rec[0])
+		return
+	var fwd: Vector3 = -gs.global_transform.basis.z
+	var pose: Dictionary = Debug.capture(_draw_bot_pose.bind(rec[1], gs.global_position, atan2(fwd.x, fwd.z)))
+	var merged: Dictionary = rec[0].duplicate()
+	for t in pose:
+		merged[t] = merged.get(t, PackedByteArray()) + pose[t]
+	Debug.show_buffers(merged)
+
+func _draw_bot_pose(state: Dictionary, pos: Vector3, heading: float) -> void:
+	BotControllerV4.draw_state(state, pos, heading)
+	BotControllerV4.draw_trajectory(ShipNavigator.simulate_debug_arc(state.get("arc", PackedFloat32Array()), pos, heading))
+	var t: float = playback.current_time
+	var team: int = playback.reader.ships[_follow_ship_id].get("team_id", -1)
+	var enemies := {}
+	for e in playback.reader.ships:
+		if e.get("team_id", -1) != team:
+			enemies[e.ship_id] = true
+	BotControllerV4.draw_shell_threats(shell_replayer.threats_near(Vector2(pos.x, pos.z), BotControllerV4.SHELL_QUERY_RANGE, enemies, t))
+	BotControllerV4.draw_torpedo_threats(torpedo_replayer.threat_points(pos, enemies, t))
+
 
 func _update_camera() -> void:
 	# Follow a ghost ship if selected
@@ -314,6 +347,7 @@ func _on_ship_follow_selected(index: int) -> void:
 
 func _on_back_pressed() -> void:
 	playback.pause()
+	Debug.set_replay_mode(false)
 	# Detach our overrides from the autoloaded particle system before unloading
 	# this scene, otherwise the system will hold a stale instance id and run
 	# at time_scale=0 forever in the menu.

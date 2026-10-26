@@ -66,6 +66,9 @@ var follow_ship: Ship = null
 # a ship, so autoload draws (OBB wireframes, etc.) are visible.
 var debug_enabled: bool = false
 
+# Replay viewer feeds recorded buffers through show_buffers(); no server to talk to.
+var replay_mode: bool = false
+
 # Per-type byte buffers: Dictionary[int, PackedByteArray]
 # IMPORTANT: PackedByteArray is a value type (copy-on-write) in GDScript.
 # We must NEVER extract it into a local var and mutate the local — the
@@ -191,6 +194,9 @@ func _ready() -> void:
 var _signals_connected: bool = false
 
 func _process(_delta: float) -> void:
+	if replay_mode:
+		_update_mesh_pool()
+		return
 	if not _Utils.authority():
 		if not _signals_connected:
 			_signals_connected = true
@@ -208,7 +214,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if event.keycode == KEY_QUOTELEFT and event.ctrl_pressed:
 			debug_enabled = not debug_enabled
 			print("[Debug] Debug overlay %s" % ("ON" if debug_enabled else "OFF"))
-			if debug_enabled:
+			if replay_mode:
+				if not debug_enabled:
+					_clear_mesh_pool()
+			elif debug_enabled:
 				_register_debug_receiver.rpc_id(1, true)
 				_debug_registered = true
 				# Also enable OBB wireframes on the server
@@ -565,6 +574,28 @@ func _server_flush() -> void:
 
 	_receive_draw_buffers.rpc_id(_follower_peer_id, payload)
 	_clear_buffers()
+
+## Runs fn with empty buffers and returns what it drew, leaving the live buffers untouched.
+func capture(fn: Callable) -> Dictionary:
+	var live := _draw_buffers
+	_draw_buffers = {}
+	fn.call()
+	var out := {}
+	for draw_type in _draw_buffers:
+		if _draw_buffers[draw_type].size() > 0:
+			out[draw_type] = _draw_buffers[draw_type]
+	_draw_buffers = live
+	return out
+
+func show_buffers(payload: Dictionary) -> void:
+	_client_buffers = payload
+	_decode_client_buffers()
+
+func set_replay_mode(on: bool) -> void:
+	replay_mode = on
+	_client_buffers = {}
+	_client_type_commands.clear()
+	_clear_mesh_pool()
 
 # ============================================================================
 # Client: receive + decode

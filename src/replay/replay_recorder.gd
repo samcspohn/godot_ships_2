@@ -17,6 +17,9 @@ var _match_active: bool         = false
 var _snapshot_timer: float      = 0.0
 
 const SNAPSHOT_INTERVAL: float  = 0.2   # 5 Hz
+const BOT_DEBUG_INTERVAL: float = 0.5
+var _bot_debug_timer: float     = 0.0
+var _bot_debug: bool            = true
 
 var _ships: Array        = []            # Array[Ship], index = ship_id
 var _ship_to_id: Dictionary = {}         # Ship -> int (ship_id)
@@ -139,11 +142,16 @@ func begin_match(ships: Array, map_id: int) -> void:
 	# --- MATCH_START event ------------------------------------------------
 	_file.store_float(0.0)
 	_file.store_8(ReplayEvent.MATCH_START)
+	_file.store_float(ProjectileManager.get_shell_time_multiplier())
+	_file.store_float(TorpedoManager.TORPEDO_SPEED_MULTIPLIER)
 
 	# --- activate recorder ------------------------------------------------
 	_match_start_time = SimClock.now()
 	_match_active     = true
 	_snapshot_timer   = 0.0
+	_bot_debug_timer  = 0.0
+	_bot_chunks       = {}
+	_bot_debug        = not CmdArgs.has("--no-replay-bot-debug")
 	_snapshot_index   = []
 	_prev_detection   = {}
 	_prev_visible     = {}
@@ -191,6 +199,11 @@ func _physics_process(delta: float) -> void:
 		_write_snapshot()
 		_snapshot_timer = 0.0
 
+	_bot_debug_timer += delta
+	if _bot_debug and _bot_debug_timer >= BOT_DEBUG_INTERVAL:
+		_bot_debug_timer = 0.0
+		_write_bot_debug()
+
 	# Emit DETECTION_CHANGED whenever a ship's detection state changes
 	for ship in _ships:
 		if not is_instance_valid(ship):
@@ -204,6 +217,45 @@ func _physics_process(delta: float) -> void:
 			_file.store_8(_ship_to_id.get(ship, 255))
 			_file.store_8(dt)
 			_file.store_8(1 if ve else 0)
+
+## ship_id -> [StreamPeerBuffer records, PackedFloat32Array times, Dictionary prev commands]
+var _bot_chunks: Dictionary = {}
+
+func _write_bot_debug() -> void:
+	for i in _ships.size():
+		var ship: Ship = _ships[i]
+		if not is_instance_valid(ship) or not ship.is_alive():
+			_flush_bot_debug(i)
+			continue
+		var bot := ship.get_node_or_null("Modules/BotController") as BotControllerV4
+		if bot == null or bot.behavior == null:
+			continue
+		if not _bot_chunks.has(i):
+			_bot_chunks[i] = [StreamPeerBuffer.new(), PackedFloat32Array(), {}]
+		var c: Array = _bot_chunks[i]
+		BotDebugCodec.encode_record(c[0], c[2], Debug.capture(bot._emit_debug_draws.bind(false, false)), bot.debug_state())
+		c[1].append(_current_time())
+		if c[1].size() >= BotDebugCodec.CHUNK_RECORDS:
+			_flush_bot_debug(i)
+
+## [u8 ship_id][u8 n][n × f32 time][u32 raw_len][u32 len][zstd BotDebugCodec records]
+func _flush_bot_debug(ship_id: int) -> void:
+	var c: Array = _bot_chunks.get(ship_id, [])
+	if c.is_empty():
+		return
+	_bot_chunks.erase(ship_id)
+	var times: PackedFloat32Array = c[1]
+	var raw: PackedByteArray = c[0].data_array
+	var packed: PackedByteArray = raw.compress(FileAccess.COMPRESSION_ZSTD)
+	_file.store_float(times[0])
+	_file.store_8(ReplayEvent.BOT_DEBUG)
+	_file.store_8(ship_id)
+	_file.store_8(times.size())
+	for t in times:
+		_file.store_float(t)
+	_file.store_32(raw.size())
+	_file.store_32(packed.size())
+	_file.store_buffer(packed)
 
 # ---------------------------------------------------------------------------
 # _write_snapshot
@@ -619,6 +671,8 @@ func end_match(winning_team: int) -> void:
 	if not _match_active or _file == null:
 		return
 	_match_active = false
+	for ship_id in _bot_chunks.keys():
+		_flush_bot_debug(ship_id)
 
 	# --- MATCH_END event --------------------------------------------------
 	_write_preamble(ReplayEvent.MATCH_END)

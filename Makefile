@@ -49,9 +49,11 @@ WATCH_LINEUP ?= res://tools/botmatch/lineup_12v12_t10.json
 WATCH_SPEED ?= 1
 SEED ?= 1
 PORT ?= 30500
+# Replay with bot debug overlays lands in user://replays; WATCH_REPLAY=0 to skip.
+WATCH_REPLAY ?= 1
 watch:
 	@mkdir -p build
-	@$(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) --no-replay \
+	@$(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) $(if $(filter 0,$(WATCH_REPLAY)),--no-replay) \
 		> build/watch_server.log 2>&1 & srv=$$!; \
 	trap 'kill $$srv 2>/dev/null' EXIT INT TERM; \
 	until ss -ltn | grep -q ":$(PORT) "; do kill -0 $$srv 2>/dev/null || { echo "watch: server exited, see build/watch_server.log"; exit 1; }; sleep 0.5; done; \

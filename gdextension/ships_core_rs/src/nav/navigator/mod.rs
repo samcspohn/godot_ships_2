@@ -9,7 +9,7 @@ use crate::nav::ships::{ShipList, ShipRegistry, ShipSnap};
 use crate::nav::threat::ThreatRegistry;
 use crate::nav::types::{
     ArcPoint, DynamicObstacle, NavState, NavTarget, PathResult, ShipParams,
-    ShipState, ThreatCircle,
+    ShipState, ThreatCircle, throttle_to_speed_fraction,
 };
 
 mod api;
@@ -79,6 +79,19 @@ pub mod path_fail_reason {
     pub const NO_ROUTE_TRUNCATED: i32 = 4;
     /// No route and no clear line; steering straight at the destination.
     pub const NO_ROUTE_BLIND: i32 = 5;
+}
+
+/// What replays need to re-simulate winning_arc: start rudder/speed/drift, then the
+/// arc's commanded rudder and throttle until turn_t, then straight until end_t.
+#[derive(Clone, Copy, Default)]
+pub struct ArcInputs {
+    pub rudder0: f32,
+    pub speed0: f32,
+    pub lateral0: f32,
+    pub rudder: f32,
+    pub throttle: i32,
+    pub turn_t: f32,
+    pub end_t: f32,
 }
 
 /// Output of select_best_steering.
@@ -205,6 +218,7 @@ pub struct ShipNavigator {
 
     /// Debug visualization: the actual simulated arc that won scoring.
     pub(crate) winning_arc: Vec<ArcPoint>,
+    pub(crate) winning_arc_inputs: ArcInputs,
 
     /// BTreeMap, not HashMap: three call sites iterate this and are order-sensitive
     /// (the torpedo-score float sum in score_arc_torpedo_threat, the strict `<`
@@ -339,6 +353,7 @@ impl IRefCounted for ShipNavigator {
             perf_last_steering_short_arc_rejects: 0,
             perf_last_steering_arc_points_simulated: 0,
             winning_arc: Vec::new(),
+            winning_arc_inputs: ArcInputs::default(),
             obstacles: BTreeMap::new(),
             skip_ship_obstacles: false,
             ship_source: None,
@@ -749,6 +764,53 @@ impl ShipNavigator {
     #[func]
     fn get_debug_threat_clusters(&self) -> Array<VarDictionary> {
         self.get_debug_threat_clusters_impl()
+    }
+
+    /// Ship params then ArcInputs, for simulate_debug_arc.
+    #[func]
+    fn get_debug_arc_inputs(&self) -> PackedFloat32Array {
+        let (p, a) = (&self.params, &self.winning_arc_inputs);
+        PackedFloat32Array::from(&[
+            p.turning_circle_radius, p.rudder_response_time, p.acceleration_time, p.max_speed,
+            p.reverse_speed_ratio, p.ship_length, p.ship_beam, p.turn_speed_loss,
+            a.rudder0, a.speed0, a.lateral0, a.rudder, a.throttle as f32, a.turn_t, a.end_t,
+        ][..])
+    }
+
+    /// Rebuilds get_predicted_trajectory from get_debug_arc_inputs at a given pose.
+    #[func]
+    fn simulate_debug_arc(inputs: PackedFloat32Array, position: Vector3, heading: f32) -> PackedVector3Array {
+        let mut out = PackedVector3Array::new();
+        let v = inputs.as_slice();
+        if v.len() < 15 || v[14] <= 0.0 {
+            return out;
+        }
+        let p = ShipParams {
+            turning_circle_radius: v[0], rudder_response_time: v[1], acceleration_time: v[2], max_speed: v[3],
+            reverse_speed_ratio: v[4], ship_length: v[5], ship_beam: v[6], turn_speed_loss: v[7],
+            ..ShipParams::default()
+        };
+        let throttle = v[12] as i32;
+        let fraction = throttle_to_speed_fraction(throttle);
+        let target_speed = if fraction < 0.0 { fraction * p.max_speed * p.reverse_speed_ratio } else { fraction * p.max_speed };
+        let start = arc::ArcStart {
+            position: Vector2::new(position.x, position.z), heading, speed: v[9], lateral_speed: v[10], rudder: v[8],
+        };
+        let clearance = (p.ship_length as f64 / 2.0 + p.ship_beam as f64) as f32;
+        let arc = arc::integrate_arc(&p, start, v[11], target_speed, clearance, f32::MAX, v[13]);
+        for pt in &arc {
+            out.push(Vector3::new(pt.position.x, 0.0, pt.position.y));
+        }
+        if let Some(last) = arc.last().copied() {
+            let fwd = Vector2::new(last.heading.sin(), last.heading.cos());
+            let mut t = last.time;
+            while t + ships_avoid::EXTEND_DT <= v[14] + 1e-3 {
+                t += ships_avoid::EXTEND_DT;
+                let q = last.position + fwd * (last.speed * (t - last.time));
+                out.push(Vector3::new(q.x, 0.0, q.y));
+            }
+        }
+        out
     }
 
     #[func]

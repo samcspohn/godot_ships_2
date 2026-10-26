@@ -1075,28 +1075,17 @@ func _update_debug_vectors(rudder: float) -> void:
 # Immediate-mode debug drawing — pushes draw commands to Debug autoload
 # ---------------------------------------------------------------------------
 
-func _emit_debug_draws() -> void:
+func _emit_debug_draws(with_state: bool = true, with_projectiles: bool = true) -> void:
 	var ship_pos: Vector3 = _ship.global_position
+	if with_projectiles:
+		draw_shell_threats(_debug_shell_obstacles)
 
-	# --- a) Desired heading arrow (GREEN, above ship) ---
-	var heading_pos = ship_pos
-	heading_pos.y += 100.0
-	var desired_heading: float = behavior.dest_heading if behavior != null else (_last_intent.target_heading if _last_intent else 0.0)
-	var desired_heading_vec = Vector3(sin(desired_heading), 0.0, cos(desired_heading)).normalized()
-	Debug.draw_arrow(heading_pos, desired_heading_vec, 200.0, Color.GREEN, 10.0)
+	if with_state and behavior != null:
+		draw_state(debug_state(), ship_pos, get_ship_heading())
 
-	# --- a2) Stance's held heading (LIGHT ORANGE, length = throttle) ---
+	# --- a3) Disengage's destination and its cones, toward and away (GREEN) ---
 	if behavior != null:
-		var st: Vector2 = behavior._skill_stance.debug_heading()
-		if is_finite(st.x):
-			Debug.draw_arrow(ship_pos + Vector3(0.0, 150.0, 0.0), Vector3(sin(st.x), 0.0, cos(st.x)), 200.0 * st.y, Color(1.0, 0.6, 0.0), 10.0)
-
-	# --- a3) Away from the fire (RED); Disengage's destination and its cones, toward and away (GREEN) ---
-	if behavior != null:
-		var away: float = behavior._skill_stance.debug_away()
 		var lift := Vector3(0.0, 30.0, 0.0)
-		if is_finite(away):
-			Debug.draw_arrow(ship_pos + Vector3(0.0, 170.0, 0.0), Vector3(sin(away), 0.0, cos(away)), 400.0, Color.RED, 12.0)
 		if behavior._active_skill_name == &"Disengage" and _last_intent != null:
 			Debug.draw_line(ship_pos + lift, Vector3(_last_intent.target_position.x, 0.0, _last_intent.target_position.z) + lift, Color.GREEN)
 			var axis: float = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis))
@@ -1108,46 +1097,6 @@ func _emit_debug_draws() -> void:
 						var reach: float = SkillCover.REACH_M if end == 0.0 else SkillCover.REACH_M / SkillCover.AWAY_RATIO
 						Debug.draw_line(ship_pos + lift, ship_pos + lift + Vector3(sin(b), 0.0, cos(b)) * reach,
 							Color(0.0, 1.0, 0.0, 0.5))
-
-	# --- b) Heading + rudder arrow (CYAN) ---
-	if _debug_heading_rudder_vector.length() > 0.1:
-		var rudder_pos = ship_pos
-		rudder_pos.y += 80.0
-		Debug.draw_arrow(rudder_pos, _debug_heading_rudder_vector, 180.0, Color.CYAN, 8.0)
-
-	# --- c) Threat arrow (ORANGE, scaled by threat weight) ---
-	if _debug_threat_vector.length() > 0.1:
-		var threat_pos = ship_pos
-		threat_pos.y += 60.0
-		Debug.draw_arrow(threat_pos, _debug_threat_vector, 200.0 * _debug_threat_weight, Color(1.0, 0.3, 0.0), 8.0)
-
-	# --- d) Safe arrow (TEAL, same scale as threat) ---
-	if _debug_safe_vector.length() > 0.1:
-		var safe_pos = ship_pos
-		safe_pos.y += 60.0
-		Debug.draw_arrow(safe_pos, _debug_safe_vector, 200.0 * _debug_threat_weight, Color(0.0, 1.0, 0.5), 8.0)
-
-	# --- e) Throttle indicator ---
-	var throttle_pos = ship_pos
-	throttle_pos.y += 120.0
-	if _debug_throttle == 0:
-		Debug.draw_im_sphere(throttle_pos, 15.0, Color.RED)
-	else:
-		var ship_forward = -_ship.global_transform.basis.z
-		var current_heading_vec = Vector3(ship_forward.x, 0.0, ship_forward.z).normalized()
-		var throttle_color: Color
-		var throttle_length: float
-		if _debug_throttle == -1:
-			throttle_color = Color.YELLOW
-			throttle_length = 100.0
-			current_heading_vec = -current_heading_vec
-		elif _debug_throttle == 4:
-			throttle_color = Color(0.0, 0.4, 1.0)
-			throttle_length = 200.0
-		else:
-			throttle_color = Color(0.0, 1.0, 0.3)
-			throttle_length = 200.0 * (float(_debug_throttle) / 4.0)
-		Debug.draw_arrow(throttle_pos, current_heading_vec, throttle_length, throttle_color, 9.0)
 
 	# --- f) Target indicator (red diamond cone above target ship) ---
 	if target != null and is_instance_valid(target):
@@ -1180,47 +1129,10 @@ func _emit_debug_draws() -> void:
 			var stride = maxi(raised_path.size() / 30, 1)
 			Debug.draw_path(raised_path, Color(0.0, 0.9, 0.9, 0.8), stride, 12.0)
 
-		# --- j) Predicted trajectory / turn sim points (green spheres) ---
-		var trajectory = navigator.get_predicted_trajectory()
-		for i in range(trajectory.size()):
-			var pt = trajectory[i]
-			var t = float(i) / float(max(trajectory.size() - 1, 1))
-			var color = Color(0.0, 1.0 - t * 0.5, 0.0)
-			Debug.draw_im_sphere(pt, 15.0, color)
+		if with_state:
+			draw_trajectory(navigator.get_predicted_trajectory())
 
-		# --- k0) Navigator OBB wireframe ---
-		# Draws the oriented bounding box the C++ navigator uses for shell-hit scoring.
-		# 4 hull edges (white) + keel and beam centre-lines (faint white).
-		var obb_heading := get_ship_heading()
-		var obb_hsl := movement.ship_length * 0.5
-		var obb_hsb := movement.ship_beam   * 0.5
-		var obb_fwd  := Vector3(sin(obb_heading), 0.0,  cos(obb_heading))
-		var obb_stbd := Vector3(cos(obb_heading), 0.0, -sin(obb_heading))
-		var obb_ctr  := Vector3(ship_pos.x, 3.0, ship_pos.z)
-		var obb_col  := Color(1.0, 1.0, 1.0, 0.85)
-		var obb_dim  := Color(1.0, 1.0, 1.0, 0.35)
-		# Corners: bow-stbd, bow-port, stern-port, stern-stbd
-		var obb_bs := obb_ctr + obb_fwd * obb_hsl + obb_stbd * obb_hsb
-		var obb_bp := obb_ctr + obb_fwd * obb_hsl - obb_stbd * obb_hsb
-		var obb_sp := obb_ctr - obb_fwd * obb_hsl - obb_stbd * obb_hsb
-		var obb_ss := obb_ctr - obb_fwd * obb_hsl + obb_stbd * obb_hsb
-		Debug.draw_line(obb_bs, obb_bp, obb_col)   # bow edge
-		Debug.draw_line(obb_bp, obb_sp, obb_col)   # port side
-		Debug.draw_line(obb_sp, obb_ss, obb_col)   # stern edge
-		Debug.draw_line(obb_ss, obb_bs, obb_col)   # starboard side
-		# Keel line and beam centre-line (orientation guides)
-		Debug.draw_line(obb_ctr + obb_fwd  * obb_hsl, obb_ctr - obb_fwd  * obb_hsl, obb_dim)
-		Debug.draw_line(obb_ctr + obb_stbd * obb_hsb, obb_ctr - obb_stbd * obb_hsb, obb_dim)
-
-		# --- k) Clearance circles ---
 		var clearance_r = navigator.get_clearance_radius()
-		if clearance_r > 0.0:
-			var circle_pos = Vector3(ship_pos.x, 5.0, ship_pos.z)
-			Debug.draw_circle(circle_pos, clearance_r, Color(0.2, 0.8, 1.0, 0.7), 64)
-		var soft_clearance_r = navigator.get_soft_clearance_radius()
-		if soft_clearance_r > 0.0:
-			var soft_pos = Vector3(ship_pos.x, 4.0, ship_pos.z)
-			Debug.draw_circle(soft_pos, soft_clearance_r, Color(1.0, 0.8, 0.0, 0.5), 64)
 
 		# --- l) SDF tile overlay (client samples its local NavigationMap) ---
 		if clearance_r > 0.0:
@@ -1229,35 +1141,8 @@ func _emit_debug_draws() -> void:
 		# --- o) Detection is drawn by the Ctrl+R DETECTION overlay (Debug autoload) ---
 
 
-		# --- p) Torpedo & shell threat lines ---
-		var threat_lines = navigator.get_debug_torpedo_threat_points()
-		for t_pt in threat_lines:
-			var landing_x: float = t_pt.get("landing_x", 0.0)
-			var landing_z: float = t_pt.get("landing_z", 0.0)
-			var time_remaining: float = t_pt.get("time_remaining", 0.0)
-			var caliber: float = t_pt.get("caliber", 0.0)
-			var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
-
-			var has_line: bool = t_pt.has("line_start_x")
-			if has_line:
-				var sx: float = t_pt.get("line_start_x", 0.0)
-				var sz: float = t_pt.get("line_start_z", 0.0)
-				var ex: float = t_pt.get("line_end_x", 0.0)
-				var ez: float = t_pt.get("line_end_z", 0.0)
-				var is_torp: bool = caliber >= 500.0
-				var line_color: Color
-				if is_torp:
-					line_color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.4, 0.9, urgency))
-				else:
-					line_color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
-				var draw_y: float = 5.0
-				Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), line_color)
-				# Small sphere at the center for reference
-				Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 4.0, line_color)
-			else:
-				var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
-				Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
-				Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
+		if with_projectiles:
+			draw_torpedo_threats(navigator.get_debug_torpedo_threat_points())
 
 	# --- m2) Station / Cover: the held cell and its score breakdown ---
 	if behavior != null:
@@ -1380,8 +1265,60 @@ func _emit_debug_draws() -> void:
 					Debug.draw_circle(Vector3(isl_pos.x, 9.0, isl_pos.z), isl_radius, Color(0.0, 0.8, 0.9, 0.35), 48)
 					Debug.draw_im_sphere(Vector3(isl_pos.x, 28.0, isl_pos.z), 15.0, Color(0.0, 0.9, 1.0, 0.6))
 
-	# --- o) Shell obstacles (drawn as threat lines) ---
-	for s in _debug_shell_obstacles:
+	# --- r) Danger center (red circle + arrow + spotted/unspotted label) ---
+	if behavior != null:
+		var danger_dc: Vector3 = behavior._get_spotted_danger_center()
+		if danger_dc != Vector3.ZERO:
+			var dc_pos := Vector3(danger_dc.x, 10.0, danger_dc.z)
+			var to_dc: Vector3 = danger_dc - ship_pos
+			to_dc.y = 0.0
+			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
+			var src_label: String = "spotted"
+			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
+					"Danger [%s]" % src_label, Color.RED)
+
+
+## Navigator winning arc; replays rebuild it with ShipNavigator.simulate_debug_arc.
+static func draw_trajectory(trajectory: PackedVector3Array) -> void:
+	for i in range(trajectory.size()):
+		var t = float(i) / float(max(trajectory.size() - 1, 1))
+		Debug.draw_im_sphere(trajectory[i], 15.0, Color(0.0, 1.0 - t * 0.5, 0.0))
+
+
+## Navigator torpedo threat points; replays rebuild them from TorpedoReplayer.
+static func draw_torpedo_threats(threat_lines: Array) -> void:
+	for t_pt in threat_lines:
+		var landing_x: float = t_pt.get("landing_x", 0.0)
+		var landing_z: float = t_pt.get("landing_z", 0.0)
+		var time_remaining: float = t_pt.get("time_remaining", 0.0)
+		var caliber: float = t_pt.get("caliber", 0.0)
+		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
+
+		var has_line: bool = t_pt.has("line_start_x")
+		if has_line:
+			var sx: float = t_pt.get("line_start_x", 0.0)
+			var sz: float = t_pt.get("line_start_z", 0.0)
+			var ex: float = t_pt.get("line_end_x", 0.0)
+			var ez: float = t_pt.get("line_end_z", 0.0)
+			var is_torp: bool = caliber >= 500.0
+			var line_color: Color
+			if is_torp:
+				line_color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.4, 0.9, urgency))
+			else:
+				line_color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
+			var draw_y: float = 5.0
+			Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), line_color)
+			# Small sphere at the center for reference
+			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 4.0, line_color)
+		else:
+			var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
+			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
+			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
+
+
+## ProjectileManager.get_shells_near_position entries; replays rebuild them from ShellReplayer.
+static func draw_shell_threats(shells: Array) -> void:
+	for s in shells:
 		var landing_x: float = s.get("landing_x", 0.0)
 		var landing_z: float = s.get("landing_z", 0.0)
 		var time_remaining: float = s.get("time_remaining", 0.0)
@@ -1411,119 +1348,178 @@ func _emit_debug_draws() -> void:
 			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), radius, color)
 			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 8.0, color)
 
-	# --- q) World-space label (nav state + skill info) ---
-	if behavior != null:
-		var lines: PackedStringArray = PackedStringArray()
 
-		# Aptitude first, with the dials it actually turned on. Naming the tier
-		# alone would say what this bot was dealt but not whether any of it took
-		# effect, and the whole point of a tier is the behaviour behind it.
-		# Dormant dials are left off so the low tiers stay short.
-		var apt: BotAptitude = behavior.aptitude
-		if apt != null:
-			var apt_bits: PackedStringArray = PackedStringArray()
-			apt_bits.append("lkp %.0fs" % apt.lkp_target_max_age)
-			if apt.gunfire_lkp_max_age > 0.0:
-				apt_bits.append("flash %.0fs" % apt.gunfire_lkp_max_age)
-			if apt.lead_speed_jitter > 0.0:
-				apt_bits.append("spd±%.0f%%" % (apt.lead_speed_jitter * 100.0))
-			if apt.turn_reckoning:
-				apt_bits.append("arc" if apt.turn_rate_jitter <= 0.0
-					else "arc±%.0f%%" % (apt.turn_rate_jitter * 100.0))
-			if not apt.use_spawn_line:
-				apt_bits.append("no-line")
-			if apt.radius_growth_mult != 1.0:
-				apt_bits.append("blur x%.1f" % apt.radius_growth_mult)
-			if apt.lead_horizon > 0.0:
-				apt_bits.append("lead %.0fs" % apt.lead_horizon)
-			if apt.kinematic_reckoning:
-				apt_bits.append("kin")
-			if apt.intuition_interval > 0.0:
-				apt_bits.append("fix %.0fs" % apt.intuition_interval)
-			lines.append("[%s] %s" % [apt.level_name(), " · ".join(apt_bits)])
+## Compact state behind the ship-anchored overlay; replays record this in place of its geometry.
+func debug_state() -> Dictionary:
+	var st: Vector2 = behavior._skill_stance.debug_heading()
+	var s := {
+		"dest": behavior.dest_heading,
+		"stance": st.x, "stance_t": st.y,
+		"away": behavior._skill_stance.debug_away(),
+		"rudder": atan2(_debug_heading_rudder_vector.x, _debug_heading_rudder_vector.z) if _debug_heading_rudder_vector.length() > 0.1 else INF,
+		"threat_dir": atan2(_debug_threat_vector.x, _debug_threat_vector.z) if _debug_threat_vector.length() > 0.1 else INF,
+		"threat_w": _debug_threat_weight,
+		"throttle": _debug_throttle,
+		"length": movement.ship_length, "beam": movement.ship_beam,
+		"clear": navigator.get_clearance_radius() if navigator != null else 0.0,
+		"soft_clear": navigator.get_soft_clearance_radius() if navigator != null else 0.0,
+		"nav": navigator.get_nav_state() if navigator != null else -1,
+		"arc": navigator.get_debug_arc_inputs() if navigator != null else PackedFloat32Array(),
+		"agg": behavior.aggression(),
+		"apt": "", "apt_name": "",
+	}
+	var apt: BotAptitude = behavior.aptitude
+	if apt != null:
+		var apt_bits: PackedStringArray = PackedStringArray()
+		apt_bits.append("lkp %.0fs" % apt.lkp_target_max_age)
+		if apt.gunfire_lkp_max_age > 0.0:
+			apt_bits.append("flash %.0fs" % apt.gunfire_lkp_max_age)
+		if apt.lead_speed_jitter > 0.0:
+			apt_bits.append("spd±%.0f%%" % (apt.lead_speed_jitter * 100.0))
+		if apt.turn_reckoning:
+			apt_bits.append("arc" if apt.turn_rate_jitter <= 0.0
+				else "arc±%.0f%%" % (apt.turn_rate_jitter * 100.0))
+		if not apt.use_spawn_line:
+			apt_bits.append("no-line")
+		if apt.radius_growth_mult != 1.0:
+			apt_bits.append("blur x%.1f" % apt.radius_growth_mult)
+		if apt.lead_horizon > 0.0:
+			apt_bits.append("lead %.0fs" % apt.lead_horizon)
+		if apt.kinematic_reckoning:
+			apt_bits.append("kin")
+		if apt.intuition_interval > 0.0:
+			apt_bits.append("fix %.0fs" % apt.intuition_interval)
+		s.apt_name = apt.level_name()
+		s.apt = " · ".join(apt_bits)
 
-		var state_names = ["NORMAL", "EMERGENCY"]
-		if navigator != null:
-			var state_idx = navigator.get_nav_state()
-			if state_idx >= 0 and state_idx < state_names.size():
-				lines.append("Nav: %s" % state_names[state_idx])
-			else:
-				lines.append("Nav: UNKNOWN(%d)" % state_idx)
+	var info: Dictionary = behavior.get_debug_skill_info()
+	s.skill = info.get("skill", "")
+	s.threat = info.get("threat", -1.0)
+	s.visible = info.get("visible", false)
+	s.cover = info.get("in_cover", false)
+	s.hp = info.get("hp_pct", -1)
+	s.torp = info.get("torp_reload", -1.0)
+	s.tgt_cls = ""
+	s.tgt_name = ""
+	s.tgt_d = -1.0
+	if target != null:
+		match target.ship_class:
+			Ship.ShipClass.BB: s.tgt_cls = "BB"
+			Ship.ShipClass.CA: s.tgt_cls = "CA"
+			Ship.ShipClass.DD: s.tgt_cls = "DD"
+		s.tgt_name = String(target.name)
+		s.tgt_d = _ship.global_position.distance_to(target.global_position)
+	var pp: Vector3 = behavior.priority_point()
+	var pt: Ship = behavior.priority_target()
+	s.p_d = _ship.global_position.distance_to(pp) if pp.is_finite() else -1.0
+	s.p_name = String(pt.name) if pt != null else "unknown"
+	s.p_dark = not (pt != null and pt.visible_to_enemy)
+	var policy := 0
+	var flags := [behavior.wants_stealth, behavior.wants_to_be_concealed, behavior.cant_go_dark,
+		behavior._suppress_guns, behavior.hold_fire, behavior._cornered]
+	for i in flags.size():
+		if flags[i]:
+			policy |= 1 << i
+	s.policy = policy
+	var stats: Stats = _ship.get_node("Modules/Stats")
+	s.dmg = int(stats.total_damage)
+	s.pot = int(stats.potential_damage)
+	return s
 
-		var skill_info = behavior.get_debug_skill_info()
-		if not skill_info.is_empty():
-			var skill: String      = skill_info.get("skill", "")
-			var threat: float      = skill_info.get("threat", -1.0)
-			var visible: bool      = skill_info.get("visible", false)
-			var in_cover: bool     = skill_info.get("in_cover", false)
-			var hp_pct: int        = skill_info.get("hp_pct", -1)
-			var torp_reload: float = skill_info.get("torp_reload", -1.0)
 
-			# Line 1 — skill + threat bar
-			if not skill.is_empty():
-				var threat_bar := ""
-				if threat >= 0.0:
-					var filled := int(round(threat * 10.0))
-					threat_bar = " [" + "█".repeat(filled) + "░".repeat(clamp(10 - filled, 0, 10)) + "] %.2f" % threat
-				lines.append("Skill: %s%s" % [skill, threat_bar])
+const POLICY_NAMES := ["STEALTH", "CONCEAL", "NO_DARK", "HOLD_GUNS", "HOLD_FIRE", "CORNERED"]
 
-			# Line 2 — target class, name, distance
-			if target != null:
-				var cls := ""
-				match target.ship_class:
-					Ship.ShipClass.BB: cls = "BB"
-					Ship.ShipClass.CA: cls = "CA"
-					Ship.ShipClass.DD: cls = "DD"
-				var dist_m := int(_ship.global_position.distance_to(target.global_position))
-				var dist_str := "%.1fk" % (dist_m / 1000.0) if dist_m >= 1000 else "%dm" % dist_m
-				lines.append("→ %s %s  ·  %s" % [cls, target.name, dist_str])
-			var pp: Vector3 = behavior.priority_point() if behavior != null else Vector3.INF
-			if pp.is_finite():
-				var pt: Ship = behavior.priority_target()
-				var pd := int(_ship.global_position.distance_to(pp))
-				lines.append("P: %s  ·  %.1fk%s" % [pt.name if pt != null else "unknown", pd / 1000.0,
-					"" if pt != null and pt.visible_to_enemy else " (dark)"])
+static func _state_label(s: Dictionary) -> String:
+	var lines: PackedStringArray = PackedStringArray()
+	if s.apt_name != "":
+		lines.append("[%s] %sagg %+.2f" % [s.apt_name, s.apt + " · " if s.apt != "" else "", s.agg])
+	var state_names = ["NORMAL", "EMERGENCY"]
+	lines.append("Nav: %s" % state_names[s.nav] if s.nav >= 0 and s.nav < state_names.size() else "Nav: UNKNOWN(%d)" % s.nav)
+	if s.skill != "":
+		var threat_bar := ""
+		if s.threat >= 0.0:
+			var filled := int(round(s.threat * 10.0))
+			threat_bar = " [" + "█".repeat(filled) + "░".repeat(clamp(10 - filled, 0, 10)) + "] %.2f" % s.threat
+		lines.append("Skill: %s%s" % [s.skill, threat_bar])
+	if s.tgt_d >= 0.0:
+		var dist_m := int(s.tgt_d)
+		var dist_str := "%.1fk" % (dist_m / 1000.0) if dist_m >= 1000 else "%dm" % dist_m
+		lines.append("→ %s %s  ·  %s" % [s.tgt_cls, s.tgt_name, dist_str])
+	if s.p_d >= 0.0:
+		lines.append("P: %s  ·  %.1fk%s" % [s.p_name, int(s.p_d) / 1000.0, " (dark)" if s.p_dark else ""])
+	var flags: PackedStringArray = PackedStringArray()
+	if s.hp >= 0:
+		flags.append("HP:%d%%" % s.hp)
+	flags.append("VISIBLE" if s.visible else "HIDDEN")
+	if s.cover:
+		flags.append("COVER")
+	lines.append(" · ".join(flags))
+	var policy: PackedStringArray = PackedStringArray()
+	for i in POLICY_NAMES.size():
+		if s.policy & (1 << i):
+			policy.append(POLICY_NAMES[i])
+	lines.append(" · ".join(policy) if not policy.is_empty() else "guns free · no stealth")
+	if s.torp >= 0.0:
+		var filled := int(round(s.torp * 10.0))
+		lines.append("Torps: [%s] %d%%" % ["█".repeat(filled) + "░".repeat(10 - filled), int(s.torp * 100.0)])
+	lines.append("Dmg: %d  Pot: %d" % [s.dmg, s.pot])
+	return "\n".join(lines)
 
-			# Line 3 — status flags
-			var flags: PackedStringArray = PackedStringArray()
-			if hp_pct >= 0:
-				flags.append("HP:%d%%" % hp_pct)
-			flags.append("VISIBLE" if visible else "HIDDEN")
-			if in_cover:
-				flags.append("COVER")
-			lines.append(" · ".join(flags))
-			if behavior != null:
-				var policy: PackedStringArray = PackedStringArray()
-				for f in [["STEALTH", behavior.wants_stealth], ["CONCEAL", behavior.wants_to_be_concealed],
-						["NO_DARK", behavior.cant_go_dark], ["HOLD_GUNS", behavior._suppress_guns],
-						["HOLD_FIRE", behavior.hold_fire], ["CORNERED", behavior._cornered]]:
-					if f[1]:
-						policy.append(f[0])
-				lines.append(" · ".join(policy) if not policy.is_empty() else "guns free · no stealth")
 
-			# Line 4 — torpedo reload (only for ships that have torpedoes)
-			if torp_reload >= 0.0:
-				var filled := int(round(torp_reload * 10.0))
-				var bar := "█".repeat(filled) + "░".repeat(10 - filled)
-				lines.append("Torps: [%s] %d%%" % [bar, int(torp_reload * 100.0)])
-			var stats: Stats = _ship.get_node("Modules/Stats")
-			lines.append("Dmg: %d  Pot: %d" % [stats.total_damage, stats.potential_damage])
+## The ship-anchored overlay, from debug_state() and a pose (live ship or replay ghost).
+static func draw_state(s: Dictionary, ship_pos: Vector3, heading: float) -> void:
+	var fwd := Vector3(sin(heading), 0.0, cos(heading))
+	var dir := func(a: float) -> Vector3: return Vector3(sin(a), 0.0, cos(a))
 
-		var label_text = "\n".join(lines)
-		if not label_text.is_empty():
-			Debug.draw_label(_ship.global_position + Vector3(-100, 100, 0), label_text)
+	# Desired heading (GREEN); stance's held heading (ORANGE, length = throttle); away from the fire (RED).
+	Debug.draw_arrow(ship_pos + Vector3(0.0, 100.0, 0.0), dir.call(s.dest), 200.0, Color.GREEN, 10.0)
+	if is_finite(s.stance):
+		Debug.draw_arrow(ship_pos + Vector3(0.0, 150.0, 0.0), dir.call(s.stance), 200.0 * s.stance_t, Color(1.0, 0.6, 0.0), 10.0)
+	if is_finite(s.away):
+		Debug.draw_arrow(ship_pos + Vector3(0.0, 170.0, 0.0), dir.call(s.away), 400.0, Color.RED, 12.0)
 
-	# --- r) Danger center (red circle + arrow + spotted/unspotted label) ---
-	if behavior != null:
-		var danger_dc: Vector3 = behavior._get_spotted_danger_center()
-		if danger_dc != Vector3.ZERO:
-			var dc_pos := Vector3(danger_dc.x, 10.0, danger_dc.z)
-			var to_dc: Vector3 = danger_dc - ship_pos
-			to_dc.y = 0.0
-			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
-			var src_label: String = "spotted"
-			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
-					"Danger [%s]" % src_label, Color.RED)
+	# Heading + rudder (CYAN); collision threat (ORANGE) and away from it (TEAL).
+	if is_finite(s.rudder):
+		Debug.draw_arrow(ship_pos + Vector3(0.0, 80.0, 0.0), dir.call(s.rudder), 180.0, Color.CYAN, 8.0)
+	if is_finite(s.threat_dir):
+		Debug.draw_arrow(ship_pos + Vector3(0.0, 60.0, 0.0), dir.call(s.threat_dir), 200.0 * s.threat_w, Color(1.0, 0.3, 0.0), 8.0)
+		Debug.draw_arrow(ship_pos + Vector3(0.0, 60.0, 0.0), -dir.call(s.threat_dir), 200.0 * s.threat_w, Color(0.0, 1.0, 0.5), 8.0)
+
+	# Throttle
+	var throttle_pos := ship_pos + Vector3(0.0, 120.0, 0.0)
+	if s.throttle == 0:
+		Debug.draw_im_sphere(throttle_pos, 15.0, Color.RED)
+	elif s.throttle == -1:
+		Debug.draw_arrow(throttle_pos, -fwd, 100.0, Color.YELLOW, 9.0)
+	elif s.throttle == 4:
+		Debug.draw_arrow(throttle_pos, fwd, 200.0, Color(0.0, 0.4, 1.0), 9.0)
+	else:
+		Debug.draw_arrow(throttle_pos, fwd, 200.0 * (float(s.throttle) / 4.0), Color(0.0, 1.0, 0.3), 9.0)
+
+	# The OBB the navigator scores shell hits against: hull edges, keel and beam lines.
+	var hsl: float = s.length * 0.5
+	var hsb: float = s.beam * 0.5
+	var stbd := Vector3(cos(heading), 0.0, -sin(heading))
+	var ctr := Vector3(ship_pos.x, 3.0, ship_pos.z)
+	var col := Color(1.0, 1.0, 1.0, 0.85)
+	var dim := Color(1.0, 1.0, 1.0, 0.35)
+	var bs := ctr + fwd * hsl + stbd * hsb
+	var bp := ctr + fwd * hsl - stbd * hsb
+	var sp := ctr - fwd * hsl - stbd * hsb
+	var ss := ctr - fwd * hsl + stbd * hsb
+	Debug.draw_line(bs, bp, col)
+	Debug.draw_line(bp, sp, col)
+	Debug.draw_line(sp, ss, col)
+	Debug.draw_line(ss, bs, col)
+	Debug.draw_line(ctr + fwd * hsl, ctr - fwd * hsl, dim)
+	Debug.draw_line(ctr + stbd * hsb, ctr - stbd * hsb, dim)
+
+	if s.clear > 0.0:
+		Debug.draw_circle(Vector3(ship_pos.x, 5.0, ship_pos.z), s.clear, Color(0.2, 0.8, 1.0, 0.7), 64)
+	if s.soft_clear > 0.0:
+		Debug.draw_circle(Vector3(ship_pos.x, 4.0, ship_pos.z), s.soft_clear, Color(1.0, 0.8, 0.0, 0.5), 64)
+
+	Debug.draw_label(ship_pos + Vector3(-100, 100, 0), _state_label(s))
 
 
 ## Enqueue a client-side SDF overlay command; tile sampling happens on the client.

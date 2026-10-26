@@ -2,7 +2,7 @@ class_name ReplayBallistics
 
 ## Static helper that wraps ProjectilePhysicsWithDragV2 for replay shell rendering.
 ##
-## The game runs projectile physics at TIME_MULTIPLIER × real (wall-clock) time,
+## The game runs projectile physics at time_multiplier × real (wall-clock) time,
 ## so replay-relative elapsed seconds are scaled before being passed to the
 ## physics function.  All position results exactly match what the server computed.
 ##
@@ -11,9 +11,8 @@ class_name ReplayBallistics
 ##   var pos    := ReplayBallistics.position_at(muzzle, vel, params, t_real)
 ##   var alive  := ReplayBallistics.is_shell_alive(muzzle, vel, params, fire_ts, current_ts)
 
-## Projectiles run at this multiple of real (wall-clock) time.
-## Matches ProjectileManager.get_shell_time_multiplier() in the live game.
-const TIME_MULTIPLIER: float = 3.0
+## Projectiles run at this multiple of real (wall-clock) time; set from the replay being played.
+static var time_multiplier: float = 2.0
 
 ## Any shell whose Y position is below this is considered to have hit the water.
 ## Set to the visible water surface (y = 0) so shells are removed the moment
@@ -43,7 +42,7 @@ static func position_at(muzzle: Vector3, vel: Vector3, params: ShellParams,
 		t_flight_real: float) -> Vector3:
 	if t_flight_real <= 0.0:
 		return muzzle
-	var t_physics: float = t_flight_real * TIME_MULTIPLIER
+	var t_physics: float = t_flight_real * time_multiplier
 	return ProjectilePhysicsWithDragV2.calculate_position_at_time(muzzle, vel, t_physics, params)
 
 
@@ -54,7 +53,7 @@ static func is_shell_alive(muzzle: Vector3, vel: Vector3, params: ShellParams,
 	var t_real: float = current_ts - fire_ts
 	if t_real < 0.0:
 		return false
-	if t_real * TIME_MULTIPLIER > MAX_FLIGHT_SECONDS:
+	if t_real * time_multiplier > MAX_FLIGHT_SECONDS:
 		return false
 	var pos: Vector3 = position_at(muzzle, vel, params, t_real)
 	return pos.y >= WATER_LEVEL

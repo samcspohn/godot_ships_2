@@ -23,6 +23,9 @@ const EVT_CONSUMABLE_USED  := 0x40
 const EVT_CONSUMABLE_ENDED := 0x41
 const EVT_DETECTION_CHANGED := 0x50
 const EVT_SHIP_SUNK        := 0x60
+const EVT_BOT_DEBUG        := 0x70
+## Recorder writes every 0.5 s while the bot lives; older means it has sunk.
+const BOT_DEBUG_STALE_S    := 1.0
 
 const MAGIC: int = 0x52455050
 
@@ -35,11 +38,19 @@ var snapshot_index: Array = []       # [{timestamp: float, offset: int}, ...]
 var total_duration: float = 0.0
 var winning_team: int = -1
 var end_stats: Dictionary = {}       # ship_id -> stats dict
+## Projectile clocks the match ran at; recorded from v6, older files used these values.
+var shell_time_multiplier: float = 2.0
+var torpedo_speed_multiplier: float = 3.0
 
 ## Cached parsed event stream, populated once at load_file() time.
 ## Excludes EVT_SNAPSHOT (those are accessed via snapshot_index instead).
 ## Sorted by timestamp ascending, which matches the on-disk write order.
 var all_events: Array = []           # Array[Dictionary]
+
+## ship_id -> [PackedFloat32Array times, PackedInt64Array chunk offset, PackedByteArray index in chunk]
+var bot_debug: Dictionary = {}
+## ship_id -> [chunk offset, Array of decoded payloads]
+var _bot_debug_chunk: Dictionary = {}
 
 # ---------------------------------------------------------------------------
 # Private state
@@ -88,8 +99,8 @@ func load_file(path: String) -> Error:
 	}
 	_ship_count = ship_count
 	_version = version
-	if version != 2 and version != 3 and version != 4:
-		push_warning("ReplayFileReader: version %d loaded (expected 2-4); some fields may be missing or wrong" % version)
+	if version < 2 or version > 7:
+		push_warning("ReplayFileReader: version %d loaded (expected 2-6); some fields may be missing or wrong" % version)
 
 	# ---- Ship manifest ----
 	ships.clear()
@@ -160,10 +171,9 @@ func get_snapshot_after(t: float) -> Dictionary:
 	return _read_snapshot_at_index(next)
 
 
-## Returns all cached events whose timestamps fall in [t_start, t_end].
-## Backed by `all_events` (parsed once at load_file time): this is a
-## binary-search slice, no file I/O or Dictionary allocation.
-func read_events_in_range(t_start: float, t_end: float) -> Array:
+## Returns all cached events whose timestamps fall in [t_start, t_end), or [t_start, t_end] with include_end.
+## Rolling windows must be half-open: events share timestamps with snapshots, and a closed window dispatches them twice.
+func read_events_in_range(t_start: float, t_end: float, include_end: bool = false) -> Array:
 	var result: Array = []
 	if all_events.is_empty():
 		return result
@@ -173,7 +183,7 @@ func read_events_in_range(t_start: float, t_end: float) -> Array:
 	while i < n:
 		var ev: Dictionary = all_events[i]
 		var ts: float = ev.get("timestamp", 0.0)
-		if ts > t_end:
+		if ts > t_end or (ts == t_end and not include_end):
 			break
 		result.append(ev)
 		i += 1
@@ -198,16 +208,26 @@ func _events_lower_bound(t: float) -> int:
 ## MATCH_END metadata.  Called once from load_file().
 func _build_event_cache() -> void:
 	all_events.clear()
+	bot_debug.clear()
+	_bot_debug_chunk.clear()
 	var start: int = _find_events_start()
 	if start <= 0:
 		return
 
 	_reader.seek(start)
+	# A killed server never writes the index or MATCH_END; rebuild both from the stream.
+	var recover: bool = snapshot_index.is_empty()
 	var safe_limit: int = _data.size() - 5
 	while _reader.get_position() < safe_limit:
 		var event_offset: int = _reader.get_position()
 		var ts: float   = _reader.get_float()
 		var etype: int  = _reader.get_u8()
+		if etype == EVT_BOT_DEBUG:
+			# v5 was a pre-release layout with no way to skip it.
+			if _version < 6:
+				break
+			_index_bot_debug()
+			continue
 		var evt := _parse_event(_reader, ts, etype)
 
 		# MATCH_END: capture summary, do NOT cache the heavy ship_stats payload.
@@ -223,11 +243,73 @@ func _build_event_cache() -> void:
 		# Skip SNAPSHOT events — redundant with snapshot_index, big payload.
 		if etype != EVT_SNAPSHOT:
 			all_events.append(evt)
+		elif recover:
+			snapshot_index.append({"timestamp": ts, "offset": event_offset})
 
 		# Safety: bail on a non-progressing parser.
 		if _reader.get_position() == event_offset and etype != EVT_MATCH_START:
 			push_warning("ReplayFileReader: parser made no progress at offset %d (type 0x%X)" % [event_offset, etype])
 			break
+
+	if recover and snapshot_index.size() > 1:
+		snapshot_index.pop_back()
+		total_duration = snapshot_index[-1].timestamp
+		while not all_events.is_empty() and all_events[-1].timestamp > total_duration:
+			all_events.pop_back()
+
+
+func _index_bot_debug() -> void:
+	var ship_id: int = _reader.get_u8()
+	var n: int = _reader.get_u8()
+	if not bot_debug.has(ship_id):
+		bot_debug[ship_id] = [PackedFloat32Array(), PackedInt64Array(), PackedByteArray()]
+	var e: Array = bot_debug[ship_id]
+	var times := PackedFloat32Array()
+	for _i in n:
+		times.append(_reader.get_float())
+	var at: int = _reader.get_position()
+	_reader.get_u32()
+	var len_: int = _reader.get_u32()
+	if _reader.get_position() + len_ > _data.size():
+		_reader.seek(_data.size())
+		return
+	_reader.seek(_reader.get_position() + len_)
+	for k in n:
+		e[0].append(times[k])
+		e[1].append(at)
+		e[2].append(k)
+
+
+## Index of the last bot debug record for ship_id at or before t, or -1.
+func bot_debug_index(ship_id: int, t: float) -> int:
+	# v6 bot state predates the arc inputs; its layout no longer decodes.
+	if _version < 7 or not bot_debug.has(ship_id):
+		return -1
+	var times: PackedFloat32Array = bot_debug[ship_id][0]
+	var i: int = times.bsearch(t, false) - 1
+	return i if i >= 0 and t - times[i] <= BOT_DEBUG_STALE_S else -1
+
+
+## [debug draw buffers (Dictionary[DrawType, PackedByteArray]), BotControllerV4.debug_state()] of a record from bot_debug_index().
+func bot_debug_record(ship_id: int, idx: int) -> Array:
+	if idx < 0 or not bot_debug.has(ship_id):
+		return [{}, {}]
+	var at: int = bot_debug[ship_id][1][idx]
+	var cached: Array = _bot_debug_chunk.get(ship_id, [])
+	if cached.is_empty() or cached[0] != at:
+		_reader.seek(at)
+		var raw_len: int = _reader.get_u32()
+		var n: int = _reader.get_u32()
+		var src := StreamPeerBuffer.new()
+		src.data_array = _data.slice(_reader.get_position(), _reader.get_position() + n).decompress(raw_len, FileAccess.COMPRESSION_ZSTD)
+		var prev := {}
+		var payloads := []
+		while src.get_position() < src.get_size():
+			payloads.append(BotDebugCodec.decode_record(src, prev))
+		cached = [at, payloads]
+		_bot_debug_chunk[ship_id] = cached
+	var k: int = bot_debug[ship_id][2][idx]
+	return cached[1][k] if k < cached[1].size() else [{}, {}]
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +440,9 @@ func _parse_event(reader: StreamPeerBuffer, timestamp: float, event_type: int) -
 
 	match event_type:
 		EVT_MATCH_START:
-			pass   # no payload
+			if _version >= 6:
+				shell_time_multiplier = reader.get_float()
+				torpedo_speed_multiplier = reader.get_float()
 
 		EVT_MATCH_END:
 			var winning: int    = reader.get_u8()
@@ -408,6 +492,9 @@ func _parse_event(reader: StreamPeerBuffer, timestamp: float, event_type: int) -
 			d["size"]         = reader.get_float()
 			d["caliber"]      = reader.get_float()
 			d["shell_uid"]    = reader.get_32()
+			# Before v6 the recorder stored the uid after this shell's, so hits matched the wrong shell.
+			if _version < 6:
+				d["shell_uid"] -= 1
 
 		EVT_SHELL_HIT:
 			d["attacker_ship_id"] = reader.get_u8()

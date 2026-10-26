@@ -696,6 +696,14 @@ impl ReachLookup {
         m
     }
 
+    /// mask with a ray from `p` itself for every enemy: no cell answers, no line-of-sight shortcut.
+    pub(crate) fn mask_exact(&self, p: Vector2) -> u64 {
+        self.rays.iter().enumerate().take(64).fold(0u64, |m, (i, r)| match r {
+            Some((ray, _)) if ray.hits(&self.terrain, p, self.outbound, |_| false) => m | 1 << i,
+            _ => m,
+        })
+    }
+
     pub(crate) fn hits(&self, i: usize, p: Vector2) -> bool {
         i < 64 && self.mask(p) & (1 << i) != 0
     }
@@ -1345,6 +1353,13 @@ impl ReachField {
     fn reach_mask(&self, team: i32, hull_key: i64, point: Vector2) -> i64 {
         let ids = self.get_team_enemy_ids(team);
         Self::mask(self.reach_lookup(team, hull_key, ids.as_slice()), ids.len(), point)
+    }
+
+    /// reach_mask from exactly `point`, one ray per enemy.
+    #[func]
+    fn reach_mask_exact(&self, team: i32, hull_key: i64, point: Vector2) -> i64 {
+        let ids = self.get_team_enemy_ids(team);
+        self.reach_lookup(team, hull_key, ids.as_slice()).map_or(0, |l| l.mask_exact(point) as i64 & ((1i64 << ids.len().min(63)) - 1))
     }
 
     /// Debug: the stealth router's per-cell exposure for a hull concealed at

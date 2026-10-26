@@ -209,6 +209,10 @@ func get_predicted_trajectory() -> PackedVector3Array:
 	return _impl.get_predicted_trajectory()
 
 
+func get_debug_arc_inputs() -> PackedFloat32Array:
+	return _impl.get_debug_arc_inputs()
+
+
 func get_debug_threat_clusters() -> Array:
 	return _impl.get_debug_threat_clusters()
 

@@ -74,7 +74,12 @@ enum Level {
 ## Whether this bot leads a turning target along its arc rather than along its
 ## instantaneous heading (ProjectilePhysicsWithDragV2 turning solver). Without
 ## it, shots at a ship under helm consistently miss to the outside of the turn.
-@export var turn_reckoning: bool = false
+@export var turn_reckoning: bool = true
+
+## Whether this bot leads a target's acceleration as a blend of the current one and its recent
+## mean, weighted by how long its accelerations persist (BotBehavior._believed_accel); without it
+## the current acceleration is held for the whole flight, which a juke exploits.
+@export var accel_mix: bool = false
 
 ## Standard deviation of the error this bot makes judging HOW HARD a target is
 ## turning, as a fraction of the real rate. Only meaningful with turn_reckoning
@@ -118,6 +123,26 @@ enum Level {
 @export var intuition_interval: float = 0.0
 
 
+# ---------------------------------------------------------------------------
+# Judgment - how the same picture is weighed (BotBehavior.aggression and its consumers)
+# ---------------------------------------------------------------------------
+
+## Weight of the focus-fire term in priority: a slow-to-kill threat ranked up before it does its harm.
+@export var focus_w: float = 1.0
+## Share of the damage push-out kept: a hurt bot backs off by this much of the way to the edge of enemy guns.
+@export var hurt_push: float = 1.0
+## Whether rings shrink while a friend holds an enemy's focus (BotBehavior.aggro_radius).
+@export var aggro_aware: bool = true
+## Gain on the team's points outlook: positive protects a lead and pushes from behind; negative pushes a lead.
+@export var points_sense: float = 0.0
+## Gain on the team's strength outlook: positive plays safe outnumbered and presses a numbers edge.
+@export var strength_sense: float = 0.0
+
+## Shares of our gun range to push to, one per bot by name, ignoring the trade; empty fights at desired_range.
+@export var push_shares: PackedFloat32Array = PackedFloat32Array()
+## Whether disengaging weighs time to die against time to win; without it, threat alone (DISENGAGE_THREAT).
+@export var trade_disengage: bool = true
+
 ## The tier table. One place to read what separates a recruit from an ace.
 static func for_level(l: int) -> BotAptitude:
 	var a := BotAptitude.new()
@@ -132,8 +157,15 @@ static func for_level(l: int) -> BotAptitude:
 			a.kinematic_reckoning = false
 			a.intuition_interval = 0.0
 			a.lead_speed_jitter = 0.20
-			a.turn_reckoning = false
-			a.turn_rate_jitter = 0.0
+			a.turn_reckoning = true
+			a.turn_rate_jitter = 0.5
+			a.focus_w = 0.0
+			a.hurt_push = 0.3
+			a.aggro_aware = false
+			a.points_sense = -0.5
+			a.strength_sense = 0.0
+			a.push_shares = PackedFloat32Array([0.0, 0.5, 0.75])
+			a.trade_disengage = false
 		Level.REGULAR:
 			a.lkp_target_max_age = 5.0
 			a.gunfire_lkp_max_age = 0.0
@@ -143,8 +175,13 @@ static func for_level(l: int) -> BotAptitude:
 			a.kinematic_reckoning = false
 			a.intuition_interval = 0.0
 			a.lead_speed_jitter = 0.10
-			a.turn_reckoning = false
-			a.turn_rate_jitter = 0.0
+			a.turn_reckoning = true
+			a.turn_rate_jitter = 0.35
+			a.focus_w = 1.0
+			a.hurt_push = 1.0
+			a.aggro_aware = true
+			a.points_sense = 0.0
+			a.strength_sense = 0.0
 		Level.VETERAN:
 			a.lkp_target_max_age = 7.0
 			a.gunfire_lkp_max_age = 4.0
@@ -156,6 +193,11 @@ static func for_level(l: int) -> BotAptitude:
 			a.lead_speed_jitter = 0.04
 			a.turn_reckoning = true
 			a.turn_rate_jitter = 0.30
+			a.focus_w = 1.0
+			a.hurt_push = 1.0
+			a.aggro_aware = true
+			a.points_sense = 1.0
+			a.strength_sense = 0.5
 		Level.ACE:
 			a.lkp_target_max_age = 9.0
 			a.gunfire_lkp_max_age = 4.0
@@ -167,6 +209,12 @@ static func for_level(l: int) -> BotAptitude:
 			a.lead_speed_jitter = 0.0
 			a.turn_reckoning = true
 			a.turn_rate_jitter = 0.0
+			a.accel_mix = true
+			a.focus_w = 1.0
+			a.hurt_push = 1.0
+			a.aggro_aware = true
+			a.points_sense = 1.0
+			a.strength_sense = 1.0
 	return a
 
 

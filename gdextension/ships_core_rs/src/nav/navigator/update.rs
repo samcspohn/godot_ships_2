@@ -568,7 +568,7 @@ impl ShipNavigator {
                 best_min_sdf = min_sdf;
                 best_rudder = candidate_rudder;
                 best_throttle = throttle;
-                self.winning_arc = arc;
+                self.set_winning_arc(arc, candidate_rudder, throttle);
             }
         }
 

@@ -9,9 +9,8 @@ extends Node3D
 # Constants  (mirror torpedo_manager.gd)
 # ---------------------------------------------------------------------------
 
-## Simulation speed multiplier applied to torpedo flight time.
-## Must match _TorpedoManager.TORPEDO_SPEED_MULTIPLIER in the live game.
-const TORPEDO_SPEED_MULTIPLIER: float = 4.0
+## Torpedo flight-time multiplier the match ran at; set from the replay being played.
+var speed_multiplier: float = 3.0
 
 ## Knots → metres-per-second conversion factor.
 const KNOTS_TO_MS: float = 0.514444
@@ -102,8 +101,7 @@ func update_torpedos(current_time: float) -> void:
 		var event: Dictionary   = entry.event
 		var fire_ts: float      = entry.fire_timestamp
 
-		# t_flight uses the same TORPEDO_SPEED_MULTIPLIER as torpedo_manager.gd.
-		var t_flight: float     = (current_time - fire_ts) * TORPEDO_SPEED_MULTIPLIER
+		var t_flight: float     = (current_time - fire_ts) * speed_multiplier
 
 		# Torpedo hasn't been fired yet in replay time (e.g. after a backward seek).
 		if t_flight < 0.0:
@@ -210,6 +208,37 @@ func clear_all() -> void:
 	for torp_id in _active_torpedos:
 		_free_torpedo_entry(_active_torpedos[torp_id])
 	_active_torpedos.clear()
+
+## Same dicts as the navigator's get_debug_torpedo_threat_points, for armed, detected torpedoes from enemy_ids.
+func threat_points(ship_pos: Vector3, enemy_ids: Dictionary, current_time: float, track_range: float = 3000.0) -> Array:
+	const VIS_DIST := 3000.0
+	var out := []
+	for torp_id in _active_torpedos:
+		var entry: Dictionary = _active_torpedos[torp_id]
+		var event: Dictionary = entry.event
+		if not entry.armed or not entry.detected or not enemy_ids.has(event.get("ship_id", -1)):
+			continue
+		var t_flight: float = (current_time - entry.fire_timestamp) * speed_multiplier
+		var dir3: Vector3 = event.get("direction", Vector3.FORWARD)
+		var dir := Vector2(dir3.x, dir3.z)
+		if t_flight < 0.0 or dir.length_squared() < 1e-6:
+			continue
+		dir = dir.normalized()
+		var speed_ms: float = event.get("speed_knts", 30.0) * KNOTS_TO_MS
+		var start: Vector3 = event.get("start_pos", Vector3.ZERO)
+		var pos := Vector2(start.x, start.z) + dir * speed_ms * t_flight
+		var to_ship := Vector2(ship_pos.x, ship_pos.z) - pos
+		if to_ship.length() > track_range:
+			continue
+		var center := pos + dir * VIS_DIST * 0.5
+		var end := pos + dir * VIS_DIST
+		out.append({
+			"landing_x": center.x, "landing_z": center.y,
+			"time_remaining": maxf(to_ship.dot(dir) / (speed_ms * speed_multiplier), 0.0), "caliber": 2000.0,
+			"line_start_x": pos.x, "line_start_z": pos.y, "line_end_x": end.x, "line_end_z": end.y,
+		})
+	return out
+
 
 # ---------------------------------------------------------------------------
 # Private helpers

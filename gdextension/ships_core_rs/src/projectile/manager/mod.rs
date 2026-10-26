@@ -225,7 +225,7 @@ impl ProjectileManager {
     }
     #[func]
     pub(crate) fn get_last_shell_uid(&self) -> u32 {
-        self.next_shell_uid
+        self.next_shell_uid.wrapping_sub(1)
     }
     #[func]
     pub(crate) fn get_gpu_renderer(&self) -> Option<Gd<Node>> {

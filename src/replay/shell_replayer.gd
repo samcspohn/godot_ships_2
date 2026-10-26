@@ -22,6 +22,10 @@ const MUZZLE_EFFECT_THRESHOLD: float = 0.5
 ## Mirrors the 15-unit threshold used in _ProjectileManager::_process_trails_only.
 const TRAIL_START_DIST_SQ: float = 15.0 * 15.0
 
+## Shells whose arc has ended wait this long for their SHELL_HIT before being removed;
+## ricochets and other unrecorded shells never get one.
+const HIT_WAIT_S: float = 1.0
+
 ## Shell trail particle template — same resource the live game uses.
 var _trail_template: ParticleTemplate = preload("res://assets/particles/templates/shell_trail_template.tres")
 
@@ -86,6 +90,8 @@ func _ready() -> void:
 ## after a seek (in which case muzzle effects and audio are suppressed).
 func spawn_shell(event: Dictionary, current_replay_time: float) -> void:
 	var shell_uid: int  = event.get("shell_uid", -1)
+	if shell_uid > 0 and _active_shells.has(shell_uid):
+		return
 	var event_ts: float = event.get("timestamp", 0.0)
 	var is_fresh: bool  = (current_replay_time - event_ts) < MUZZLE_EFFECT_THRESHOLD
 
@@ -153,14 +159,8 @@ func on_shell_hit(ev: Dictionary) -> void:
 		entry = _active_shells[shell_uid]
 		_active_shells.erase(shell_uid)
 
-	# Destroy GPU slot and trail emitter.
 	if entry != null:
-		var slot_id: int = entry.get("slot_id", -1)
-		if slot_id >= 0 and _gpu_renderer != null:
-			_gpu_renderer.destroy_shell(slot_id)
-		var emitter_id: int = entry.get("emitter_id", -1)
-		if emitter_id >= 0 and is_instance_valid(UnifiedParticleSystem):
-			UnifiedParticleSystem.free_emitter(emitter_id)
+		_free_entry(entry)
 
 	# Emit hit effects using the shell's recorded size (same as live game radius).
 	if not is_instance_valid(HitEffects):
@@ -194,7 +194,7 @@ func on_shell_hit(ev: Dictionary) -> void:
 ## the SHELL_HIT event stream.  No fallback effects are emitted here.
 ## Called every frame by ReplayPlayback._process().
 func update_shells(current_time: float) -> void:
-	for shell_id in _active_shells:
+	for shell_id in _active_shells.keys():
 		var shell_entry: Dictionary = _active_shells[shell_id]
 		var event:  Dictionary = shell_entry.event
 		var params: ShellParams = shell_entry.shell_params
@@ -210,6 +210,11 @@ func update_shells(current_time: float) -> void:
 		# would race against the event stream and leave on_shell_hit() with
 		# entry == null, causing all hit effects to use the wrong radius.
 		if not ReplayBallistics.is_shell_alive(muzzle, vel, params, fire_ts, current_time):
+			var ended: float = shell_entry.get("ended_at", current_time)
+			shell_entry["ended_at"] = ended
+			if current_time - ended > HIT_WAIT_S:
+				_free_entry(shell_entry)
+				_active_shells.erase(shell_id)
 			continue
 
 		var t_real: float = current_time - fire_ts
@@ -240,14 +245,60 @@ func update_shells(current_time: float) -> void:
 ## Called by ReplayPlayback on seek or scene teardown.
 func clear_all() -> void:
 	for shell_id in _active_shells:
-		var entry: Dictionary = _active_shells[shell_id]
-		var slot_id: int = entry.get("slot_id", -1)
-		if slot_id >= 0 and _gpu_renderer != null:
-			_gpu_renderer.destroy_shell(slot_id)
-		var emitter_id: int = entry.get("emitter_id", -1)
-		if emitter_id >= 0 and is_instance_valid(UnifiedParticleSystem):
-			UnifiedParticleSystem.free_emitter(emitter_id)
+		_free_entry(_active_shells[shell_id])
 	_active_shells.clear()
+	if _gpu_renderer != null:
+		_gpu_renderer.destroy_all()
+
+
+## Same dicts as ProjectileManager.get_shells_near_position, for shells from enemy_ids landing within radius.
+func threats_near(center: Vector2, radius: float, enemy_ids: Dictionary, current_time: float) -> Array:
+	var out := []
+	for shell_id in _active_shells:
+		var entry: Dictionary = _active_shells[shell_id]
+		var event: Dictionary = entry.event
+		if not enemy_ids.has(event.get("ship_id", -1)):
+			continue
+		if not entry.has("landing"):
+			entry["landing"] = _landing(event)
+		var l: Dictionary = entry.landing
+		if l.is_empty() or Vector2(l.landing_x, l.landing_z).distance_to(center) > radius:
+			continue
+		var remaining: float = event.get("timestamp", 0.0) + l.time_to_impact - current_time
+		if remaining <= 0.0:
+			continue
+		var d := l.duplicate()
+		d["time_remaining"] = remaining
+		out.append(d)
+	return out
+
+
+## Mirrors the landing entry fire.rs registers for bot shell dodging.
+func _landing(event: Dictionary) -> Dictionary:
+	var pos: Vector3 = event.get("muzzle_pos", Vector3.ZERO)
+	var vel: Vector3 = event.get("velocity", Vector3.ZERO)
+	var params := ReplayBallistics.make_shell_params(event.get("drag", 0.001))
+	params.speed = vel.length()
+	var flight: float = ProjectilePhysicsWithDragV2.time_of_flight(atan2(vel.y, Vector2(vel.x, vel.z).length()), params, -pos.y)
+	if is_nan(flight) or flight <= 0.0:
+		return {}
+	var impact: Vector3 = ProjectilePhysicsWithDragV2.calculate_impact_position(pos, vel, params)
+	var iv: Vector3 = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(vel, flight, params)
+	var flatness: float = atan2(Vector2(iv.x, iv.z).length(), absf(iv.y))
+	return {
+		"landing_x": impact.x, "landing_z": impact.z, "time_to_impact": flight / ReplayBallistics.time_multiplier,
+		"caliber": event.get("caliber", 0.0), "landing_vx": iv.x, "landing_vz": iv.z,
+		"threat_half_len": 15.0 + 35.0 * sin(flatness),
+	}
+
+
+func _free_entry(entry: Dictionary) -> void:
+	var slot_id: int = entry.get("slot_id", -1)
+	if slot_id >= 0 and _gpu_renderer != null:
+		_gpu_renderer.destroy_shell(slot_id)
+	var emitter_id: int = entry.get("emitter_id", -1)
+	if emitter_id >= 0 and is_instance_valid(UnifiedParticleSystem):
+		UnifiedParticleSystem.free_emitter(emitter_id)
 
 # ---------------------------------------------------------------------------
 # Private helpers

@@ -28,12 +28,13 @@ const CONSUMABLE_USED   = 0x40
 const CONSUMABLE_ENDED  = 0x41
 const DETECTION_CHANGED = 0x50
 const SHIP_SUNK         = 0x60
+const BOT_DEBUG         = 0x70
 
 # ---------------------------------------------------------------------------
 # File format magic / version
 # ---------------------------------------------------------------------------
 const MAGIC: int   = 0x52455050  # "REPP"
-const VERSION: int = 4
+const VERSION: int = 7
 
 # ---------------------------------------------------------------------------
 # Ship manifest entry (populated from the header when reading a replay)
