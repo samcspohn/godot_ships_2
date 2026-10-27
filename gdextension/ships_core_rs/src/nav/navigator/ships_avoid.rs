@@ -98,7 +98,7 @@ impl ShipNavigator {
         if self.ships.is_empty() || self.skip_ship_obstacles {
             return None;
         }
-        let prefer = if self.turn_latch != 0.0 { self.turn_latch } else { self.state.current_rudder.signum() };
+        let prefer = if self.turn_latch != 0.0 { -self.turn_latch } else { self.state.current_rudder.signum() };
         let prefer = if prefer == 0.0 { 1.0 } else { prefer };
         let mut fallback: Option<(f32, f32, f32, Vec<ArcPoint>, f32)> = None;
         let steps = (std::f32::consts::PI / HEADING_STEP).round() as i32;
@@ -135,7 +135,7 @@ impl ShipNavigator {
     fn steer_to(&self, h: f32, rudder: f32, throttle: i32) -> SteeringChoice {
         let off = angle_difference(self.state.heading, h).abs();
         let rudder = if off < EASE_RUDDER { self.compute_rudder_to_heading(h, throttle < 0) } else { rudder };
-        SteeringChoice { rudder, throttle, collision_imminent: true }
+        SteeringChoice { rudder, throttle, collision_imminent: true, scored: false }
     }
 }
 

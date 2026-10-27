@@ -101,6 +101,8 @@ func add_potential(damage: float, source: Ship) -> void:
 func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vector3, sunk: bool, damaged_ship: Ship) -> void:
 	# Track total damage
 	total_damage += damage
+	if not is_secondary:
+		GunneryCalibration.on_hit(_ship, damaged_ship, hit_type, damage)
 
 	# --- Replay recording (v3) -----------------------------------------------
 	# Emit a SHELL_DAMAGE event so a replay can rebuild stats counters as the

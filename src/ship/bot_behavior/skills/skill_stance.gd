@@ -183,7 +183,9 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 	var astern: bool = false
 	if cos(angle_difference(near, goal)) < 0.0:
 		var to: Vector3 = intent.target_position - ctx.ship.global_position
-		_turning = _turning or _turn_beats_astern(ctx, hdg, near, far, goal, Vector2(to.x, to.z).length())
+		var cheaper := _turn_beats_astern(ctx, hdg, near, far, goal, Vector2(to.x, to.z).length())
+		# A turn that lands more than we have left is no way out, however it compares.
+		_turning = (_turning or cheaper) and _turn_cost < ctx.ship.health_controller.current_hp
 		end = far if _turning else near
 		astern = not _turning
 	var motion: float = wrapf(end + PI, -PI, PI) if astern else end

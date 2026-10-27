@@ -2655,7 +2655,9 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_to_be_concealed = true
 
 	update_rings(ctx)
-	intent = _threat_disengage(ctx, sit)
+	intent = _brawl(ctx, sit)
+	if intent == null:
+		intent = _threat_disengage(ctx, sit)
 	if intent == null:
 		intent = _committed_intent(ctx, sit)
 	if intent != null:
@@ -2786,6 +2788,48 @@ func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if out != null:
 		sit["arm"] = &"close"
 	return out
+
+## A brawler pushes island to island to BRAWL_RANGE_M while the guns on it lie within
+## BRAWL_CROSSFIRE of one bearing and the route is survivable; else it tucks into cover
+## ahead, holding there while hidden; it never kites. With no station it is not a brawl.
+const BRAWL_RANGE_M: float = 4000.0
+const BRAWL_CROSSFIRE: float = deg_to_rad(90.0)
+
+func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if not brawler() or not priority_point().is_finite():
+		return null
+	sit["arm"] = &"brawl"
+	var push := {"desired_range": BRAWL_RANGE_M, "only": SkillFight.Mode.STATION}
+	var intent := _run_skill(&"Fight", ctx, push)
+	if intent == null:
+		return null
+	if crossfire_arc(ctx) <= BRAWL_CROSSFIRE and not _skill_fight.station.doomed():
+		return intent
+	if not ctx.ship.is_detected():
+		intent = _intent_stand(ctx)
+		_active_skill_name = &"Fight"
+		return intent
+	var tuck := _run_skill(&"Disengage", ctx, {"ahead_only": true})
+	if tuck == null or _skill_disengage.leg == SkillDisengage.Leg.KITE:
+		return _run_skill(&"Fight", ctx, push)
+	wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
+	return tuck
+
+## The narrowest arc holding the bearings of every enemy shooting or aiming at us.
+func crossfire_arc(_ctx: SkillContext) -> float:
+	var here := _ship.global_position
+	var b := PackedFloat32Array()
+	var on_us: Array = active_shooters_at_me.keys() + (salvo_clock.aimers if salvo_clock != null else [])
+	for e in on_us:
+		if e is Ship and is_instance_valid(e) and e.is_alive():
+			b.append(atan2(e.global_position.x - here.x, e.global_position.z - here.z))
+	if b.size() < 2:
+		return 0.0
+	b.sort()
+	var gap: float = b[0] + TAU - b[b.size() - 1]
+	for i in range(1, b.size()):
+		gap = maxf(gap, b[i] - b[i - 1])
+	return TAU - gap
 
 ## Seconds until the fire on us sinks us, from get_threat_score.
 func time_to_die(ctx: SkillContext) -> float:
@@ -3240,6 +3284,21 @@ var _radius_cache: Dictionary = {}
 ## past its guns the trade is ours outright. hold: where the trade is best,
 ## never inside its secondaries. ratios, out, in: the trade, our share of its HP
 ## per second and its of ours, every RADIUS_STEP_M from POINT_BLANK_M.
+## Secondaries at half their range doing this share of the main battery's dps there makes a brawler.
+const BRAWLER_SEC_SHARE := 0.75
+
+var _brawler: int = -1
+
+## Our secondaries, at half their range on a hull like ours, rival our main guns: we win by closing.
+func brawler() -> bool:
+	if _brawler < 0:
+		_brawler = 0
+		if is_instance_valid(_ship.secondary_controller):
+			var r: float = _ship.secondary_controller.get_max_range() * 0.5
+			var asp: float = guns_bear_aspect(_ship)
+			_brawler = int(_secondary_dps(_ship, _ship, r, asp) >= BRAWLER_SEC_SHARE * maxf(SkillStance._expected(_ship, _ship, r, asp).x, 0.0))
+	return _brawler == 1
+
 ## Repair-party HP that counts toward a trade: not all damage is repairable, nor all repaired before the next.
 const REPAIR_HP_SHARE := 0.5
 

@@ -448,7 +448,7 @@ impl VisibilityGrid {
     /// hull_key, ids, shootable, heavy, det_r) plus curve_out, curve_in,
     /// curve_steps, curve_p0_m, curve_step_m, value, aggro, front, front_hp,
     /// focus, crossfire, ring, chase_ring, window_m, speed, dark, anchor, move_cost, chase_anchor_w, walk_axis, walk_from, walk_slack, lat_axis, lat_origin, lat_min, lat_max,
-    /// claims, claim_r, claim_cost, held. {found, chase, chase_to, pos, score, value,
+    /// claims, claim_r, claim_cost, busy, checkpoint, goal, held. {found, chase, chase_to, checkpoint, pos, score, value,
     /// harm, mask, cells, held_ok, held_score, held_value, held_harm, held_mask}.
     #[func]
     fn fight_search(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
@@ -471,6 +471,7 @@ impl VisibilityGrid {
             d.set("value", c.value);
             d.set("harm", c.harm);
             d.set("mask", c.mask as i64);
+            d.set("checkpoint", c.mask == 0);
         } else if let Some((k, t)) = chase {
             d.set("found", true);
             d.set("chase", true);
@@ -506,7 +507,7 @@ impl VisibilityGrid {
         let Some(k) = self.water(ix, iz).filter(|_| self.is_ready()) else { return d };
         let inp = self.hold_inputs(&enemies, &opts);
         let a = FightArgs::from_opts(&opts);
-        if let Some(c) = self.fight_cell(k, &inp, &a) {
+        if let Some(c) = self.station_cell(k, a.walk_from, &inp, &a) {
             d.set("ok", true);
             d.set("value", c.value);
             d.set("harm", c.harm);
@@ -515,13 +516,13 @@ impl VisibilityGrid {
         d
     }
 
-    /// cover_search's test for the cell holding `pos`, leads reckoned from opts.from: {ok, dark, seen, mask, count}.
+    /// cover_search's test for the water cell nearest `pos`, leads reckoned from opts.from: {ok, dark, seen, mask, count}.
     #[func]
     fn cover_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
         d.set("ok", false);
-        let (ix, iz) = self.grid_of(pos);
-        let Some(k) = self.water(ix, iz).filter(|_| self.is_ready()) else { return d };
+        // A station tucked against the rock may sit in a cell whose centre is land.
+        let Some(k) = self.cell_of(pos) else { return d };
         let inp = self.hold_inputs(&enemies, &opts);
         let a = CoverArgs::from_opts(f32::INFINITY, &opts);
         if let Some(((dark, seen), mask)) = self.cover_ok(k, &inp, &a) {

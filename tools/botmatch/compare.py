@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": []}
+              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": [], "calibration": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -55,6 +55,8 @@ def load(d):
             health["disengage"].append(m["disengage"])
         if "fight" in m:
             health["fight"].append(m["fight"])
+        if "calibration" in m:
+            health["calibration"].append(m["calibration"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -121,16 +123,41 @@ if any(h["disengage"] for h, _ in data.values()):
             print(f'{label:>12} {k:>10} {"%7.0f±%-6.0f" % ci(t):>15} {100.0 * sum(t) / max(tot, 1):>6.1f}% {"%5.1f±%-5.1f" % ci(e):>13}')
 
 if any(h["fight"] for h, _ in data.values()):
-    print("\n== fight stations (busy: share of lit enemies counted as shooting a friend; depth/ahead: station/ship m past the local enemy centre, p50 of match p50s; past: share > 0; dist: ship to station)")
-    print(f'{"build":>12} {"class":>6} {"searches":>13} {"busy":>7} {"depth_p50":>15} {"depth_p90":>15} {"past":>7} {"ahead_p50":>15} {"dist_p50":>13} {"dist_p90":>13}')
+    print("\n== fight stations (brawl: share of searches as a brawler; chkpts: checkpoints adopted per match; busy: share of lit enemies counted as shooting a friend; depth/ahead: station/ship m past the local enemy centre, p50 of match p50s; past: share > 0; dist: ship to station)")
+    print(f'{"build":>12} {"class":>20} {"searches":>13} {"brawl":>6} {"chkpts":>11} {"busy":>7} {"depth_p50":>15} {"depth_p90":>15} {"past":>7} {"ahead_p50":>15} {"dist_p50":>13} {"dist_p90":>13}')
     for label, (h, _) in data.items():
         for c in sorted({k for d in h["fight"] for k in d}):
             ms = [d[c] for d in h["fight"] if c in d]
             q = lambda f, k: "%7.0f±%-6.0f" % ci([m[f][k] for m in ms if m[f]["n"] > 0])
             busy = sum(m["busy"] for m in ms) / max(sum(m["enemies"] for m in ms), 1)
             past = sum(m["depth"].get("past", 0) for m in ms) / max(sum(m["depth"]["n"] for m in ms), 1)
-            print(f'{label:>12} {c:>6} {"%7.0f±%-5.0f" % ci([m["searches"] for m in ms]):>13} {100 * busy:>6.1f}% {q("depth", "p50"):>15} {q("depth", "p90"):>15} '
+            brawl = sum(m.get("brawler", 0) for m in ms) / max(sum(m["searches"] for m in ms), 1)
+            print(f'{label:>12} {c:>20} {"%7.0f±%-5.0f" % ci([m["searches"] for m in ms]):>13} {100 * brawl:>5.1f}% {"%5.1f±%-4.1f" % ci([m.get("checkpoints", 0) for m in ms]):>11} {100 * busy:>6.1f}% {q("depth", "p50"):>15} {q("depth", "p90"):>15} '
                   f'{100 * past:>6.1f}% {q("ahead", "p50"):>15} {q("dist", "p50"):>13} {q("dist", "p90"):>13}')
+
+def calib_table(label, cals, group):
+    agg = defaultdict(lambda: defaultdict(float))
+    for c in cals:
+        for key, v in c.items():
+            shooter, tcls, band = key.split("|")
+            for k, x in v.items():
+                agg[group(shooter, tcls, int(band))][k] += x
+    for g in sorted(agg):
+        a = agg[g]
+        if a["pred"] <= 0 and a["real"] <= 0:
+            continue
+        print(f'{label:>12} {g:>34} {a["salvos"]:>8.0f} {a["pred"] / max(a["salvos"], 1):>10.0f} {a["real"] / max(a["salvos"], 1):>10.0f} '
+              f'{a["real"] / max(a["pred"], 1):>7.2f} {100 * a["pred_cit"] / max(a["pred"], 1):>7.1f}% {100 * a["real_cit"] / max(a["real"], 1):>7.1f}%')
+
+if any(h["calibration"] for h, _ in data.values()):
+    print("\n== main-battery calibration (per salvo: model expectation at fire on the target nearest the aim vs damage that landed; cit = citadel share)")
+    hdr = f'{"build":>12} {"group":>34} {"salvos":>8} {"pred/salvo":>10} {"real/salvo":>10} {"real/pr":>7} {"pr_cit":>8} {"real_cit":>8}'
+    print(hdr)
+    for label, (h, _) in data.items():
+        calib_table(label, h["calibration"], lambda s, t, b: f"{s} -> {t}")
+    print(hdr)
+    for label, (h, _) in data.items():
+        calib_table(label, h["calibration"], lambda s, t, b: f"all -> {t} {b * 5}-{b * 5 + 5}km")
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

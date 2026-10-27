@@ -17,6 +17,7 @@ impl ShipNavigator {
         ship_beam: f32,
         turn_speed_loss: f32,
         linear_drag: f32,
+        turn_tightening: f32,
     ) {
         self.params.turning_circle_radius = turning_circle_radius;
         self.params.rudder_response_time = rudder_response_time;
@@ -28,6 +29,7 @@ impl ShipNavigator {
         self.params.ship_beam = ship_beam;
         self.params.turn_speed_loss = turn_speed_loss;
         self.params.linear_drag = linear_drag;
+        self.params.turn_tightening = turn_tightening;
     }
 
     pub(crate) fn set_state_impl(
@@ -38,6 +40,7 @@ impl ShipNavigator {
         angular_velocity_y: f32,
         current_rudder: f32,
         current_speed: f32,
+        engine_power: f32,
         delta: f32,
     ) {
         self.state.position = Vector2::new(position.x, position.z);
@@ -46,6 +49,7 @@ impl ShipNavigator {
         self.state.angular_velocity_y = angular_velocity_y;
         self.state.current_rudder = current_rudder;
         self.state.current_speed = current_speed;
+        self.state.engine_power = engine_power;
 
         // Run state machine
         self.update(delta);
@@ -628,15 +632,13 @@ impl ShipNavigator {
         if max_decel < 0.001 {
             return 0.0;
         }
-        (self.state.current_speed * self.state.current_speed) / (2.0 * max_decel)
+        let v = self.state.current_speed.abs();
+        v * v / (2.0 * max_decel) + v * super::arc::HULL_SPEED_LAG_S
     }
 
     pub(crate) fn throttle_to_speed(&self, throttle: i32) -> f32 {
-        let fraction = throttle_to_speed_fraction(throttle);
-        if fraction < 0.0 {
-            return fraction * self.params.max_speed * self.params.reverse_speed_ratio;
-        }
-        fraction * self.params.max_speed
+        // ShipMovementV4 backs at -0.5 power; reverse_speed_ratio never reaches the physics.
+        throttle_to_speed_fraction(throttle) * self.params.max_speed
     }
 
     pub(crate) fn get_reach_radius(&self) -> f32 {

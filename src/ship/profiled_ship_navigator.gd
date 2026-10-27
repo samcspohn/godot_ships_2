@@ -52,7 +52,8 @@ func set_ship_params(
 	ship_length: float,
 	ship_beam: float,
 	turn_speed_loss: float,
-	base_drag: float
+	base_drag: float,
+	turn_tightening: float = 0.8
 ) -> void:
 	_impl.set_ship_params(
 		turning_circle_radius,
@@ -64,7 +65,8 @@ func set_ship_params(
 		ship_length,
 		ship_beam,
 		turn_speed_loss,
-		base_drag
+		base_drag,
+		turn_tightening
 	)
 
 
@@ -79,7 +81,8 @@ func set_state(
 	angular_velocity_y: float,
 	rudder_input: float,
 	current_speed: float,
-	delta: float
+	delta: float,
+	engine_power: float = NAN
 ) -> void:
 	_impl.set_state(
 		position,
@@ -88,7 +91,8 @@ func set_state(
 		angular_velocity_y,
 		rudder_input,
 		current_speed,
-		delta
+		delta,
+		engine_power
 	)
 
 

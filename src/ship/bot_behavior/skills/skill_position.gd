@@ -180,8 +180,8 @@ func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Diction
 		var current: float = ctx.behavior._get_ship_heading()
 		if absf(angle_difference(current, heading)) > PI / 2.0:
 			heading = ctx.behavior._normalize_angle(heading + PI)
-	# A station is picked for a precise line of fire: hold it to a ship length.
-	var hold: float = params.get("jitter_radius", ship.movement_controller.ship_length)
+	# A station is picked for a precise line of fire, or a precise shadow: hold it to half a ship length.
+	var hold: float = params.get("jitter_radius", ship.movement_controller.ship_length * 0.5)
 	var intent := NavIntent.create(st, heading, hold)
 	intent.skip_threat_adjustment = true
 	intent.near_terrain = _refined

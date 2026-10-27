@@ -2,13 +2,36 @@ use std::f64::consts::PI;
 
 use godot::prelude::*;
 
+use super::hull::{rudder_to_heading, Hull, PHYSICS_DT};
 use super::{ArcInputs, DesiredDirection, ShipNavigator};
 use crate::nav::types::{
-    angle_difference, clamp_f, move_toward_f, normalize_angle, ArcPoint, ObstacleCollisionInfo,
-    ShipParams,
+    angle_difference, clamp_f, normalize_angle, throttle_to_speed_fraction, ArcPoint,
+    ObstacleCollisionInfo, ShipParams,
 };
 
+/// Speed trails engine power by 1 / (linear_damp + Godot's default 0.1) in ShipMovementV4.
+pub(crate) const HULL_SPEED_LAG_S: f32 = 5.0;
+
+/// Arc step: two physics ticks, a few metres off the exact hull over a minute.
+pub(crate) const SIM_DT: f32 = 2.0 * PHYSICS_DT;
+
 impl ShipNavigator {
+    pub(crate) fn hull_now(&self) -> Hull {
+        let power = if self.state.engine_power.is_finite() {
+            self.state.engine_power
+        } else {
+            clamp_f(self.state.current_speed / self.params.max_speed.max(0.1), -0.5, 1.0)
+        };
+        Hull {
+            pos: self.state.position,
+            vel: self.state.velocity,
+            heading: self.state.heading,
+            yaw: self.state.angular_velocity_y,
+            rudder: self.state.current_rudder,
+            power,
+        }
+    }
+
     /// Emits arc sample points spaced by get_ship_clearance().
     pub(crate) fn predict_arc_internal(
         &self,
@@ -25,15 +48,9 @@ impl ShipNavigator {
         let effective_max_time = (time_for_lookahead * 1.2).max(30.0);
         integrate_arc(
             &self.params,
-            ArcStart {
-                position: self.state.position,
-                heading: self.state.heading,
-                speed: self.state.current_speed,
-                lateral_speed: self.lateral_speed(),
-                rudder: self.state.current_rudder,
-            },
+            self.hull_now(),
             commanded_rudder,
-            self.throttle_to_speed(commanded_throttle),
+            throttle_to_speed_fraction(commanded_throttle),
             self.get_ship_clearance(),
             lookahead_distance,
             effective_max_time,
@@ -41,6 +58,7 @@ impl ShipNavigator {
     }
 
     pub(crate) fn arc_inputs(&self, rudder: f32, throttle: i32, turn_t: f32) -> ArcInputs {
+        let h = self.hull_now();
         ArcInputs {
             rudder0: self.state.current_rudder,
             speed0: self.state.current_speed,
@@ -49,6 +67,8 @@ impl ShipNavigator {
             throttle,
             turn_t,
             end_t: turn_t,
+            power0: h.power,
+            yaw0: h.yaw,
         }
     }
 
@@ -66,6 +86,7 @@ impl ShipNavigator {
         self.state.velocity.x * lat_x0 + self.state.velocity.y * lat_z0
     }
 
+    /// Holds the rudder until the bow (stern when `reverse_alignment`) bears on `target_pos`.
     pub(crate) fn predict_arc_to_heading(
         &self,
         commanded_rudder: f32,
@@ -75,145 +96,41 @@ impl ShipNavigator {
         max_time: f32,
         reverse_alignment: bool,
     ) -> Vec<ArcPoint> {
+        let mut h = self.hull_now();
+        let power = throttle_to_speed_fraction(commanded_throttle);
         let mut arc: Vec<ArcPoint> = Vec::with_capacity(64);
+        arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), 0.0));
 
-        let mut sim_rudder = self.state.current_rudder;
-        let mut sim_speed = self.state.current_speed;
-        let mut sim_heading = self.state.heading;
-        let mut sim_pos = self.state.position;
-        let mut sim_time: f32 = 0.0;
-        let mut total_distance: f32 = 0.0;
-
-        // --- Drift model: decompose current velocity into forward and lateral ---
-        let fwd_x0 = self.state.heading.sin();
-        let fwd_z0 = self.state.heading.cos();
-        let lat_x0 = fwd_z0;
-        let lat_z0 = -fwd_x0;
-        let mut sim_lateral_speed = self.state.velocity.x * lat_x0 + self.state.velocity.y * lat_z0;
-
-        let target_speed_val = self.throttle_to_speed(commanded_throttle);
-
-        arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, 0.0));
-
-        // 2.0f * Math::PI * radius: float promotes to double for the whole
-        // expression (Math::PI is double), then narrows on assignment.
-        let turning_circle_perimeter =
-            (2.0f64 * PI * self.params.turning_circle_radius as f64) as f32;
-        let max_arc_distance = lookahead_distance.max(turning_circle_perimeter);
-
-        let base_dt: f32 = 0.1;
-        let integration_dt: f32 =
-            (base_dt * (self.params.rudder_response_time / 4.0).max(1.0)).min(0.5);
+        let max_arc_distance =
+            lookahead_distance.max((2.0f64 * PI * self.params.turning_circle_radius as f64) as f32);
         let emit_interval = self.get_ship_clearance();
         let mut next_emit_dist = emit_interval;
-
-        let alignment_threshold: f32 = 0.087;
+        let (mut t, mut total_distance) = (0.0f32, 0.0f32);
         let mut rudder_settled = false;
 
-        // Bow-pivot fractions mirror ShipMovementV4 constants.
-        const BOW_PIVOT_FRACTION_LOW: f32 = 0.9;
-        const BOW_PIVOT_FRACTION_HIGH: f32 = 1.1;
-
-        // Simulate at the commanded rudder until the bow aligns with the direction
-        // to target_pos, then stop.  Remaining travel is estimated analytically in
-        // select_best_steering (endpoint_dist / speed).  The post-alignment straight
-        // segment was removed: it rarely passed accurately through the waypoint
-        // (5° threshold leaves a residual cross-track error), so both left- and
-        // right-turn candidates landed at nearly identical endpoint distances and
-        // produced frame-to-frame oscillation.
-        while sim_time < max_time && total_distance < max_arc_distance {
-            let mut dt = integration_dt;
-            if sim_time + dt > max_time {
-                dt = max_time - sim_time;
-            }
+        while t < max_time && total_distance < max_arc_distance {
+            let dt = SIM_DT.min(max_time - t);
             if dt < 0.001 {
                 break;
             }
-
-            if self.params.rudder_response_time > 0.001 {
-                sim_rudder = move_toward_f(
-                    sim_rudder,
-                    commanded_rudder,
-                    dt / self.params.rudder_response_time,
-                );
-            } else {
-                sim_rudder = commanded_rudder;
-            }
-
-            if !rudder_settled && (sim_rudder - commanded_rudder).abs() < 0.01 {
+            let prev = h.pos;
+            h.step(&self.params, commanded_rudder, power, dt);
+            t += dt;
+            total_distance += h.pos.distance_to(prev);
+            if (h.rudder - commanded_rudder).abs() < 0.01 {
                 rudder_settled = true;
             }
-
-            // ShipMovementV4 ramps engine_power symmetrically -- move_toward with
-            // `delta / acceleration_time` in BOTH directions -- and never reads
-            // deceleration_time at all.  Predicting deceleration off
-            // deceleration_time therefore modelled a ship that does not exist:
-            // Montana leaves the param at its 4.0 default, so the arc predictor
-            // believed it could go 28.8 m/s -> 0 in four seconds and scored
-            // throttle-chop dodges that the real hull cannot perform.
-            let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
-            sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
-
-            let effective_speed =
-                sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
-
-            let mut omega: f32 = 0.0;
-            if self.params.turning_circle_radius > 0.001 {
-                omega = (effective_speed / self.params.turning_circle_radius) * (-sim_rudder);
-            }
-
-            sim_heading += omega * dt;
-            sim_heading = normalize_angle(sim_heading);
-
-            // --- Bow-pivot lateral velocity model (matches ShipMovementV4) ---
-            let drift_scale = (sim_speed.abs() / self.params.max_speed.max(0.1))
-                .max(0.0)
-                .min(1.0);
-            let bow_pivot_fraction = BOW_PIVOT_FRACTION_LOW
-                + (BOW_PIVOT_FRACTION_HIGH - BOW_PIVOT_FRACTION_LOW) * drift_scale;
-            let target_lat_vel =
-                omega * (self.params.ship_length * 0.5) * bow_pivot_fraction * drift_scale;
-            sim_lateral_speed += (target_lat_vel - sim_lateral_speed)
-                * (1.0 - (-dt / self.params.rudder_response_time.max(0.01)).exp());
-
-            let cur_fwd_x = sim_heading.sin();
-            let cur_fwd_z = sim_heading.cos();
-            let cur_lat_x = cur_fwd_z;
-            let cur_lat_z = -cur_fwd_x;
-            sim_pos.x += cur_fwd_x * effective_speed * dt + cur_lat_x * sim_lateral_speed * dt;
-            sim_pos.y += cur_fwd_z * effective_speed * dt + cur_lat_z * sim_lateral_speed * dt;
-
-            sim_time += dt;
-
-            // step_dist: fwd and lat basis vectors are orthogonal unit vectors so the
-            // magnitude of the displacement is exactly dt * hypot(effective_speed, sim_lateral_speed).
-            // This avoids tracking prev_pos and calling distance_to (which also does a sqrt).
-            let step_dist = dt
-                * (effective_speed * effective_speed + sim_lateral_speed * sim_lateral_speed)
-                    .sqrt();
-            total_distance += step_dist;
-
             if total_distance >= next_emit_dist {
-                arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, sim_time));
+                arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), t));
                 next_emit_dist += emit_interval;
-
-                // Check alignment at emit points only (atan2 is expensive).
-                // Stop as soon as the bow points at the target — the scoring in
-                // select_best_steering estimates the remaining travel analytically.
                 if rudder_settled {
-                    let to_target = target_pos - sim_pos;
+                    let to_target = target_pos - h.pos;
                     if to_target.length() > 1.0 {
-                        let mut desired_heading = to_target.x.atan2(to_target.y);
-                        // For reverse arcs, check that the bow faces AWAY from the
-                        // target (i.e. stern faces the target) rather than bow-toward.
-                        // Math::PI is explicitly cast to float here (unlike the
-                        // compute_rudder_to_position case), so this is a plain
-                        // float + float addition — no double promotion.
+                        let mut want = to_target.x.atan2(to_target.y);
                         if reverse_alignment {
-                            desired_heading = normalize_angle(desired_heading + PI as f32);
+                            want = normalize_angle(want + PI as f32);
                         }
-                        let heading_error = angle_difference(sim_heading, desired_heading).abs();
-                        if heading_error < alignment_threshold {
+                        if angle_difference(h.heading, want).abs() < 0.087 {
                             break;
                         }
                     }
@@ -221,10 +138,9 @@ impl ShipNavigator {
             }
         }
 
-        if arc.len() < 2 || arc.last().unwrap().position.distance_to(sim_pos) > 1.0 {
-            arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, sim_time));
+        if arc.len() < 2 || arc.last().unwrap().position.distance_to(h.pos) > 1.0 {
+            arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), t));
         }
-
         arc
     }
 
@@ -394,86 +310,7 @@ impl ShipNavigator {
     }
 
     pub(crate) fn compute_rudder_to_heading(&self, desired_heading: f32, reverse: bool) -> f32 {
-        let angle_diff = angle_difference(self.state.heading, desired_heading);
-        let abs_diff = angle_diff.abs();
-
-        let rudder_travel_time =
-            (0.0 - self.state.current_rudder).abs() * self.params.rudder_response_time;
-        let heading_drift = self.state.angular_velocity_y * rudder_travel_time;
-
-        let effective_target = desired_heading - heading_drift * 0.5;
-        let effective_diff = angle_difference(self.state.heading, effective_target);
-        let abs_effective_diff = effective_diff.abs();
-
-        let mut rudder;
-
-        let near_pi_threshold: f32 = (PI * 0.85) as f32;
-
-        if abs_effective_diff < 0.02 {
-            rudder = 0.0;
-        } else if abs_effective_diff > near_pi_threshold {
-            // --- Near-180° stability fix ---
-            // When abs_effective_diff is near ±π the sign of effective_diff is
-            // unreliable: a sub-ULP perturbation in the ship's position flips
-            // angle_difference() between +π and −π, causing the rudder to
-            // alternate between −1 and +1 every frame (net ≈ 0, so the ship
-            // drives straight away from the target).
-            // Use state continuity as tiebreaker: current_rudder → angular
-            // velocity → deterministic default.
-            // Convention: negative rudder = right turn = positive angular_velocity_y.
-            if self.state.current_rudder.abs() > 0.05 {
-                rudder = if self.state.current_rudder < 0.0 {
-                    -1.0
-                } else {
-                    1.0
-                };
-            } else if self.state.angular_velocity_y.abs() > 0.001 {
-                rudder = if self.state.angular_velocity_y > 0.0 {
-                    -1.0
-                } else {
-                    1.0
-                };
-            } else {
-                rudder = -1.0; // deterministic default: start a right turn
-            }
-        } else {
-            rudder = if effective_diff > 0.0 { -1.0 } else { 1.0 };
-        }
-
-        let lead_threshold =
-            (self.state.angular_velocity_y * self.params.rudder_response_time * 0.3).abs();
-        if abs_diff < lead_threshold {
-            let lead_factor = abs_diff / lead_threshold.max(0.01);
-            rudder *= lead_factor;
-        }
-
-        // Rudder authority comes from water flowing over the rudder, i.e. the
-        // ACTUAL direction of travel — not the commanded/desired direction.
-        // When moving backward the physics inverts the rudder effect:
-        //   omega = (speed / R) * (-rudder), and speed is negative,
-        //   so the same rudder value produces the opposite turn direction.
-        // Negate to compensate.
-        //
-        // Critically, this must key off the real speed sign rather than the
-        // `reverse` request: during a forward->reverse transition (e.g. a bow-in
-        // ship commanded to kite away in reverse) the hull is still coasting
-        // forward even though reverse throttle was ordered.  Using the commanded
-        // direction there would invert the rudder while the ship still has
-        // forward way on, swinging the bow out broadside instead of holding the
-        // desired heading.  Only near zero speed (standstill setup, where the
-        // rudder has no authority yet) do we fall back to the commanded
-        // direction so the rudder is pre-positioned for the impending reverse.
-        const RUDDER_TRAVEL_SPEED_EPSILON: f32 = 0.5; // m/s
-        let physically_reversing = if self.state.current_speed.abs() > RUDDER_TRAVEL_SPEED_EPSILON {
-            self.state.current_speed < 0.0
-        } else {
-            reverse
-        };
-        if physically_reversing {
-            rudder = -rudder;
-        }
-
-        clamp_f(rudder, -1.0, 1.0)
+        rudder_to_heading(&self.hull_now(), &self.params, desired_heading, reverse)
     }
 
     pub(crate) fn compute_magnitude_for_approach(&self, distance_to_target: f32) -> i32 {
@@ -487,28 +324,14 @@ impl ShipNavigator {
             return 0;
         }
 
-        // Pick the highest magnitude whose target speed we can decelerate from
-        // within the remaining distance.  For each candidate magnitude, compute
-        // the distance needed to decelerate from current speed to that magnitude's
-        // target speed: d = (v² - v_target²) / (2 * decel).
-        // We add a safety margin so the ship starts slowing a bit early.
-        let safety_margin = self.params.turning_circle_radius * 0.5;
-        let v = self.state.current_speed.abs();
-
-        // Magnitudes 4→1, check from highest to lowest
-        const MAGNITUDES: [i32; 4] = [4, 3, 2, 1];
-        for mag in MAGNITUDES {
-            let target_speed = self.throttle_to_speed(mag);
-            if target_speed >= v {
-                return mag; // already at or below target — use this magnitude
-            }
-            let decel_dist = (v * v - target_speed * target_speed) / (2.0 * max_decel);
-            if distance_to_target > decel_dist + safety_margin {
+        // Highest magnitude the ship can still stop from before the point.
+        let room = distance_to_target - self.params.turning_circle_radius * 0.25;
+        for mag in [4, 3, 2] {
+            let s = self.throttle_to_speed(mag);
+            if s * s / (2.0 * max_decel) + s * HULL_SPEED_LAG_S <= room {
                 return mag;
             }
         }
-
-        // Within stopping distance from a crawl — use minimum forward
         1
     }
 
@@ -580,126 +403,37 @@ pub(crate) fn obb_obb_overlap_2d(
     true // no separating axis found — boxes overlap
 }
 
-pub(crate) struct ArcStart {
-    pub position: Vector2,
-    pub heading: f32,
-    pub speed: f32,
-    pub lateral_speed: f32,
-    pub rudder: f32,
-}
-
 /// Free-running arc at a fixed commanded rudder; shared with replay re-simulation.
 pub(crate) fn integrate_arc(
     p: &ShipParams,
-    start: ArcStart,
+    start: Hull,
     commanded_rudder: f32,
-    target_speed_val: f32,
+    target_power: f32,
     emit_interval: f32,
     lookahead_distance: f32,
-    effective_max_time: f32,
+    max_time: f32,
 ) -> Vec<ArcPoint> {
+    let mut h = start;
     let mut arc: Vec<ArcPoint> = Vec::with_capacity(64);
-
-    let mut sim_rudder = start.rudder;
-    let mut sim_speed = start.speed;
-    let mut sim_heading = start.heading;
-    let mut sim_pos = start.position;
-    let mut sim_time: f32 = 0.0;
-    let mut total_distance: f32 = 0.0;
-
-    let mut sim_lateral_speed = start.lateral_speed;
-
-    arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, 0.0));
-
-    let base_dt: f32 = 0.1;
-    let integration_dt: f32 =
-        (base_dt * (p.rudder_response_time / 4.0).max(1.0)).min(0.5);
+    arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), 0.0));
+    let (mut t, mut total_distance) = (0.0f32, 0.0f32);
     let mut next_emit_dist = emit_interval;
-    let mut prev_pos = sim_pos;
-
-    // Bow-pivot fractions mirror ShipMovementV4 constants.
-    const BOW_PIVOT_FRACTION_LOW: f32 = 0.9;
-    const BOW_PIVOT_FRACTION_HIGH: f32 = 1.1;
-
-    while total_distance < lookahead_distance && sim_time < effective_max_time {
-        let mut dt = integration_dt;
-        if sim_time + dt > effective_max_time {
-            dt = effective_max_time - sim_time;
-        }
+    while total_distance < lookahead_distance && t < max_time {
+        let dt = SIM_DT.min(max_time - t);
         if dt < 0.001 {
             break;
         }
-
-        if p.rudder_response_time > 0.001 {
-            sim_rudder = move_toward_f(
-                sim_rudder,
-                commanded_rudder,
-                dt / p.rudder_response_time,
-            );
-        } else {
-            sim_rudder = commanded_rudder;
-        }
-
-        // ShipMovementV4 ramps engine_power symmetrically -- move_toward with
-        // `delta / acceleration_time` in BOTH directions -- and never reads
-        // deceleration_time at all.  Predicting deceleration off
-        // deceleration_time therefore modelled a ship that does not exist:
-        // Montana leaves the param at its 4.0 default, so the arc predictor
-        // believed it could go 28.8 m/s -> 0 in four seconds and scored
-        // throttle-chop dodges that the real hull cannot perform.
-        let speed_rate = p.max_speed / p.acceleration_time.max(0.1);
-        sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
-
-        let effective_speed =
-            sim_speed * (1.0 - p.turn_speed_loss * sim_rudder.abs());
-
-        let mut omega: f32 = 0.0;
-        if p.turning_circle_radius > 0.001 {
-            omega = (effective_speed / p.turning_circle_radius) * (-sim_rudder);
-        }
-
-        sim_heading += omega * dt;
-        sim_heading = normalize_angle(sim_heading);
-
-        // --- Bow-pivot lateral velocity model (matches ShipMovementV4) ---
-        // The kinematic pivot sits (ship_length/2 * bow_pivot_fraction) ahead of the COM.
-        // drift_scale ramps 0→1 with speed, gating the pivot effect at low speed.
-        // target_lat_vel = omega * pivot_dist, matching GDScript's target_lat_vel exactly.
-        // Lateral speed converges to target with time constant = rudder_response_time,
-        // matching GDScript: pivot_force = lat_vel_error * mass / rudder_response_time.
-        let drift_scale = (sim_speed.abs() / p.max_speed.max(0.1))
-            .max(0.0)
-            .min(1.0);
-        let bow_pivot_fraction = BOW_PIVOT_FRACTION_LOW
-            + (BOW_PIVOT_FRACTION_HIGH - BOW_PIVOT_FRACTION_LOW) * drift_scale;
-        let target_lat_vel =
-            omega * (p.ship_length * 0.5) * bow_pivot_fraction * drift_scale;
-        sim_lateral_speed += (target_lat_vel - sim_lateral_speed)
-            * (1.0 - (-dt / p.rudder_response_time.max(0.01)).exp());
-
-        // Forward movement along heading + lateral drift perpendicular to heading
-        let cur_fwd_x = sim_heading.sin();
-        let cur_fwd_z = sim_heading.cos();
-        let cur_lat_x = cur_fwd_z; // starboard = forward rotated 90° CW
-        let cur_lat_z = -cur_fwd_x;
-        sim_pos.x += cur_fwd_x * effective_speed * dt + cur_lat_x * sim_lateral_speed * dt;
-        sim_pos.y += cur_fwd_z * effective_speed * dt + cur_lat_z * sim_lateral_speed * dt;
-
-        sim_time += dt;
-
-        let step_dist = sim_pos.distance_to(prev_pos);
-        total_distance += step_dist;
-        prev_pos = sim_pos;
-
+        let prev = h.pos;
+        h.step(p, commanded_rudder, target_power, dt);
+        t += dt;
+        total_distance += h.pos.distance_to(prev);
         if total_distance >= next_emit_dist || total_distance >= lookahead_distance - 0.1 {
-            arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, sim_time));
+            arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), t));
             next_emit_dist += emit_interval;
         }
     }
-
-    if arc.len() < 2 || arc.last().unwrap().position.distance_to(sim_pos) > 1.0 {
-        arc.push(ArcPoint::new(sim_pos, sim_heading, sim_speed, sim_time));
+    if arc.len() < 2 || arc.last().unwrap().position.distance_to(h.pos) > 1.0 {
+        arc.push(ArcPoint::new(h.pos, h.heading, h.speed(), t));
     }
-
     arc
 }

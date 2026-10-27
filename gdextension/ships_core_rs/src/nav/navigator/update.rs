@@ -226,6 +226,8 @@ impl ShipNavigator {
             }
         }
 
+        self.engine_commit_timer = (self.engine_commit_timer - delta).max(0.0);
+
         // --- 1. Plan bookkeeping only (no replanning here) ---
         // Replanning is event-driven from navigate_to().  This keeps set_state()
         // lightweight and prevents periodic planning spikes in per-frame updates.
@@ -300,8 +302,8 @@ impl ShipNavigator {
             }
         } else if !path_exhausted {
             if direction == DesiredDirection::Backward {
-                // Waypoint behind in reverse zone: reverse toward it at full magnitude
-                desired_rudder = self.compute_rudder_to_position(steer_target, true);
+                let wp = self.current_path.waypoints[self.current_wp_index as usize];
+                desired_rudder = self.compute_rudder_to_position(wp, true);
                 desired_magnitude = 4;
             } else {
                 // Pure pursuit toward next waypoint — full speed forward
@@ -364,7 +366,7 @@ impl ShipNavigator {
         // the rudder discrepancy so the ship slows while the rudder moves into
         // position, giving tighter and more controlled turns.
         // Skip when: reversing or already slow.
-        if final_throttle > 1 {
+        if final_throttle > 1 && !choice.scored {
             let rudder_discrepancy = (final_rudder - self.state.current_rudder).abs();
             let discrepancy_threshold = 0.3f32; // below this, no reduction
             let discrepancy_full = 1.2f32; // at or above this, maximum reduction
@@ -381,6 +383,9 @@ impl ShipNavigator {
             }
         }
 
+        if final_throttle != 0 && self.out_throttle != 0 && (final_throttle < 0) != (self.out_throttle < 0) {
+            self.engine_commit_timer = (0.25 * self.params.acceleration_time).max(3.0);
+        }
         self.set_steering_output(final_rudder, final_throttle, choice.collision_imminent);
     }
 

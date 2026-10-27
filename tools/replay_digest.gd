@@ -304,6 +304,13 @@ func _frame(t: float, dt: float) -> String:
 			_mmss(t), 100.0 * me.hp / max_hp[focus], me.velocity.length(), me.throttle, me.rudder,
 			"SPOTTED" if me.flags & 1 else "hidden", "-" if aim_at < 0 else "%s %.1fkm" % [_g(aim_at), mp.distance_to(aim) / 1000.0],
 			dt, dealt, recv, " ".join(reloads)])
+	var fb: Dictionary = r.bot_debug_record(focus, r.bot_debug_index(focus, t))
+	if not fb.is_empty():
+		var dp: Vector2 = fb.get("dest_pos", Vector2.INF)
+		var to := dp - mp
+		L.append("  bot: %s tgt %s | dest %s | %s | %s | %s" % [fb.get("skill", ""), "-" if fb.get("tgt", 255) == 255 else _g(fb.tgt),
+				"-" if not dp.is_finite() else "%.1fkm brg %.0f" % [to.length() / 1000.0, fposmod(rad_to_deg(atan2(to.x, -to.y)), 360.0)],
+				String(fb.get("st_text", "")).replace("\n", " "), String(fb.get("dis_text", "")), String(fb.get("stance_text", "")).left(70)])
 	L.append("  g ship            hp%  spd  hdg     x      z   vis  rng  brg  bot")
 	var ids := snap.keys()
 	ids.sort_custom(func(a, b): return Vector2(snap[a].pos.x, snap[a].pos.z).distance_to(mp) < Vector2(snap[b].pos.x, snap[b].pos.z).distance_to(mp))
@@ -361,11 +368,18 @@ func _map(t: float, zoom: float, cols: int) -> String:
 		if hc >= 0 and hc < w and hr >= 0 and hr < h and grid[hr][hc] in [".", "#"]:
 			grid[hr][hc] = _arrow(fwd)
 		grid[row][c] = _g(id)
+	var fb: Dictionary = r.bot_debug_record(focus, r.bot_debug_index(focus, t))
+	var dp: Vector2 = fb.get("dest_pos", Vector2.INF)
+	if dp.is_finite():
+		var dc := int((dp.x - box.position.x) / cell)
+		var dr := int((dp.y - box.position.y) / cell)
+		if dc >= 0 and dc < w and dr >= 0 and dr < h and grid[dr][dc] in [".", "#"]:
+			grid[dr][dc] = "*"
 	var ruler := ""
 	for c in w:
 		ruler += "|" if c % 10 == 0 else " "
 	var out := PackedStringArray()
-	out.append("=== %s  box x %.0f..%.0f z %.0f..%.0f  %.0f m/char (| every %.1f km)  x = sunk, arrows = heading" % [
+	out.append("=== %s  box x %.0f..%.0f z %.0f..%.0f  %.0f m/char (| every %.1f km)  x = sunk, arrows = heading, * = focus bot destination" % [
 			_mmss(t), box.position.x, box.end.x, box.position.y, box.end.y, cell, cell * 10.0 / 1000.0])
 	out.append(ruler)
 	out.append_array(grid)

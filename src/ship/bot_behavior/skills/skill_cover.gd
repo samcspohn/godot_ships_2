@@ -20,6 +20,11 @@ const AWAY_RATIO := 2.0
 ## Each side of the axis a cone covers when the caller gives none.
 const CONE_HALF := deg_to_rad(40.0)
 const COVER_HOLD_M := 300.0
+## A hidden station is slid toward its rock in TUCK_STEP_M steps, at most TUCK_MAX_M (the
+## grid's cell), to this far outside the hull's clearance, while an exact ray still hides it.
+const TUCK_STEP_M := 25.0
+const TUCK_MAX_M := 300.0
+const TUCK_MARGIN_M := 25.0
 ## A hidden station with nothing to shoot is given up after this long, unless a
 ## friend can spot for it: one on its targets, or a spotter that has claimed one.
 const COVER_BLIND_S := 10.0
@@ -140,6 +145,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		_cells = int(r.get("cells", 0))
 		if bool(r.get("found", false)):
 			var p: Vector2 = r.pos
+			if mode == Mode.DEFENSE and not bool(r.dark):
+				p = _tuck(p, opts)
 			_adopt(Vector3(p.x, 0.0, p.y), float(r.count), {})
 			_dark = bool(r.dark)
 			_seen = bool(r.seen)
@@ -150,9 +157,38 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if not _has_station:
 		return _decline()
 	_claim(team_id, ship.get_instance_id(), now_ms)
-	var intent := _intent(ctx, field, team_id, params.merged({"jitter_radius": COVER_HOLD_M}))
+	var intent := _intent(ctx, field, team_id, params)
 	intent.free_route = true
 	return intent
+
+## `p` slid down the land's distance field toward its rock, the last step every
+## threat that would see it from inside its sight still cannot by an exact ray.
+func _tuck(p: Vector2, opts: Dictionary) -> Vector2:
+	var stop: float = float(opts.clearance) + TUCK_MARGIN_M
+	var best := p
+	var moved := 0.0
+	while moved < TUCK_MAX_M:
+		var d := _land_d(p)
+		var grad := Vector2(_land_d(p + Vector2(TUCK_STEP_M, 0.0)) - _land_d(p - Vector2(TUCK_STEP_M, 0.0)),
+			_land_d(p + Vector2(0.0, TUCK_STEP_M)) - _land_d(p - Vector2(0.0, TUCK_STEP_M)))
+		if d - TUCK_STEP_M < stop or grad.length_squared() < 1e-6:
+			break
+		p -= grad.normalized() * TUCK_STEP_M
+		moved += TUCK_STEP_M
+		if not _hidden_exact(p, opts):
+			break
+		best = p
+	return best
+
+static func _land_d(p: Vector2) -> float:
+	return NavigationMapManager.get_distance(Vector3(p.x, 0.0, p.y))
+
+static func _hidden_exact(p: Vector2, opts: Dictionary) -> bool:
+	for i in (opts.pos as PackedVector2Array).size():
+		if opts.heavy[i] != 0 and p.distance_to(opts.pos[i]) < float(opts.det_r[i]) \
+				and not NavigationMapManager.is_los_blocked_2d(opts.pos[i], p):
+			return false
+	return true
 
 ## Bits, in the reach field's enemy order, of the targets opts counts as shootable.
 func _aim_bits(field: ReachField, team_id: int, opts: Dictionary) -> int:

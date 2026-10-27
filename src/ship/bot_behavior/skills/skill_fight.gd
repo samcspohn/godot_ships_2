@@ -10,7 +10,8 @@ extends BotSkill
 ## nothing in reach, and when nothing else is found, fight the presumed, else
 ## close on our priority.
 ## Whichever search answers, the sailed destination eases from the last one
-## toward it at our top speed plus EASE_GAIN_MPS for every second it has held still, never jumping.
+## toward it at our top speed plus EASE_GAIN_MPS for every second it has held still, never jumping,
+## along the navigator's route to it, so it goes round islands.
 ## Params: only (run that Mode alone), prefer_cover (advancing OFFENSE cover first), and
 ## each search's own.
 
@@ -37,6 +38,10 @@ const EASE_GAIN_MPS := 1.0
 const EASE_SAME_M := 50.0
 var _goal := Vector2.INF
 var _goal_since: float = -INF
+## The route the eased point walks, built from it when the goal moves; _path_i is the next waypoint.
+var _path := PackedVector2Array()
+var _path_i := 0
+var _path_goal := Vector2.INF
 
 func reset() -> void:
 	_checkpoint_d = INF
@@ -59,6 +64,7 @@ func snap_to(p: Vector3) -> void:
 	_shown = Vector2(p.x, p.z)
 	_shown_at = SimClock.now()
 	_goal = Vector2.INF
+	_path_goal = Vector2.INF
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var intent := _choose(ctx, params)
@@ -72,10 +78,35 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		_goal_since = now
 	_goal = goal
 	var speed: float = ctx.ship.movement_controller.max_speed + EASE_GAIN_MPS * (now - _goal_since)
-	_shown = goal if not _shown.is_finite() or dt > EASE_GAP_S else _shown.move_toward(goal, speed * maxf(dt, 0.0))
+	# Resuming from a cover or kite leg behind us: ease from the hull, never sail back to it.
+	var here := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	if _shown.is_finite() and (_shown - here).dot(goal - here) < 0.0:
+		_shown = here
+		_path_goal = Vector2.INF
+	if not _shown.is_finite() or dt > EASE_GAP_S:
+		_shown = goal
+	else:
+		if not _path_goal.is_finite() or _path_goal.distance_to(goal) > EASE_SAME_M:
+			_path = NavigationMapManager.find_path(Vector3(_shown.x, 0.0, _shown.y), Vector3(goal.x, 0.0, goal.y),
+				ctx.behavior._get_ship_clearance())
+			_path_i = 0
+			_path_goal = goal
+		_walk(goal, speed * maxf(dt, 0.0))
 	if _shown.distance_to(goal) > 1.0:
 		intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(_shown.x, 0.0, _shown.y))
 	return intent
+
+## Moves the eased point `d` along the route, then straight on to `goal`.
+func _walk(goal: Vector2, d: float) -> void:
+	while d > 0.0 and _path_i < _path.size():
+		var seg := _shown.distance_to(_path[_path_i])
+		if seg > d:
+			_shown = _shown.move_toward(_path[_path_i], d)
+			return
+		_shown = _path[_path_i]
+		d -= seg
+		_path_i += 1
+	_shown = _shown.move_toward(goal, d)
 
 func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var only: int = int(params.get("only", -1))

@@ -10,6 +10,17 @@ use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normal
 
 /// Seconds added to a reverse arc the behaviour forbade: still a way out when every ahead arc is blocked.
 const FORBID_REVERSE_PENALTY_S: f32 = 120.0;
+/// Charged for reversing the engine order, so near-equal plans do not alternate ahead and astern.
+const THROTTLE_FLIP_PENALTY_S: f32 = 4.0;
+/// Inside the commitment window only running aground everywhere else reverses the engines.
+const ENGINE_COMMIT_PENALTY_S: f32 = 120.0;
+const REVERSE_EXTRA_HOLD_S: f32 = 8.0;
+/// Hold value meaning: no held command, the follower steers from the start.
+const FOLLOW_NOW: f32 = -1.0;
+/// Charged for putting the rudder over the other way: with the goal astern both sides score alike.
+const RUDDER_FLIP_PENALTY_S: f32 = 3.0;
+/// A brush with land late in a rollout, after the ship would have replanned.
+const LATE_HIT_PENALTY_S: f32 = 30.0;
 
 impl ShipNavigator {
     /// Torpedo hits along an arc; shells are stance's business.
@@ -110,11 +121,17 @@ impl ShipNavigator {
         if turn_err < TURN_LATCH_RELEASE {
             self.turn_latch = 0.0;
         }
-        let desired_rudder = if self.turn_latch * desired_rudder < 0.0 { -desired_rudder } else { desired_rudder };
+        // Making sternway the rudder acts backwards, and the latch only knows turns made ahead.
+        let way = self.way_sign();
+        if way < 0.0 {
+            self.turn_latch = 0.0;
+        }
+        let desired_rudder = if self.turn_latch * -desired_rudder < 0.0 { -desired_rudder } else { desired_rudder };
         let mut result = SteeringChoice {
             rudder: desired_rudder,
             throttle: desired_throttle,
             collision_imminent: false,
+            scored: false,
         };
 
         let mut steering_candidates_total: i32 = 0;
@@ -199,7 +216,6 @@ impl ShipNavigator {
         if self.path_valid && self.current_wp_index < self.current_path.waypoints.len() as i32 {
             wp_target = self.current_path.waypoints[self.current_wp_index as usize];
         }
-        let wp_reach_radius = self.get_reach_radius();
 
         // wp_is_virtual: score by heading alignment only when the ship is truly
         // AT the steering target (within arrived_radius ~= 2 x ship_beam).
@@ -224,6 +240,8 @@ impl ShipNavigator {
             throttle: i32,
             /// Hold the rudder until the bow bears on this point instead of the waypoint.
             aim: Option<Vector2>,
+            /// Seconds the command is held past bow-on before the follower takes over.
+            hold: f32,
         }
 
         // Any torpedo in the obstacle set puts the candidate list into override
@@ -236,33 +254,35 @@ impl ShipNavigator {
         // full-rudder turns to dodge torpedoes - previously only +-0.3 were tried.
         let mut candidates: Vec<Candidate> = Vec::new();
         {
-            let mut add = |r: f32, t: i32, aim: Option<Vector2>| {
+            let mut add = |r: f32, t: i32, aim: Option<Vector2>, hold: f32| {
                 let r = clamp_f(r, -1.0, 1.0);
                 if candidates
                     .iter()
-                    .any(|c| (c.rudder - r).abs() < 0.05 && c.throttle == t && c.aim == aim)
+                    .any(|c| (c.rudder - r).abs() < 0.05 && c.throttle == t && c.aim == aim && c.hold == hold)
                 {
                     return;
                 }
-                candidates.push(Candidate { rudder: r, throttle: t, aim });
+                candidates.push(Candidate { rudder: r, throttle: t, aim, hold });
             };
-            let mut add_candidate = |r: f32, t: i32| add(r, t, None);
 
             for &off in rudder_offsets.iter() {
-                add_candidate(desired_rudder + off, desired_throttle);
+                add(desired_rudder + off, desired_throttle, None, 0.0);
+            }
+            if !wp_is_virtual {
+                add(desired_rudder, desired_throttle, None, FOLLOW_NOW);
             }
 
             if desired_rudder.abs() > 0.15 {
-                add_candidate(if desired_rudder > 0.0 { -1.0 } else { 1.0 }, desired_throttle);
+                add(if desired_rudder > 0.0 { -1.0 } else { 1.0 }, desired_throttle, None, 0.0);
             }
 
-            add_candidate(0.0, -1);
-            add_candidate(-0.3, -1);
-            add_candidate(0.3, -1);
-            add_candidate(-0.6, -1);
-            add_candidate(0.6, -1);
-            add_candidate(-1.0, -1);
-            add_candidate(1.0, -1);
+            for r in [0.0, -0.3, 0.3, -0.6, 0.6, -1.0, 1.0] {
+                add(r, -1, None, 0.0);
+                // Backing out of a bight has to clear the slide the ship keeps when it goes ahead again.
+                if !wp_is_virtual {
+                    add(r, -1, None, REVERSE_EXTRA_HOLD_S);
+                }
+            }
 
             // Outrunning or combing a spread is frequently a FULL AHEAD
             // manoeuvre, and the offsets above only ever sample the throttle the
@@ -270,7 +290,7 @@ impl ShipNavigator {
             // override could not choose speed at all.
             if torpedoes_present && desired_throttle < 4 {
                 for &off in rudder_offsets.iter() {
-                    add_candidate(desired_rudder + off, 4);
+                    add(desired_rudder + off, 4, None, 0.0);
                 }
             }
             if torpedoes_present {
@@ -278,7 +298,7 @@ impl ShipNavigator {
                 // track (bow in or stern out) and hold, at speed or slowed.
                 for &t in &[0, 2] {
                     for &r in &[desired_rudder, 0.0, 0.6, -0.6] {
-                        add_candidate(r, t);
+                        add(r, t, None, 0.0);
                     }
                 }
                 if let Some(track) = self.torpedo_track() {
@@ -287,8 +307,8 @@ impl ShipNavigator {
                         let turn = -angle_difference(self.state.heading, h).signum();
                         let aim = Some(self.state.position + dir * 20000.0);
                         for &t in &[desired_throttle.max(2), 4, 2] {
-                            add(turn, t, aim);
-                            add(turn * 0.6, t, aim);
+                            add(turn, t, aim, 0.0);
+                            add(turn * 0.6, t, aim, 0.0);
                         }
                     }
                 }
@@ -304,21 +324,15 @@ impl ShipNavigator {
         let sim_max_time: f32 = 120.0;
         const HEADING_ALIGN_THRESH: f32 = 0.087; // ~5 degrees
 
-        // --- Exit-heading: precompute remaining path context (normal path only) ---
-        let mut next_goal_after_wp = self.target.position;
-        let mut desired_exit_heading: f32 = 0.0;
-        let mut apply_exit_penalty = false;
-        if !wp_is_virtual && self.path_valid {
-            let next_idx = self.current_wp_index + 1;
-            if next_idx < self.current_path.waypoints.len() as i32 {
-                next_goal_after_wp = self.current_path.waypoints[next_idx as usize];
-            }
-            let to_next = next_goal_after_wp - wp_target;
-            if to_next.length() > 1.0 {
-                desired_exit_heading = to_next.x.atan2(to_next.y);
-                apply_exit_penalty = true;
-            }
-        }
+        let route: Vec<Vector2> = if self.path_valid && self.current_wp_index < self.current_path.waypoints.len() as i32 {
+            self.current_path.waypoints[self.current_wp_index as usize..].to_vec()
+        } else {
+            vec![self.target.position]
+        };
+        let follow_throttle = if desired_throttle == 0 { 1 } else { desired_throttle };
+        // Starting inside clearance, only getting closer counts.
+        let rollout_limit = hard_clearance.min(sdf_here - 10.0);
+        let mut blocked: Option<(usize, f32, f32, Vec<ArcPoint>)> = None;
 
         // --- Heading-weight mode (normal path only) ---
         let has_heading_weight = self.target.heading_weight > 0.001;
@@ -339,6 +353,7 @@ impl ShipNavigator {
             nav_score: f32,
             threats: ThreatEval,
             any_obs_collision: bool,
+            rollout: Option<(Vec<ArcPoint>, f32)>,
         }
         const MAX_PASS_ENTRIES: usize = 48;
         let mut pass_data: Vec<PassEntry> = Vec::new();
@@ -461,78 +476,38 @@ impl ShipNavigator {
                         nav_score,
                         threats,
                         any_obs_collision: obs_col,
+                        rollout: None,
                     });
                 }
             } else {
-                // ---- Normal: predict_arc_to_heading + arrival/alignment scoring ----
-                // For prefer_reverse arcs: align bow AWAY from waypoint (stern toward it).
-                let rev_align = self.target.prefer_reverse && cand_throttle < 0;
-                let arc = self.predict_arc_to_heading(
-                    cand_rudder,
-                    cand_throttle,
-                    candidates[i].aim.unwrap_or(wp_target),
-                    sim_lookahead,
-                    sim_max_time,
-                    rev_align,
-                );
-                if arc.len() < 2 {
+                // ---- Normal: hold the command, then the follower, on the true hull ----
+                let ro = {
+                    let mb = self.map.as_ref().map(|m| m.bind());
+                    let map = mb.as_deref().filter(|m| m.is_built());
+                    self.rollout(map, &route, cand_rudder, cand_throttle, candidates[i].hold, candidates[i].aim, follow_throttle, rollout_limit)
+                };
+                if ro.points.len() < 2 {
                     steering_short_arc_rejects += 1;
                     continue;
                 }
                 steering_candidates_simulated += 1;
-                steering_arc_points_simulated += arc.len() as i32;
-
-                // Terrain check with waypoint-arrival early stop.
-                // Also track minimum SDF for the soft-terrain penalty below.
-                let mut terrain_blocked = false;
-                let mut arrival_time: f32 = -1.0;
-                let mut soft_min_sdf = f32::INFINITY;
-                if let Some(map) = self.map.as_ref() {
-                    let mb = map.bind();
-                    if mb.is_built() {
-                        for pt in &arc {
-                            if pt.position.distance_to(wp_target) < wp_reach_radius {
-                                arrival_time = pt.time;
-                                break;
-                            }
-                            let sdf = mb.get_distance_impl(pt.position.x, pt.position.y);
-                            if sdf < hard_clearance {
-                                terrain_blocked = true;
-                                break;
-                            }
-                            if sdf < soft_clearance && sdf < soft_min_sdf {
-                                soft_min_sdf = sdf;
-                            }
-                        }
-                    }
-                }
-                if terrain_blocked {
+                steering_arc_points_simulated += ro.points.len() as i32;
+                if ro.hit_t <= ro.veto_t {
                     steering_terrain_rejects += 1;
+                    if blocked.as_ref().is_none_or(|b| ro.hit_t > b.1 || (ro.hit_t == b.1 && ro.min_sdf > b.2)) {
+                        blocked = Some((i, ro.hit_t, ro.min_sdf, ro.points));
+                    }
                     continue;
                 }
-
-                // Time for the bow to come onto the waypoint bearing.  Distance
-                // to the waypoint is deliberately absent: scoring how closely the
-                // arc passes it rewarded lazy rudders that sweep across over hard
-                // turns that swing the bow onto it now.
-                let arc_end = *arc.last().unwrap();
-                let mut nav_score = arc_end.time;
-                let to_wp = wp_target - arc_end.position;
-                if to_wp.length() > 1.0 {
-                    let mut wp_heading = to_wp.x.atan2(to_wp.y);
-                    if rev_align {
-                        wp_heading = normalize_angle(wp_heading + (PI as f32));
-                    }
-                    let h_err = angle_difference(arc_end.heading, wp_heading).abs();
-                    if h_err >= HEADING_ALIGN_THRESH {
-                        nav_score += (h_err / (PI as f32)) * 60.0;
-                    }
+                let arc = &ro.points;
+                let mut nav_score = ro.cost;
+                if ro.hit_t.is_finite() {
+                    nav_score += LATE_HIT_PENALTY_S;
                 }
 
-                // Heading-weight blend
                 if has_heading_weight {
                     let mut heading_align_time = f32::INFINITY;
-                    for hpt in &arc {
+                    for hpt in arc {
                         let to_hvp = heading_vp - hpt.position;
                         if to_hvp.length() > 1.0 {
                             let desired_h = to_hvp.x.atan2(to_hvp.y);
@@ -543,54 +518,26 @@ impl ShipNavigator {
                         }
                     }
                     if heading_align_time == f32::INFINITY {
-                        let to_hvp = heading_vp - arc.last().unwrap().position;
-                        if to_hvp.length() > 1.0 {
-                            let desired_h = to_hvp.x.atan2(to_hvp.y);
-                            let h_err = angle_difference(arc.last().unwrap().heading, desired_h).abs();
-                            heading_align_time = arc.last().unwrap().time + (h_err / (PI as f32)) * 60.0;
+                        let last = arc.last().unwrap();
+                        let to_hvp = heading_vp - last.position;
+                        let h_err = if to_hvp.length() > 1.0 {
+                            angle_difference(last.heading, to_hvp.x.atan2(to_hvp.y)).abs()
                         } else {
-                            heading_align_time = arc.last().unwrap().time;
-                        }
+                            0.0
+                        };
+                        heading_align_time = last.time + (h_err / (PI as f32)) * 60.0;
                     }
                     nav_score = lerp_f(nav_score, heading_align_time, self.target.heading_weight);
                 }
                 if self.target.forbid_reverse && cand_throttle < 0 && !torpedoes_present {
                     nav_score += FORBID_REVERSE_PENALTY_S;
                 }
-
-                // Exit-heading penalty
-                if apply_exit_penalty {
-                    let arrival_h: f32;
-                    if arrival_time >= 0.0 {
-                        let mut h_at_wp = arc.last().unwrap().heading;
-                        for pt in &arc {
-                            if pt.position.distance_to(wp_target) < wp_reach_radius {
-                                h_at_wp = pt.heading;
-                                break;
-                            }
-                        }
-                        arrival_h = if cand_throttle < 0 {
-                            normalize_angle(h_at_wp + (PI as f32))
-                        } else {
-                            h_at_wp
-                        };
-                    } else {
-                        let d_wp = wp_target - arc.last().unwrap().position;
-                        arrival_h = if d_wp.length() > 1.0 {
-                            d_wp.x.atan2(d_wp.y)
-                        } else {
-                            arc.last().unwrap().heading
-                        };
-                    }
-                    let exit_err = angle_difference(arrival_h, desired_exit_heading).abs();
-                    let fwd_speed = self.throttle_to_speed(4).max(1.0);
-                    let half_tc = ((PI as f32) * self.params.turning_circle_radius) / fwd_speed;
-                    nav_score += (exit_err / (PI as f32)) * half_tc;
+                if self.out_throttle != 0 && (cand_throttle < 0) != (self.out_throttle < 0) {
+                    nav_score += if self.engine_commit_timer > 0.0 { ENGINE_COMMIT_PENALTY_S } else { THROTTLE_FLIP_PENALTY_S };
                 }
 
-                // Obstacle collision penalty (part of nav cost)
                 let mut obs_col = false;
-                let obs_info = self.check_arc_obstacles_detailed(&arc);
+                let obs_info = self.check_arc_obstacles_detailed(arc);
                 if obs_info.has_collision && !obs_info.is_torpedo {
                     let to_obs = obs_info.obstacle_position - self.state.position;
                     if to_obs.length() > 0.1 && our_fwd.dot(to_obs.normalized()) > 0.3 {
@@ -600,13 +547,12 @@ impl ShipNavigator {
                     }
                 }
 
-                let threats = self.score_arc_torpedo_threat(&arc, self.throttle_to_speed(cand_throttle));
+                let threats = self.score_arc_torpedo_threat(arc, self.throttle_to_speed(follow_throttle));
 
-                // Soft terrain penalty: same logic as the wp_is_virtual branch.
-                if sdf_here >= soft_clearance && soft_min_sdf < soft_clearance {
+                if sdf_here >= soft_clearance && ro.min_sdf < soft_clearance {
                     let pen_t = 1.0
                         - clamp_f(
-                            (soft_min_sdf - hard_clearance) / (soft_clearance - hard_clearance).max(1.0),
+                            (ro.min_sdf - hard_clearance) / (soft_clearance - hard_clearance).max(1.0),
                             0.0,
                             1.0,
                         );
@@ -620,6 +566,7 @@ impl ShipNavigator {
                         nav_score,
                         threats,
                         any_obs_collision: obs_col,
+                        rollout: Some((ro.points, ro.commit_t)),
                     });
                 }
             }
@@ -630,6 +577,23 @@ impl ShipNavigator {
         // If every candidate was disqualified by terrain, choose the
         // one whose arc reaches the highest minimum SDF.
         // =========================================================
+        if pass_data.is_empty() && blocked.is_some() {
+            // Every plan meets land; take the one that meets it last.
+            let (i, _, _, points) = blocked.unwrap();
+            result.rudder = candidates[i].rudder;
+            result.throttle = candidates[i].throttle;
+            result.collision_imminent = true;
+            result.scored = true;
+            let t = points.last().map_or(0.0, |p| p.time);
+            self.winning_arc_inputs = self.arc_inputs(result.rudder, result.throttle, t);
+            self.winning_arc = points;
+            self.perf_last_steering_candidates_total = steering_candidates_total;
+            self.perf_last_steering_candidates_simulated = steering_candidates_simulated;
+            self.perf_last_steering_terrain_rejects = steering_terrain_rejects;
+            self.perf_last_steering_short_arc_rejects = steering_short_arc_rejects;
+            self.perf_last_steering_arc_points_simulated = steering_arc_points_simulated;
+            return result;
+        }
         if pass_data.is_empty() {
             let mut least_bad_sdf = f32::NEG_INFINITY;
             for i in 0..n_candidates {
@@ -683,8 +647,11 @@ impl ShipNavigator {
                 any_collision = true;
             }
             let mut score = pass_data[i].nav_score;
-            if self.turn_latch * pass_data[i].rudder < -0.01 && pass_data[i].throttle >= 0 {
+            if self.turn_latch * -pass_data[i].rudder < -0.01 && pass_data[i].throttle >= 0 {
                 score += TURN_LATCH_PENALTY_S;
+            }
+            if self.out_rudder.abs() > 0.3 && pass_data[i].rudder * self.out_rudder < -0.09 {
+                score += RUDDER_FLIP_PENALTY_S;
             }
             if score < best_nav {
                 best_nav = score;
@@ -746,8 +713,14 @@ impl ShipNavigator {
         result.rudder = pass_data[best_idx as usize].rudder;
         result.throttle = pass_data[best_idx as usize].throttle;
 
-        // Re-simulate winning arc for visualization
-        self.set_winning_arc(self.predict_arc_internal(result.rudder, result.throttle, sim_lookahead), result.rudder, result.throttle);
+        result.scored = true;
+        match pass_data[best_idx as usize].rollout.take() {
+            Some((points, commit_t)) => {
+                self.winning_arc_inputs = self.arc_inputs(result.rudder, result.throttle, commit_t);
+                self.winning_arc = points;
+            }
+            None => self.set_winning_arc(self.predict_arc_internal(result.rudder, result.throttle, sim_lookahead), result.rudder, result.throttle),
+        }
 
         result.collision_imminent =
             any_collision || (result.rudder != desired_rudder) || (result.throttle != desired_throttle);
@@ -778,6 +751,11 @@ impl ShipNavigator {
         result
     }
 
+    /// Which way the rudder acts: the hull's actual direction through the water.
+    pub(crate) fn way_sign(&self) -> f32 {
+        if self.state.current_speed < -0.5 { -1.0 } else { 1.0 }
+    }
+
     /// Bow's error from where it is steering to; 0 while backing.
     fn turn_error(&self, throttle: i32) -> f32 {
         if throttle < 0 {
@@ -789,8 +767,8 @@ impl ShipNavigator {
     /// A big turn keeps its side until near done: from far off, port and
     /// starboard score alike and small changes flip the ship between them.
     fn arm_turn_latch(&mut self, choice: &SteeringChoice, turn_err: f32) {
-        if self.turn_latch == 0.0 && turn_err > TURN_LATCH_MIN && choice.throttle >= 0 && choice.rudder.abs() >= 0.3 {
-            self.turn_latch = choice.rudder.signum();
+        if self.turn_latch == 0.0 && self.way_sign() > 0.0 && turn_err > TURN_LATCH_MIN && choice.throttle >= 0 && choice.rudder.abs() >= 0.3 {
+            self.turn_latch = -choice.rudder.signum();
         }
     }
 
@@ -836,7 +814,8 @@ impl ShipNavigator {
 
         // Tighter threshold: target must be more than 110 degrees off the bow
         // cos(110 deg) ~= -0.342, so along/dist must be less than that
-        if dist < 1e-6 {
+        // Under way, backing means coasting on for tens of seconds with the rudder set for astern.
+        if dist < 1e-6 || self.state.current_speed > self.params.max_speed * 0.25 {
             return false;
         }
         if along / dist >= -0.342 {

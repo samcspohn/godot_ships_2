@@ -53,6 +53,13 @@ pub(crate) struct FightArgs {
     pub claims: Vec<Vector2>,
     pub claim_r: f32,
     pub claim_cost: f32,
+    /// Per enemy, nonzero while it shoots a friend of ours: its ring stops no station,
+    /// and checkpoints need only hide from the others.
+    pub busy: Vec<u8>,
+    /// Island-shadow checkpoints toward `goal`: a full-window step is worth this share
+    /// of the best our guns could do; 0 for none.
+    pub checkpoint: f32,
+    pub goal: Vector2,
 }
 
 impl FightArgs {
@@ -90,7 +97,22 @@ impl FightArgs {
             claims: o.get("claims").and_then(|v| v.try_to::<PackedVector2Array>().ok()).map_or(Vec::new(), |a| a.to_vec()),
             claim_r: f("claim_r", 0.0),
             claim_cost: f("claim_cost", 0.0),
+            busy: o.get("busy").and_then(|v| v.try_to::<PackedByteArray>().ok()).map_or(Vec::new(), |a| a.to_vec()),
+            checkpoint: f("checkpoint", 0.0),
+            goal: o.get("goal").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
         }
+    }
+
+    fn busy(&self, i: usize) -> bool {
+        self.busy.get(i).is_some_and(|&b| b != 0)
+    }
+
+    /// The most any target is worth to our guns at any range.
+    fn best_value(&self, inp: &SpotInputs) -> f32 {
+        inp.enemies.iter().enumerate().take(64).filter(|(_, e)| e.shootable).fold(0.0f32, |m, (i, _)| {
+            let peak = self.out.get(i * self.steps..(i + 1) * self.steps).map_or(0.0, |c| c.iter().copied().fold(0.0, f32::max));
+            m.max(self.value.get(i).copied().unwrap_or(0.0) * peak)
+        })
     }
 
     fn at(&self, curve: &[f32], i: usize, d: f32) -> f32 {
@@ -160,6 +182,9 @@ pub(crate) fn exposure(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &Fight
     (harm * (1.0 + a.focus * (shooters - 1.0).max(0.0)) * (1.0 + a.crossfire * spread.clamp(0.0, 1.0)), seen)
 }
 
+/// A checkpoint must gain this much toward the goal.
+const CHECKPOINT_MIN_M: f32 = 500.0;
+
 const CROSSFIRE_FREE: f32 = std::f32::consts::FRAC_PI_3;
 const CROSSFIRE_FULL: f32 = std::f32::consts::PI;
 /// Shooters doing less than this share of the worst one's harm do not widen the arc.
@@ -222,9 +247,37 @@ impl VisibilityGrid {
         let p = self.centres[k];
         let fire = inp.fire.as_ref().map(|f| (f.known_mask(), f.mask(p)));
         inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
-            a.ring.get(i).is_some_and(|&r| p.distance_to(e.pos) < r)
+            !a.busy(i)
+                && a.ring.get(i).is_some_and(|&r| p.distance_to(e.pos) < r)
                 && fire.is_none_or(|(known, hit)| known & (1 << i) == 0 || hit & (1 << i) != 0)
         })
+    }
+
+    /// A cell no heavy enemy but a busy one sees inside its sight of us.
+    fn hidden_from_free(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> bool {
+        let p = self.centres[k];
+        !inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
+            e.heavy && !a.busy(i) && p.distance_to(e.pos) < e.det_r && e.cell.is_none_or(|ec| self.visible_idx(k, ec))
+        })
+    }
+
+    /// A hidden cell gaining CHECKPOINT_MIN_M from `from` toward the goal, out of
+    /// every ring: worth `checkpoint` of `best` per full window gained, less what it takes.
+    pub(crate) fn checkpoint_cell(&self, k: usize, from: Vector2, best: f32, inp: &SpotInputs, a: &FightArgs) -> Option<FightCell> {
+        if a.checkpoint <= 0.0 || !a.goal.is_finite() || best <= 0.0 || self.sdf_c[k] < inp.clearance {
+            return None;
+        }
+        let gain = from.distance_to(a.goal) - self.centres[k].distance_to(a.goal);
+        if gain < CHECKPOINT_MIN_M || !self.hidden_from_free(k, inp, a) || self.ringed(k, inp, a) {
+            return None;
+        }
+        let value = a.checkpoint * best * gain.min(a.window_m) / a.window_m;
+        Some(FightCell { mask: 0, value, harm: exposure(self, k, inp, a).0 })
+    }
+
+    /// fight_cell, else checkpoint_cell from `from`.
+    pub(crate) fn station_cell(&self, k: usize, from: Vector2, inp: &SpotInputs, a: &FightArgs) -> Option<FightCell> {
+        self.fight_cell(k, inp, a).or_else(|| self.checkpoint_cell(k, from, a.best_value(inp), inp, a))
     }
 
     /// Inside the chase ring of some enemy that sees the cell.
@@ -335,11 +388,31 @@ impl VisibilityGrid {
                 }
             }
         }
-        let weighed = cand.len();
+        let mut weighed = cand.len();
+        let top = a.best_value(inp);
+        if a.checkpoint > 0.0 && a.goal.is_finite() && top > 0.0 {
+            let r = (a.window_m / self.cell).ceil() as i32;
+            let (cx, cz) = self.grid_of(from);
+            for iz in cz - r..=cz + r {
+                for ix in cx - r..=cx + r {
+                    let Some(k) = self.water(ix, iz) else { continue };
+                    if seen.contains(&k) || self.centres[k].distance_to(from) > a.window_m || !self.walk_ok(self.centres[k], true, a) {
+                        continue;
+                    }
+                    weighed += 1;
+                    if let Some(fc) = self.checkpoint_cell(k, from, top, inp, a) {
+                        let sc = fc.value - fc.harm - self.penalty(k, a);
+                        if best.as_ref().is_none_or(|b| sc > b.1) {
+                            best = Some((k, sc, fc));
+                        }
+                    }
+                }
+            }
+        }
         let held = held.is_finite().then(|| self.grid_of(held))
             .and_then(|(hx, hz)| self.water(hx, hz))
             .filter(|&k| self.walk_ok(self.centres[k], false, a))
-            .and_then(|k| self.fight_cell(k, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a), fc)));
+            .and_then(|k| self.station_cell(k, from, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a), fc)));
         let chase = if best.is_none() { near.zip(chase).map(|(x, (_, t))| (x.0, t)) } else { None };
         (best, held, chase, weighed)
     }

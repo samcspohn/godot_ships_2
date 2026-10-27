@@ -153,6 +153,7 @@ pub struct ShipParams {
     pub ship_beam: f32,
     pub turn_speed_loss: f32,       // fraction of speed lost while turning
     pub linear_drag: f32,
+    pub turn_tightening: f32,       // turning radius scale at standstill
 }
 
 impl Default for ShipParams {
@@ -168,6 +169,7 @@ impl Default for ShipParams {
             ship_beam: 25.0,
             turn_speed_loss: 0.2,
             linear_drag: 0.3,
+            turn_tightening: 0.8,
         }
     }
 }
@@ -181,6 +183,7 @@ pub struct ShipState {
     pub angular_velocity_y: f32, // yaw rate (rad/s)
     pub current_rudder: f32,     // [-1, 1]
     pub current_speed: f32,      // signed; negative = reversing
+    pub engine_power: f32,       // ShipMovementV4.engine_power; NaN when not fed
 }
 
 impl Default for ShipState {
@@ -192,6 +195,7 @@ impl Default for ShipState {
             angular_velocity_y: 0.0,
             current_rudder: 0.0,
             current_speed: 0.0,
+            engine_power: f32::NAN,
         }
     }
 }

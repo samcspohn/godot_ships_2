@@ -14,7 +14,9 @@ use crate::nav::types::{
 
 mod api;
 mod arc;
+pub(crate) mod hull;
 mod path;
+mod rollout;
 mod ships_avoid;
 mod steering;
 mod update;
@@ -92,6 +94,8 @@ pub struct ArcInputs {
     pub throttle: i32,
     pub turn_t: f32,
     pub end_t: f32,
+    pub power0: f32,
+    pub yaw0: f32,
 }
 
 /// Output of select_best_steering.
@@ -101,6 +105,8 @@ pub struct SteeringChoice {
     pub throttle: i32,
     /// True if any threat was detected.
     pub collision_imminent: bool,
+    /// Picked by simulated scoring; its throttle is part of the plan.
+    pub scored: bool,
 }
 
 /// Torpedo hits along an arc, from score_arc_torpedo_threat; they hard-override navigation.
@@ -243,8 +249,10 @@ pub struct ShipNavigator {
 
     pub(crate) dodge_committed_rudder: f32,
     pub(crate) dodge_commitment_timer: f32,
-    /// Rudder side of a big turn in progress, 0 none.
+    /// Heading-change side of a big turn in progress (+1 raises heading), 0 none.
     pub(crate) turn_latch: f32,
+    /// Seconds the engine order keeps its direction after reversing.
+    pub(crate) engine_commit_timer: f32,
     /// True on the last `select_best_steering` when a torpedo threatened at
     /// least one candidate arc, i.e. navigation was hard-overridden; stance's
     /// throttle cap stands down so it cannot spoil the dodge.
@@ -364,6 +372,7 @@ impl IRefCounted for ShipNavigator {
             dodge_committed_rudder: 0.0,
             dodge_commitment_timer: 0.0,
             turn_latch: 0.0,
+            engine_commit_timer: 0.0,
             torpedo_override_active: false,
             threat_registry: None,
             threat_team: -1,
@@ -574,6 +583,7 @@ impl ShipNavigator {
         ship_beam: f32,
         turn_speed_loss: f32,
         linear_drag: f32,
+        #[opt(default = 0.8)] turn_tightening: f32,
     ) {
         self.set_ship_params_impl(
             turning_circle_radius,
@@ -586,6 +596,7 @@ impl ShipNavigator {
             ship_beam,
             turn_speed_loss,
             linear_drag,
+            turn_tightening,
         );
     }
 
@@ -599,6 +610,7 @@ impl ShipNavigator {
         current_rudder: f32,
         current_speed: f32,
         delta: f32,
+        #[opt(default = f32::NAN)] engine_power: f32,
     ) {
         self.set_state_impl(
             position,
@@ -607,6 +619,7 @@ impl ShipNavigator {
             angular_velocity_y,
             current_rudder,
             current_speed,
+            engine_power,
             delta,
         );
     }
@@ -774,6 +787,7 @@ impl ShipNavigator {
             p.turning_circle_radius, p.rudder_response_time, p.acceleration_time, p.max_speed,
             p.reverse_speed_ratio, p.ship_length, p.ship_beam, p.turn_speed_loss,
             a.rudder0, a.speed0, a.lateral0, a.rudder, a.throttle as f32, a.turn_t, a.end_t,
+            a.power0, a.yaw0, p.turn_tightening, p.linear_drag,
         ][..])
     }
 
@@ -790,14 +804,19 @@ impl ShipNavigator {
             reverse_speed_ratio: v[4], ship_length: v[5], ship_beam: v[6], turn_speed_loss: v[7],
             ..ShipParams::default()
         };
-        let throttle = v[12] as i32;
-        let fraction = throttle_to_speed_fraction(throttle);
-        let target_speed = if fraction < 0.0 { fraction * p.max_speed * p.reverse_speed_ratio } else { fraction * p.max_speed };
-        let start = arc::ArcStart {
-            position: Vector2::new(position.x, position.z), heading, speed: v[9], lateral_speed: v[10], rudder: v[8],
+        let opt = |i: usize, d: f32| v.get(i).copied().unwrap_or(d);
+        let p = ShipParams { turn_tightening: opt(17, 0.8), linear_drag: opt(18, 0.1), ..p };
+        let fwd = Vector2::new(heading.sin(), heading.cos());
+        let start = hull::Hull {
+            pos: Vector2::new(position.x, position.z),
+            vel: fwd * v[9] + Vector2::new(fwd.y, -fwd.x) * v[10],
+            heading,
+            yaw: opt(16, 0.0),
+            rudder: v[8],
+            power: opt(15, v[9] / p.max_speed.max(0.1)),
         };
         let clearance = (p.ship_length as f64 / 2.0 + p.ship_beam as f64) as f32;
-        let arc = arc::integrate_arc(&p, start, v[11], target_speed, clearance, f32::MAX, v[13]);
+        let arc = arc::integrate_arc(&p, start, v[11], throttle_to_speed_fraction(v[12] as i32), clearance, f32::MAX, v[13]);
         for pt in &arc {
             out.push(Vector3::new(pt.position.x, 0.0, pt.position.y));
         }
@@ -809,6 +828,31 @@ impl ShipNavigator {
                 let q = last.position + fwd * (last.speed * (t - last.time));
                 out.push(Vector3::new(q.x, 0.0, q.y));
             }
+        }
+        out
+    }
+
+    /// Hull model check: params [tcr, rudder_t, accel_t, max_speed, length, turn_loss, linear_drag, tightening],
+    /// start [x, z, vx, vz, heading, yaw, rudder, power], commands (rudder, power) per physics tick.
+    /// Returns (x, z, heading, speed) per tick.
+    #[func]
+    fn simulate_hull(params: PackedFloat32Array, start: PackedFloat32Array, commands: PackedFloat32Array) -> PackedFloat32Array {
+        let (q, s) = (params.as_slice(), start.as_slice());
+        let mut out = PackedFloat32Array::new();
+        if q.len() < 8 || s.len() < 8 {
+            return out;
+        }
+        let p = ShipParams {
+            turning_circle_radius: q[0], rudder_response_time: q[1], acceleration_time: q[2], max_speed: q[3],
+            ship_length: q[4], turn_speed_loss: q[5], linear_drag: q[6], turn_tightening: q[7],
+            ..ShipParams::default()
+        };
+        let mut h = hull::Hull {
+            pos: Vector2::new(s[0], s[1]), vel: Vector2::new(s[2], s[3]), heading: s[4], yaw: s[5], rudder: s[6], power: s[7],
+        };
+        for c in commands.as_slice().chunks_exact(2) {
+            h.step(&p, c[0], c[1], hull::PHYSICS_DT);
+            out.extend_array(&PackedFloat32Array::from(&[h.pos.x, h.pos.y, h.heading, h.speed()][..]));
         }
         out
     }

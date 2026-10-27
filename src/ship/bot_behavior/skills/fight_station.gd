@@ -24,6 +24,11 @@ const CHASE_RETRY_S := 10.0
 ## An enemy seen shooting a friend of ours deals this share of its fire to us while it does:
 ## its turrets and solution are on someone else.
 const ENGAGED_AGGRO := 0.25
+## A brawler's island checkpoint gaining a full window toward its target is worth this share of its best fight.
+const CHECKPOINT_SHARE := 0.5
+## A brawler's goal favours lit enemies by this much per share of HP lost, and this times over for one busy with a friend.
+const GOAL_WORN_W := 2.0
+const GOAL_BUSY_W := 2.0
 ## Harm grows by this share for each enemy past the first that can shoot the cell.
 const MARCH_FOCUS := 0.25
 ## Harm doubles as the shooters' arc widens from 60° to 180°: a cell where we cannot angle to them all.
@@ -49,7 +54,10 @@ const HARM_PRIOR_LIFE_S := 900.0
 const HARM_PRIOR_S := 300.0
 
 var _presumed := false
-## Class -> {searches, enemies, busy, depth: [], ahead: [], dist: []}, for match metrics.
+## Per belief entry, 1 while a brawler may ignore that enemy's ring: it is shooting a friend.
+var _busy := PackedByteArray()
+var _checkpoints := 0
+## Class and class/hull -> {searches, enemies, busy, brawler, checkpoints, depth: [], ahead: [], dist: []}, for match metrics.
 ## depth/ahead: station/ship metres past the local enemy centre toward their side.
 static var stats: Dictionary = {}
 
@@ -57,7 +65,7 @@ static func stats_summary() -> Dictionary:
 	var out := {}
 	for k in stats:
 		var c: Dictionary = stats[k]
-		out[k] = {"searches": c.searches, "enemies": c.enemies, "busy": c.busy,
+		out[k] = {"searches": c.searches, "enemies": c.enemies, "busy": c.busy, "brawler": c.brawler, "checkpoints": c.checkpoints,
 			"depth": _quantiles(c.depth), "ahead": _quantiles(c.ahead), "dist": _quantiles(c.dist)}
 	return out
 
@@ -70,9 +78,11 @@ static func _quantiles(a: Array) -> Dictionary:
 		"p10": d[int(d.size() * 0.1)], "p50": d[d.size() / 2], "p90": d[mini(int(d.size() * 0.9), d.size() - 1)],
 		"past": d.filter(func(x): return x > 0.0).size()}
 
-func _stat(ctx: SkillContext) -> Dictionary:
-	return stats.get_or_add(Ship.ShipClass.keys()[ctx.ship.ship_class],
-		{"searches": 0, "enemies": 0, "busy": 0, "depth": [], "ahead": [], "dist": []})
+## The class's row and the class/hull row.
+func _stats(ctx: SkillContext) -> Array:
+	var cls: String = Ship.ShipClass.keys()[ctx.ship.ship_class]
+	return [cls, "%s/%s" % [cls, ctx.ship.ship_name]].map(func(k): return stats.get_or_add(k,
+		{"searches": 0, "enemies": 0, "busy": 0, "brawler": 0, "checkpoints": 0, "depth": [], "ahead": [], "dist": []}))
 ## A new cell must beat the held one's score by this share of it, or this much.
 const MARCH_SWITCH_REL := 0.2
 const MARCH_SWITCH_ABS := 0.02
@@ -193,13 +203,15 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 	if _has_station and now_ms - _marched_ms < MARCH_MS:
 		return
 	_marched_ms = now_ms
+	_checkpoints = 0
 	_pick(vis, here, pos, mo, prio, belief)
-	if _has_station and not _chasing:
-		var ff: FleetFrame = ctx.behavior.local_frame(ctx.ship.global_position, NavigationMapManager.reach_gun(ctx.ship).get("range", 10000.0))
-		var st := _stat(ctx)
-		st.depth.append((_station - ff.enemy_center).dot(ff.forward))
-		st.ahead.append((ctx.ship.global_position - ff.enemy_center).dot(ff.forward))
-		st.dist.append(here.distance_to(Vector2(_station.x, _station.z)))
+	var ff: FleetFrame = ctx.behavior.local_frame(ctx.ship.global_position, NavigationMapManager.reach_gun(ctx.ship).get("range", 10000.0))
+	for st in _stats(ctx):
+		st.checkpoints += _checkpoints
+		if _has_station and not _chasing:
+			st.depth.append((_station - ff.enemy_center).dot(ff.forward))
+			st.ahead.append((ctx.ship.global_position - ff.enemy_center).dot(ff.forward))
+			st.dist.append(here.distance_to(Vector2(_station.x, _station.z)))
 	_route_hp = vis.fight_route_harm(here, Vector2(_station.x, _station.z), pos, mo) / maxf(_harm_price, 0.01) \
 		if _has_station else 0.0
 
@@ -232,6 +244,8 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	if holding and float(r.score) <= held + maxf(MARCH_SWITCH_ABS, absf(held) * MARCH_SWITCH_REL):
 		return
 	_chasing = false
+	if bool(r.get("checkpoint", false)):
+		_checkpoints += 1
 	_adopt(Vector3(p.x, 0.0, p.y), float(r.score), {})
 	_mark(float(r.score), float(r.value), float(r.harm), int(r.mask), prio, belief)
 
@@ -300,7 +314,11 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 	var conceal: float = (ship.concealment.params.p() as ConcealmentParams).radius if ship.concealment != null else 0.0
 	_harm_price = harm_price(ctx)
 	_horizon = ctx.behavior.threat_horizon(ctx.server)
-	_stat(ctx).searches += 1
+	var brawl: bool = ctx.behavior.brawler()
+	for st in _stats(ctx):
+		st.searches += 1
+		st.brawler += int(brawl)
+	_busy = PackedByteArray()
 	for i in belief.size():
 		var o: PackedFloat32Array = (trades[i].out as PackedFloat32Array).duplicate()
 		var n: PackedFloat32Array = (trades[i].in as PackedFloat32Array).duplicate()
@@ -318,10 +336,11 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		det.append(maxf(maxf(conceal, float(belief[i].force_spot)) - float(belief[i].spread), 0.0))
 		threat.append(1 if threatens(e) else 0)
 		var busy := _engaged_elsewhere(ctx, e)
+		_busy.append(1 if busy and brawl else 0)
 		if live[i] != 0:
-			var st := _stat(ctx)
-			st.enemies += 1
-			st.busy += int(busy)
+			for st in _stats(ctx):
+				st.enemies += 1
+				st.busy += int(busy)
 		aggro.append(ENGAGED_AGGRO if busy else _aggro(ctx, e, belief[i].pos, friends))
 		var f := Vector2(INF, 0.0) if busy else _front(ctx.ship, belief[i].pos, friends)
 		front.append(f.x)
@@ -339,7 +358,31 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		"move_cost": MOVE_COST_PER_KM / 1000.0 * maxf(_march_score, MOVE_COST_FLOOR),
 		"walk_slack": WALK_SLACK_M,
 		"claims": _other_claims(ship.team.team_id, ship.get_instance_id(), SimClock.now_ms()), "claim_r": SPACING_M,
-		"claim_cost": SPACING_COST * maxf(_march_score, MOVE_COST_FLOOR)})
+		"claim_cost": SPACING_COST * maxf(_march_score, MOVE_COST_FLOOR),
+		"busy": _busy, "checkpoint": CHECKPOINT_SHARE if brawl else 0.0, "goal": _goal(ctx, ship, float(g.range), belief)})
+
+## Where a brawler's checkpoints lead: the lit enemy within reach of the window that is
+## most worn and most busy with our ships (a falling flank), else its priority, else the local enemy centre.
+static func _goal(ctx: SkillContext, ship: Ship, gun_range: float, belief: Array[Dictionary]) -> Vector2:
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var best := Vector2.INF
+	var top := 0.0
+	for b in belief:
+		var e: Ship = b.ship
+		if int(b.source) != 0 or not is_instance_valid(e) or b.pos.distance_to(here) > gun_range + WINDOW_M:
+			continue
+		var worn: float = 1.0 + GOAL_WORN_W * (1.0 - e.health_controller.current_hp / maxf(e.health_controller.max_hp, 1.0))
+		var s: float = worn * (GOAL_BUSY_W if _engaged_elsewhere(ctx, e) else 1.0)
+		if s > top:
+			top = s
+			best = b.pos
+	if best.is_finite() and top > 1.0:
+		return best
+	var pp: Vector3 = ctx.behavior.priority_point()
+	if pp.is_finite():
+		return Vector2(pp.x, pp.z)
+	var c: Vector3 = ctx.behavior.local_frame(ship.global_position, gun_range).enemy_center
+	return Vector2(c.x, c.z)
 
 ## Which way stations may walk, on the fleet line local to us (FleetFrame at
 ## gun-range locality). A flank ship walks only outward on its own side, to at
@@ -464,6 +507,9 @@ static func threatens(e: Ship) -> bool:
 ## The route is walled out of the rings, each pulled in short of the station inside it.
 func _shape(intent: NavIntent, ctx: SkillContext, here: Vector2, pos: PackedVector2Array, opts: Dictionary) -> void:
 	var radii := _walls(opts.det_r, pos)
+	for i in mini(radii.size(), _busy.size()):
+		if _busy[i] != 0:
+			radii[i] = 0.0
 	if not ctx.ship.visible_to_enemy:
 		radii = _short_of(radii, pos, here)
 	intent.avoid_origins = pos

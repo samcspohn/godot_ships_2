@@ -5,7 +5,7 @@ extends BotSkill
 ## the threat axis, toward or away (only away once the bow points away), behind an island or,
 ## while going dark still works, in dark water; else a fighting retreat on the
 ## angled away-heading. Stance decides whether the hull turns or backs out.
-## Params: cant_go_dark, toward (the toward cone turns onto it, at most CONE off the threat axis).
+## Params: cant_go_dark, toward (the toward cone turns onto it, at most CONE off the threat axis), ahead_only (no away cone).
 
 ## Cover is searched within this of the threat axis, toward or away.
 const CONE: float = deg_to_rad(35.0)
@@ -56,7 +56,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var cone := cone_axis
 	var away_ratio: float = SkillCover.AWAY_RATIO
 	# Bow already off the threat: only the cone it is heading into, turning back costs a broadside.
-	if is_finite(cone_axis) and absf(angle_difference(ctx.behavior._get_ship_heading(), cone_axis)) > PI / 2.0:
+	if params.get("ahead_only", false):
+		away_ratio = INF
+	elif is_finite(cone_axis) and absf(angle_difference(ctx.behavior._get_ship_heading(), cone_axis)) > PI / 2.0:
 		cone = wrapf(cone_axis + PI, -PI, PI)
 		away_ratio = INF
 	var toward: Vector2 = params.get("toward", Vector2.INF)

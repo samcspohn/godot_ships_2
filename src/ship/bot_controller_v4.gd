@@ -222,7 +222,8 @@ func _ready() -> void:
 		movement.ship_length,
 		movement.ship_beam,
 		params.turn_speed_loss,
-		movement.BASE_DRAG
+		movement.BASE_DRAG,
+		params.slow_speed_turn_tightening
 	)
 	navigator.prepare_regions()
 
@@ -290,7 +291,8 @@ func _physics_process(delta: float) -> void:
 			_ship.angular_velocity.y,
 			movement.rudder_input,
 			get_current_speed(),
-			delta
+			delta * 2.0,
+			movement.engine_power
 		)
 		navigator.set_grounded(movement.is_grounded)
 

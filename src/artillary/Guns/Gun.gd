@@ -253,6 +253,8 @@ func fire(mod: TargetMod = null) -> void:
 				else:
 					pass
 					# print(aim)
+			if not get_shell()._secondary:
+				GunneryCalibration.on_fire(_ship, _aim_point, muzzles.size(), get_shell())
 			_ship.concealment.bloom(get_params()._range)
 			reload = 0
 
