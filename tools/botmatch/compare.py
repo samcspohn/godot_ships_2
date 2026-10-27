@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": [], "calibration": []}
+              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": [], "calibration": [], "manoeuvres": [], "vetoes": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -57,6 +57,10 @@ def load(d):
             health["fight"].append(m["fight"])
         if "calibration" in m:
             health["calibration"].append(m["calibration"])
+        if "manoeuvres" in m:
+            health["manoeuvres"].append(m["manoeuvres"])
+        if "vetoes" in m:
+            health["vetoes"].append(m["vetoes"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -135,14 +139,16 @@ if any(h["fight"] for h, _ in data.values()):
             print(f'{label:>12} {c:>20} {"%7.0f±%-5.0f" % ci([m["searches"] for m in ms]):>13} {100 * brawl:>5.1f}% {"%5.1f±%-4.1f" % ci([m.get("checkpoints", 0) for m in ms]):>11} {100 * busy:>6.1f}% {q("depth", "p50"):>15} {q("depth", "p90"):>15} '
                   f'{100 * past:>6.1f}% {q("ahead", "p50"):>15} {q("dist", "p50"):>13} {q("dist", "p90"):>13}')
 
-def calib_table(label, cals, group):
+def calib_table(label, cals, group, group_hull=None):
     agg = defaultdict(lambda: defaultdict(float))
     for c in cals:
         for key, v in c.items():
-            shooter, tcls, band = key.split("|")
+            shooter, tcls, band, *hull = key.split("|")
             for k, x in v.items():
                 agg[group(shooter, tcls, int(band))][k] += x
-    for g in sorted(agg):
+                if hull and group_hull is not None:
+                    agg[group_hull(shooter, hull[0], int(band))][k] += x
+    for g in sorted(k for k in agg if k is not None):
         a = agg[g]
         if a["pred"] <= 0 and a["real"] <= 0:
             continue
@@ -158,6 +164,47 @@ if any(h["calibration"] for h, _ in data.values()):
     print(hdr)
     for label, (h, _) in data.items():
         calib_table(label, h["calibration"], lambda s, t, b: f"all -> {t} {b * 5}-{b * 5 + 5}km")
+    print(hdr)
+    for label, (h, _) in data.items():
+        calib_table(label, h["calibration"], lambda s, t, b: None, lambda s, t, b: f"all -> {t}")
+
+if any(h["manoeuvres"] for h, _ in data.values()):
+    print("\n== stance manoeuvres (chosen turn/astern run, per run: priced vs taken main-battery damage. on/by: priced (before the "
+          "manoeuvre factor) and taken from shooters on us / bystanders; other: taken from ships not priced; early: first 30 s; band: run length)")
+    print(f'{"build":>6} {"class/kind/band":>18} {"n":>6} {"priced":>7} {"taken":>7} {"t/p":>5} {"on p":>7} {"on t":>7} {"by p":>7} '
+          f'{"by t":>7} {"other t":>7} {"early p":>7} {"early t":>7} {">hp":>6} {"died":>6} {"d|>hp":>6}')
+    bands = ["<30s", "30-60s", "60-120s", ">120s"]
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: defaultdict(float))
+        for mm in h["manoeuvres"]:
+            for k, v in mm.items():
+                parts = k.split("|")
+                if len(parts) < 3:
+                    continue
+                keys = [f"{parts[0]}/{parts[1]}/all", f"{parts[0]}/{parts[1]}/{bands[int(parts[2])]}"]
+                if len(parts) > 3:
+                    keys.append(f"{parts[3]}/{parts[1]}")
+                for key in keys:
+                    for f, x in v.items():
+                        agg[key][f] += x
+        for k in sorted(agg):
+            a = agg[k]
+            n = max(a["n"], 1)
+            per = lambda f: f'{a[f] / n:>7.0f}'
+            print(f'{label:>6} {k:>18} {a["n"]:>6.0f} {per("pred")} {per("real")} {a["real"] / max(a["pred"], 1):>5.2f} {per("pred_on")} {per("real_on")} '
+                  f'{per("pred_by")} {per("real_by")} {per("real_other")} {per("pred_early")} {per("real_early")} '
+                  f'{100 * a["over_hp"] / n:>5.1f}% {100 * a["died"] / n:>5.1f}% {100 * a["died_over"] / max(a["over_hp"], 1):>5.1f}%')
+
+if any(h["vetoes"] for h, _ in data.values()):
+    print("\n== turn veto (fresh prices where turning beat backing, and the share the swing-vs-HP veto blocked)")
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: [0, 0])
+        for v in h["vetoes"]:
+            for c, x in v.items():
+                agg[c][0] += x["cheaper"]
+                agg[c][1] += x["vetoed"]
+        for c in sorted(agg):
+            print(f'{label:>12} {c:>4} {agg[c][0] / max(len(h["vetoes"]), 1):>8.1f}/match cheaper  {100 * agg[c][1] / max(agg[c][0], 1):>5.1f}% vetoed')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

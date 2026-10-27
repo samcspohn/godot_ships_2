@@ -108,6 +108,28 @@ const PEN_QUANTUM_MM: float = 5.0
 const CITADEL_GUARANTEE_FRAC: float = 0.25
 const CITADEL_ELLIPSE := Vector2(0.4, 0.1)
 
+## Main-battery damage that landed over what get_expected predicted, by shooter class, target class
+## (BB, CA, DD) and range at CALIBRATION_BANDS_M; GunneryCalibration over 100 12v12 matches, 2026-10-27.
+## The bake aims every salvo at the best point; aim error grows with range and hurts small hulls most.
+const CALIBRATION_BANDS_M := [2500.0, 7500.0, 12500.0, 17500.0]
+const CALIBRATION := [
+	[[0.70, 0.61, 0.54, 0.45], [0.40, 0.34, 0.22, 0.11], [0.38, 0.28, 0.13, 0.04]],
+	[[0.67, 0.58, 0.50, 0.50], [0.58, 0.40, 0.22, 0.22], [0.52, 0.34, 0.14, 0.14]],
+	[[0.72, 0.71, 0.59, 0.59], [0.64, 0.50, 0.31, 0.31], [0.61, 0.48, 0.22, 0.22]],
+]
+
+
+## Share of get_expected's damage that `shooter` lands on `target` at `range_m`; CVs count as BB.
+static func calibration(shooter: Ship, target: Ship, range_m: float) -> float:
+	var row: Array = CALIBRATION[mini(shooter.ship_class, 2)][mini(target.ship_class, 2)]
+	var bands: Array = CALIBRATION_BANDS_M
+	if range_m <= bands[0]:
+		return row[0]
+	for i in range(1, bands.size()):
+		if range_m <= bands[i]:
+			return lerpf(row[i - 1], row[i], (range_m - bands[i - 1]) / (bands[i] - bands[i - 1]))
+	return row[-1]
+
 ## scene path -> table Dictionary, or null when missing or stale.
 static var _tables: Dictionary = {}
 ## gunnery.db head, read once.

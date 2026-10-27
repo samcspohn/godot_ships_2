@@ -1371,6 +1371,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"disengage": SkillDisengage.leg_summary(),
 		"fight": FightStation.stats_summary(),
 		"calibration": GunneryCalibration.summary(),
+		"manoeuvres": GunneryCalibration.probe_summary(),
+		"vetoes": GunneryCalibration.veto_summary(),
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())

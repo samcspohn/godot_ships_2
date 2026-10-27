@@ -12,7 +12,7 @@ extends BotSkill
 const ASPECT_STEP_DEG: float = 5.0
 const ASPECTS: int = 37
 const RANGE_BUCKET_M: float = 250.0
-## In range of us, but not shown to be aiming here.
+## In range of us, but not shown to be aiming here (axis_now's unseen contacts).
 const BYSTANDER_WEIGHT: float = 0.5
 ## How far the route may pull the bow off the axis.
 const AXIS_CONE: float = deg_to_rad(15.0)
@@ -45,6 +45,9 @@ const MIN_SPREAD_M: float = 5.0
 const SAIL_DT: float = 0.25
 ## Unseen, enemies this far past their gun range still set the axis: they are closing.
 const AXIS_ADVANCE_M: float = 2000.0
+## What a swing actually took over what it priced, by class (BB, CA, DD; CV as BB): GunneryCalibration
+## probes over 50 12v12 matches, 2026-10-27. The veto weighs the swing at this.
+const SWING_TAKEN := [0.70, 0.64, 0.53]
 ## Citadel box in shares of length and beam, when the hull has no citadel part.
 const CITADEL_FALLBACK := Vector2(0.6, 0.5)
 
@@ -61,6 +64,16 @@ var _turning: bool = false
 ## Bearing of the weighted fire while under it, else INF (debug).
 var _axis: float = INF
 var _turn_cost: float = 0.0
+## The cheaper turn's calibrated damage without the citadel weight: what it would take off our HP.
+var _turn_hp: float = 0.0
+var _astern_hp: float = 0.0
+## Seconds the priced turn and astern runs take.
+## The priced window (the turn's run) and the turn's exposed part (rudder lag and swing) in it.
+var _window_s: float = 0.0
+var _swing_s: float = 0.0
+var _turn_track: Array = []
+var _back_track: Array = []
+var _vmax: float = 1.0
 var _astern_cost: float = 0.0
 var _priced_at: float = -INF
 var _juke: bool = false
@@ -184,17 +197,27 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 	if cos(angle_difference(near, goal)) < 0.0:
 		var to: Vector3 = intent.target_position - ctx.ship.global_position
 		var cheaper := _turn_beats_astern(ctx, hdg, near, far, goal, Vector2(to.x, to.z).length())
-		# A turn that lands more than we have left is no way out, however it compares.
-		_turning = (_turning or cheaper) and _turn_cost < ctx.ship.health_controller.current_hp
+		# A turn whose swing lands more than we have left is no way out, however it compares.
+		_turning = (_turning or cheaper) and _turn_hp * SWING_TAKEN[mini(ctx.ship.ship_class, 2)] < ctx.ship.health_controller.current_hp
 		end = far if _turning else near
 		astern = not _turning
+		if SimClock.now() == _priced_at:
+			if cheaper:
+				GunneryCalibration.on_veto(ctx.ship, not _turning)
+			var track: Array = _turn_track if _turning else _back_track
+			var split := _track_split(track, _vmax, ctx.ship.team.team_id, _window_s, _swing_s)
+			GunneryCalibration.open_probe(ctx.ship, &"turn" if _turning else &"astern", split.on + split.by,
+				_window_s, _swing_s, split,
+				_shooters.filter(func(sh): return float(sh.weight) >= 1.0).map(func(sh): return sh.id),
+				_shooters.filter(func(sh): return float(sh.weight) < 1.0).map(func(sh): return sh.id))
 	var motion: float = wrapf(end + PI, -PI, PI) if astern else end
 	_heading = wrapf(end + clampf(angle_difference(motion, goal), -AXIS_CONE, AXIS_CONE), -PI, PI)
 	_throttle = -1.0 if astern else 1.0
 
 
-## Turning round, either way the land leaves clear, against backing, each run
-## until as far toward the goal: the salvos that land, in effective HP.
+## Turning round, either way the land leaves clear, run until as far toward the goal, against backing
+## for as long, plus the time at full speed to make up the distance backing fell short: the salvos that
+## land, in effective HP. _turn_hp is the swing's alone, unweighted.
 func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, goal: float, dist: float) -> bool:
 	var now: float = SimClock.now()
 	if now - _priced_at < ESCAPE_REPRICE_S:
@@ -212,13 +235,36 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	var left: float = angle_difference(hdg, far)
 	var short: float = signf(left) if left != 0.0 else 1.0
 	_turn_cost = INF
+	_turn_hp = INF
+	_turn_track = []
+	_vmax = vmax
+	var team_id: int = ctx.ship.team.team_id
 	for way in [short, -short]:
 		var swing: float = absf(left) if way == short else TAU - absf(left)
 		var track := _escape_track(start, hdg, goal, want, vmax, vmax, w * way, p.rudder_response_time, swing, false, clearance, reach)
 		if not track.is_empty():
-			_turn_cost = minf(_turn_cost, _track_taken(track, vmax, ctx.ship.team.team_id))
+			var cost := _track_taken(track, vmax, team_id)
+			if cost < _turn_cost:
+				_turn_cost = cost
+				_swing_s = p.rudder_response_time + swing / maxf(w, 1e-3)
+				_turn_hp = _track_taken(track, vmax, team_id, &"raw", _swing_s)
+				_turn_track = track
 	var back := _escape_track(start, near, goal, want, vmax, vmax * p.reverse_speed_ratio, 0.0, 0.0, 0.0, true, clearance, reach)
-	_astern_cost = _track_taken(back, vmax, ctx.ship.team.team_id) if not back.is_empty() else INF
+	_back_track = back
+	_window_s = _turn_track.size() * ESCAPE_DT if not _turn_track.is_empty() else back.size() * ESCAPE_DT
+	if _turn_track.is_empty():
+		_swing_s = 0.0
+	_astern_cost = INF
+	_astern_hp = INF
+	if not back.is_empty():
+		# Same window as the turn; what backing has not covered by its end is sailed on at this rate.
+		_astern_cost = _track_taken(back, vmax, team_id, &"rows", _window_s)
+		_astern_hp = _track_taken(back, vmax, team_id, &"raw", _window_s)
+		var k: int = mini(int(_window_s / ESCAPE_DT), back.size()) - 1
+		var made: float = (back[k][0] as Vector2 - start).dot(Vector2(sin(goal), cos(goal))) if k >= 0 else 0.0
+		var short_s: float = maxf(want - made, 0.0) / vmax
+		if _window_s > 0.0:
+			_astern_cost *= 1.0 + short_s / _window_s
 	return _turn_cost < _astern_cost
 
 
@@ -257,8 +303,34 @@ func _escape_track(at: Vector2, hdg: float, goal: float, want: float, vmax: floa
 
 ## Whole salvos landing along `track`, each on its shooter's clock: at the hull's
 ## aspect to it then, nothing once out of its range or behind land from it, less what speed dodges.
-func _track_taken(track: Array, vmax: float, team_id: int) -> float:
-	var end: float = track.size() * ESCAPE_DT
+## _track_taken's unweighted damage in the first `window_s`, split by who it is booked to: {on (shooters
+## on us), by (bystanders), early (both, landing in the first `early_s`)}; for GunneryCalibration's probes.
+func _track_split(track: Array, vmax: float, team_id: int, window_s: float, early_s: float) -> Dictionary:
+	var out := {"on": 0.0, "by": 0.0, "early": 0.0}
+	if track.is_empty():
+		return out
+	var end: float = minf(track.size() * ESCAPE_DT, window_s)
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	for sh in _shooters:
+		var t: float = float(sh.next)
+		while t < end:
+			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
+			var at: Vector2 = track[k][0]
+			var to: Vector2 = sh.pos - at
+			var bit: int = int(sh.bit)
+			var shadowed: bool = bit >= 0 and field != null and field.exposure_mask(team_id, at) & (1 << bit) == 0
+			if to.length() <= float(sh.range) and not shadowed:
+				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
+				var d: float = float(sh.reload) * float(sh.weight) * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				out["on" if float(sh.weight) >= 1.0 else "by"] += d
+				if t < early_s:
+					out.early += d
+			t += float(sh.reload)
+	return out
+
+
+func _track_taken(track: Array, vmax: float, team_id: int, rows: StringName = &"rows", window_s: float = INF) -> float:
+	var end: float = minf(track.size() * ESCAPE_DT, window_s)
 	var sum: float = 0.0
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	var masks := {}
@@ -275,7 +347,7 @@ func _track_taken(track: Array, vmax: float, team_id: int) -> float:
 			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
 			if to.length() <= float(sh.range) and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				sum += reload * float(sh.weight) * sh.rows[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				sum += reload * float(sh.weight) * sh[rows][a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 			t += reload
 	return sum
 
@@ -551,15 +623,17 @@ static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: flo
 	return Vector2(dps, dps * float(e.get("he_heal" if he else "ap_heal", 0.5)))
 
 
-## Dps of the worse ammo for us with citadel hits counted CITADEL_W extra; the
-## table already shrinks a wide pattern against a small hull. -1 unknown.
-static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> float:
+## Dps of the worse ammo for us: (citadel hits counted CITADEL_W extra, as it takes HP); the
+## table already shrinks a wide pattern against a small hull. x -1 unknown.
+static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
 	var model := BotGunnery.damage_model(ship)
 	BotGunnery.damage_model(shooter)
 	var e: Dictionary = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
 	if e.is_empty():
-		return -1.0
-	return maxf(float(e.ap_dps) * (1.0 + CITADEL_W * float(e.ap_cit)), float(e.he_dps) * (1.0 + CITADEL_W * float(e.he_cit)))
+		return Vector2(-1.0, -1.0)
+	var ap := float(e.ap_dps) * (1.0 + CITADEL_W * float(e.ap_cit))
+	var he := float(e.he_dps) * (1.0 + CITADEL_W * float(e.he_cit))
+	return Vector2(ap, float(e.ap_dps)) if ap >= he else Vector2(he, float(e.he_dps))
 
 
 ## Main and secondary dps on us at this range; one closing from past its range counts at its range.
@@ -589,6 +663,17 @@ func axis_now(ctx: SkillContext) -> float:
 	return atan2(v.x, v.y) if v.length_squared() > 1e-6 else INF
 
 
+## Chance `e`, not on us, turns its guns on us: one in however many of our lit ships, us included, it reaches.
+static func _switch_chance(ctx: SkillContext, e: Ship) -> float:
+	var reach: float = e.artillery_controller.get_params()._range
+	var n := 1
+	for f: Ship in ctx.server.get_team_ships(ctx.ship.team.team_id):
+		if f != ctx.ship and is_instance_valid(f) and f.is_alive() and f.visible_to_enemy \
+				and f.global_position.distance_to(e.global_position) <= reach:
+			n += 1
+	return 1.0 / n
+
+
 ## Every gun that can reach us, weighted by how sure we are it is on us. False
 ## while unseen or while nothing shoots or aims here.
 func _survey(ctx: SkillContext) -> bool:
@@ -614,7 +699,7 @@ func _survey(ctx: SkillContext) -> bool:
 		var bit: int = ids.find(e.get_instance_id())
 		if tucked and (bit < 0 or bit >= 63 or here & (1 << bit) != 0):
 			continue
-		weight[e] = BYSTANDER_WEIGHT
+		weight[e] = _switch_chance(ctx, e)
 	if weight.is_empty():
 		return false
 	var now: float = SimClock.now()
@@ -625,10 +710,11 @@ func _survey(ctx: SkillContext) -> bool:
 		var rows := _rows(ship, s, Vector2(to.x, to.z).length())
 		if rows.is_empty():
 			continue
+		var raw: PackedFloat32Array = _tables[s.get_instance_id()][2]
 		var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
 		var next: float = ctx.behavior.salvo_clock.next_landing(s, now)
 		var b: int = ids.find(s.get_instance_id())
-		_shooters.append({"bearing": atan2(to.x, to.z), "rows": rows, "weight": float(weight[s]), "bit": b if b < 63 else -1,
+		_shooters.append({"id": s.get_instance_id(), "bearing": atan2(to.x, to.z), "rows": rows, "raw": raw, "weight": float(weight[s]), "bit": b if b < 63 else -1,
 			"threat": _threat(s, ship, Vector2(to.x, to.z).length()),
 			"pos": Vector2(s.global_position.x, s.global_position.z), "range": s.artillery_controller.get_params()._range,
 			"reload": reload, "next": next if is_finite(next) else reload * 0.5})
@@ -651,7 +737,8 @@ static func _guns_free(ctx: SkillContext) -> bool:
 	return ctx.behavior.would_fire_guns()
 
 
-## Effective incoming dps per aspect step from `shooter`, cached per range bucket; empty unknown.
+## Calibrated effective incoming dps per aspect step from `shooter`, cached per range bucket (with the
+## unweighted dps alongside); empty unknown.
 func _rows(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
 	var id := shooter.get_instance_id()
 	var bucket := int(range_m / RANGE_BUCKET_M)
@@ -659,14 +746,19 @@ func _rows(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
 	if not cached.is_empty() and int(cached[0]) == bucket:
 		return cached[1]
 	var row := PackedFloat32Array()
+	var raw := PackedFloat32Array()
 	row.resize(ASPECTS)
+	raw.resize(ASPECTS)
+	var cal: float = BotGunnery.calibration(shooter, ship, range_m)
 	for i in ASPECTS:
 		var e := _effective(ship, shooter, range_m, i * ASPECT_STEP_DEG)
-		if e < 0.0:
+		if e.x < 0.0:
 			row = PackedFloat32Array()
+			raw = PackedFloat32Array()
 			break
-		row[i] = e
-	_tables[id] = [bucket, row]
+		row[i] = e.x * cal
+		raw[i] = e.y * cal
+	_tables[id] = [bucket, row, raw]
 	return row
 
 
