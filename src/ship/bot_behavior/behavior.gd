@@ -3240,6 +3240,29 @@ var _radius_cache: Dictionary = {}
 ## past its guns the trade is ours outright. hold: where the trade is best,
 ## never inside its secondaries. ratios, out, in: the trade, our share of its HP
 ## per second and its of ours, every RADIUS_STEP_M from POINT_BLANK_M.
+## Repair-party HP that counts toward a trade: not all damage is repairable, nor all repaired before the next.
+const REPAIR_HP_SHARE := 0.5
+
+## Our HP for pricing a trade: current plus the next repair charge's heal, or what is left of a running one.
+func trade_hp() -> float:
+	return _ship.health_controller.current_hp + repair_reserve() * REPAIR_HP_SHARE
+
+func repair_reserve() -> float:
+	var cm: ConsumableManager = _ship.consumable_manager
+	if cm == null:
+		return 0.0
+	var best := 0.0
+	for item in cm.equipped_consumables:
+		if item == null or item.type != ConsumableItem.ConsumableType.REPAIR_PARTY:
+			continue
+		var ci := item.p() as ConsumableItem
+		var full: float = _ship.health_controller.max_hp * (item.p() as RepairParty).heal_per_sec * ci.duration
+		if cm.active_effects.has(item.id):
+			best = maxf(best, full * float(cm.active_effects[item.id]))
+		elif ci.max_stack == -1 or ci.max_stack - item.used > 0:
+			best = maxf(best, full)
+	return best
+
 func _trade(enemy: Ship) -> Dictionary:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
 		return {"push": -1.0, "hold": 0.0, "best": INF, "ratios": PackedFloat32Array(),
@@ -3248,7 +3271,7 @@ func _trade(enemy: Ship) -> Dictionary:
 	var c: Array = _radius_cache.get(enemy.get_instance_id(), [])
 	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
 		return c[1]
-	var our_hp: float = maxf(_ship.health_controller.current_hp, 1.0)
+	var our_hp: float = maxf(trade_hp(), 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
 	var top: float = maxf(_ship.artillery_controller.get_params()._range, enemy.artillery_controller.get_params()._range)
 	var push := -1.0
@@ -3389,7 +3412,7 @@ func hide_range(enemy: Ship) -> float:
 func _desired_by_trade(enemy: Ship) -> Vector2:
 	var our_gun: float = _ship.artillery_controller.get_params()._range
 	var their_gun: float = enemy.artillery_controller.get_params()._range
-	var our_hp: float = maxf(_ship.health_controller.current_hp, 1.0)
+	var our_hp: float = maxf(trade_hp(), 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
 	var our_reach: float = reach_m(_ship)
 	var their_reach: float = reach_m(enemy)

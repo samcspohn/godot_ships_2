@@ -23,6 +23,11 @@ pub(crate) struct CoverArgs {
     /// Cells within exclude_r of one of these are not searched.
     pub exclude: Vec<Vector2>,
     pub exclude_r: f32,
+    /// Where we set out from, INF for no lead: a cell must also be safe from each
+    /// enemy moved along `lead` (its velocity) for as long as we take to reach the cell at `speed`.
+    pub from: Vector2,
+    pub lead: Vec<Vector2>,
+    pub speed: f32,
 }
 
 impl CoverArgs {
@@ -41,6 +46,9 @@ impl CoverArgs {
             clip_half: f("clip_half", 35f32.to_radians()),
             exclude: o.get("exclude").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
             exclude_r: f("exclude_r", 0.0),
+            from: o.get("from").map_or(Vector2::INF, |v| v.to::<Vector2>()),
+            lead: o.get("lead").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
+            speed: f("speed", 0.0),
         }
     }
 
@@ -81,6 +89,43 @@ impl CoverArgs {
 
 /// An enemy this far past its gun range is taken to close it before we leave.
 const ADVANCE_M: f32 = 2000.0;
+const LEAD_MAX_S: f32 = 90.0;
+const LEAD_MIN_SPEED: f32 = 1.0;
+/// Shares of the lead tried, longest first, until one ends on water.
+const LEAD_FRACS: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
+
+/// Whether some `shells` threat, moved on by its lead for our time to reach `k`,
+/// would see `k` (as `safety` reckons seeing) from within its gun range.
+pub(crate) fn lead_exposed(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &CoverArgs) -> bool {
+    if !a.from.is_finite() || a.speed <= 0.0 || a.lead.is_empty() {
+        return false;
+    }
+    let p = g.centres[k];
+    let eta = (a.from.distance_to(p) / a.speed).min(LEAD_MAX_S);
+    for (i, e) in inp.enemies.iter().enumerate() {
+        let v = a.lead.get(i).copied().unwrap_or(Vector2::ZERO);
+        if !e.heavy || !e.shells || v.length() < LEAD_MIN_SPEED {
+            continue;
+        }
+        let Some((q, cq)) = LEAD_FRACS.iter().find_map(|&f| {
+            let q = e.pos + v * (eta * f);
+            let (ix, iz) = g.grid_of(q);
+            g.water(ix, iz).map(|c| (q, c))
+        }) else { continue };
+        let d = p.distance_to(q);
+        if a.allow_dark && d >= e.det_r.max(e.dark_r) {
+            continue;
+        }
+        if d >= e.los_r && !g.visible_idx(k, cq) {
+            continue;
+        }
+        let range = inp.fire.as_ref().filter(|f| i < 64 && f.known(i)).map_or(f32::INFINITY, |f| f.range(i));
+        if d < range {
+            return true;
+        }
+    }
+    false
+}
 
 /// Why cell `k` is safe, as (dark, seen): dark when concealment keeps every
 /// threat off it, seen when some threat sees it and an island stops every gun
@@ -134,6 +179,9 @@ impl VisibilityGrid {
             return None;
         }
         let why = safety(self, k, inp, a.allow_dark)?;
+        if lead_exposed(self, k, inp, a) {
+            return None;
+        }
         let mask = if a.need > 0 { self.spotted_mask(k, inp) } else { 0 };
         (mask.count_ones() >= a.need).then_some((why, mask))
     }

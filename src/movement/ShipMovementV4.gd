@@ -1,9 +1,9 @@
 extends Node
 class_name ShipMovementV4
 
-const SHIP_SPEED_MODIFIER: float = 3.0 # Adjust to calibrate ship speed display
+const SHIP_SPEED_MODIFIER: float = 2.75 # Adjust to calibrate ship speed display
 
-var debug_log: bool = false
+var debug_log: bool = true
 
 # All per-ship tunables live in MovementParams (Moddable). Assign a
 # MovementParams subresource to `params` in the ship's .tscn.
@@ -57,7 +57,7 @@ const BASE_DRAG: float = 0.1
 #           classic drift/slide feel, with more lateral motion the larger k gets.
 # Lerps from LOW at standstill (tight carving turn) to HIGH at top speed (outward drift).
 const BOW_PIVOT_FRACTION_LOW: float = 0.9
-const BOW_PIVOT_FRACTION_HIGH: float = 1.1
+const BOW_PIVOT_FRACTION_HIGH: float = 1.0
 
 # Vertical waterline spring — keeps the hull bound to y = 0 while allowing
 # ~1m of vertical play (heave/bob). Critically-damped-ish so the ship
@@ -92,7 +92,7 @@ func _ready() -> void:
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
 	ship.linear_damp = BASE_DRAG
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
-	ship.angular_damp = 0.3
+	ship.angular_damp = 0.5
 
 	var mat = PhysicsMaterial.new()
 	mat.friction = 0.2

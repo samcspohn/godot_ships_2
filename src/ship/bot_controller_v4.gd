@@ -679,6 +679,8 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry
+		if _ship.team != null:
+			server_node.teams[my_team_id].engaged[s] = [_ship, expiry]
 
 	if _shooter_lkp_launch_times.get(sid, -INF) >= launch_time:
 		return

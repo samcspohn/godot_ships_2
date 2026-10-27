@@ -21,6 +21,9 @@ const SURVIVE_SHARE := 0.8
 ## A chase leg must close on its target by this much, or Fight gives the ship up to spotting.
 const CHASE_MIN_PROGRESS_M := 500.0
 const CHASE_RETRY_S := 10.0
+## An enemy seen shooting a friend of ours deals this share of its fire to us while it does:
+## its turrets and solution are on someone else.
+const ENGAGED_AGGRO := 0.25
 ## Harm grows by this share for each enemy past the first that can shoot the cell.
 const MARCH_FOCUS := 0.25
 ## Harm doubles as the shooters' arc widens from 60° to 180°: a cell where we cannot angle to them all.
@@ -46,6 +49,30 @@ const HARM_PRIOR_LIFE_S := 900.0
 const HARM_PRIOR_S := 300.0
 
 var _presumed := false
+## Class -> {searches, enemies, busy, depth: [], ahead: [], dist: []}, for match metrics.
+## depth/ahead: station/ship metres past the local enemy centre toward their side.
+static var stats: Dictionary = {}
+
+static func stats_summary() -> Dictionary:
+	var out := {}
+	for k in stats:
+		var c: Dictionary = stats[k]
+		out[k] = {"searches": c.searches, "enemies": c.enemies, "busy": c.busy,
+			"depth": _quantiles(c.depth), "ahead": _quantiles(c.ahead), "dist": _quantiles(c.dist)}
+	return out
+
+static func _quantiles(a: Array) -> Dictionary:
+	if a.is_empty():
+		return {"n": 0}
+	var d := a.duplicate()
+	d.sort()
+	return {"n": d.size(), "mean": d.reduce(func(x, y): return x + y, 0.0) / d.size(),
+		"p10": d[int(d.size() * 0.1)], "p50": d[d.size() / 2], "p90": d[mini(int(d.size() * 0.9), d.size() - 1)],
+		"past": d.filter(func(x): return x > 0.0).size()}
+
+func _stat(ctx: SkillContext) -> Dictionary:
+	return stats.get_or_add(Ship.ShipClass.keys()[ctx.ship.ship_class],
+		{"searches": 0, "enemies": 0, "busy": 0, "depth": [], "ahead": [], "dist": []})
 ## A new cell must beat the held one's score by this share of it, or this much.
 const MARCH_SWITCH_REL := 0.2
 const MARCH_SWITCH_ABS := 0.02
@@ -167,6 +194,12 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 		return
 	_marched_ms = now_ms
 	_pick(vis, here, pos, mo, prio, belief)
+	if _has_station and not _chasing:
+		var ff: FleetFrame = ctx.behavior.local_frame(ctx.ship.global_position, NavigationMapManager.reach_gun(ctx.ship).get("range", 10000.0))
+		var st := _stat(ctx)
+		st.depth.append((_station - ff.enemy_center).dot(ff.forward))
+		st.ahead.append((ctx.ship.global_position - ff.enemy_center).dot(ff.forward))
+		st.dist.append(here.distance_to(Vector2(_station.x, _station.z)))
 	_route_hp = vis.fight_route_harm(here, Vector2(_station.x, _station.z), pos, mo) / maxf(_harm_price, 0.01) \
 		if _has_station else 0.0
 
@@ -232,7 +265,7 @@ func _mark(score: float, value: float, harm: float, mask: int, prio: PackedByteA
 ## at the rate lost so far (from a prior of a full hull over HARM_PRIOR_LIFE_S).
 static func harm_price(ctx: SkillContext) -> float:
 	var hc = ctx.ship.health_controller
-	var frac: float = clampf(hc.current_hp / maxf(hc.max_hp, 1.0), 0.0, 1.0)
+	var frac: float = clampf(ctx.behavior.trade_hp() / maxf(hc.max_hp, 1.0), 0.0, 1.0)
 	var by_hp: float = lerpf(HARM_PRICE_FULL, 1.0, 1.0 - frac)
 	var elapsed: float = ctx.server.match_elapsed
 	var rate: float = (hc.max_hp - hc.current_hp + hc.max_hp * HARM_PRIOR_S / HARM_PRIOR_LIFE_S) / (elapsed + HARM_PRIOR_S)
@@ -267,6 +300,7 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 	var conceal: float = (ship.concealment.params.p() as ConcealmentParams).radius if ship.concealment != null else 0.0
 	_harm_price = harm_price(ctx)
 	_horizon = ctx.behavior.threat_horizon(ctx.server)
+	_stat(ctx).searches += 1
 	for i in belief.size():
 		var o: PackedFloat32Array = (trades[i].out as PackedFloat32Array).duplicate()
 		var n: PackedFloat32Array = (trades[i].in as PackedFloat32Array).duplicate()
@@ -283,8 +317,13 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 			else 1.0 if rank.has(e) else MARCH_OTHER_VALUE)
 		det.append(maxf(maxf(conceal, float(belief[i].force_spot)) - float(belief[i].spread), 0.0))
 		threat.append(1 if threatens(e) else 0)
-		aggro.append(_aggro(ctx, e, belief[i].pos, friends))
-		var f := _front(ctx.ship, belief[i].pos, friends)
+		var busy := _engaged_elsewhere(ctx, e)
+		if live[i] != 0:
+			var st := _stat(ctx)
+			st.enemies += 1
+			st.busy += int(busy)
+		aggro.append(ENGAGED_AGGRO if busy else _aggro(ctx, e, belief[i].pos, friends))
+		var f := Vector2(INF, 0.0) if busy else _front(ctx.ship, belief[i].pos, friends)
 		front.append(f.x)
 		front_hp.append(f.y)
 		chase_ring.append(maxf(conceal - float(belief[i].spread), 0.0) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
@@ -354,6 +393,13 @@ static func _aggro(ctx: SkillContext, e: Ship, at: Vector2, friends: Array) -> f
 				and at.distance_to(Vector2(f.global_position.x, f.global_position.z)) <= reach:
 			n += 1
 	return 1.0 / n
+
+## `e` is shooting a friend, not us, and not aiming at us.
+static func _engaged_elsewhere(ctx: SkillContext, e: Ship) -> bool:
+	if ctx.behavior.active_shooters_at_me.has(e) or (ctx.behavior.salvo_clock != null and ctx.behavior.salvo_clock.aimers.has(e)):
+		return false
+	var on: Ship = ctx.server.teams[ctx.ship.team.team_id].engaged_with(e)
+	return on != null and on != ctx.ship and on.is_alive()
 
 ## Range from `at` to our nearest lit ship but `me` (inside it, `me` is the
 ## nearest target there), and our HP over that ship's: 0 unless we are the tankier.

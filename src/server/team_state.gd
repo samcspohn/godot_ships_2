@@ -27,6 +27,15 @@ var radar: Dictionary[Ship, SensorFix] = {}
 var air: Dictionary[Ship, SensorFix] = {}
 ## Ship -> expiry time
 var launch_reveals: Dictionary = {}
+## Enemy -> [our ship its shells were last found falling on, expiry], from our bots' shell watch.
+var engaged: Dictionary = {}
+
+## The ship of ours `enemy` is shooting, or null.
+func engaged_with(enemy: Ship) -> Ship:
+	var e: Array = engaged.get(enemy, [])
+	if e.is_empty() or SimClock.now() > float(e[1]) or not is_instance_valid(e[0]):
+		return null
+	return e[0]
 var known_enemy_clusters: Array[Dictionary] = []
 var presumption: EnemyPresumption = EnemyPresumption.new()
 const POINTS_START: int = 300

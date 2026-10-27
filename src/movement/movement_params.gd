@@ -10,7 +10,7 @@ class_name MovementParams
 # Turning
 @export var turning_circle_radius: float = 200.0
 @export var slow_speed_turn_tightening: float = 0.8
-@export var turn_speed_loss: float = 0.2
+@export var turn_speed_loss: float = 0.4
 @export var rudder_response_time: float = 1.5
 
 

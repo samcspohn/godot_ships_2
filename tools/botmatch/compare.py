@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": []}
+              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -51,6 +51,10 @@ def load(d):
             health["nav"].append(m["nav"])
         if "stations" in m:
             health["stations"].append(m["stations"])
+        if "disengage" in m:
+            health["disengage"].append(m["disengage"])
+        if "fight" in m:
+            health["fight"].append(m["fight"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -103,6 +107,30 @@ if any(h["stations"] for h, _ in data.values()):
             cell = lambda k: "%7.0f±%-5.0f" % ci([x[k] for x in ms if x["n"] > 0 or k in ("n", "over_1km", "over_3km")])
             print(f'{label:>12} {mode:>8} {cell("n"):>13} {cell("mean_m"):>13} {cell("p50_m"):>13} {cell("p90_m"):>13} '
                   f'{"%5.1f±%-4.1f" % ci([x["over_1km"] for x in ms]):>11} {"%5.1f±%-4.1f" % ci([x["over_3km"] for x in ms]):>11}')
+
+if any(h["disengage"] for h, _ in data.values()):
+    print("\n== disengage legs (ticks per match, share of the class's disengage ticks, entries per match)")
+    print(f'{"build":>12} {"leg":>10} {"ticks":>15} {"share":>7} {"entries":>13}')
+    for label, (h, _) in data.items():
+        keys = sorted({k for d in h["disengage"] for k in d})
+        for k in keys:
+            cls = k.split("/")[0]
+            tot = sum(v["ticks"] for d in h["disengage"] for kk, v in d.items() if kk.split("/")[0] == cls)
+            t = [d.get(k, {"ticks": 0})["ticks"] for d in h["disengage"]]
+            e = [d.get(k, {"entries": 0})["entries"] for d in h["disengage"]]
+            print(f'{label:>12} {k:>10} {"%7.0f±%-6.0f" % ci(t):>15} {100.0 * sum(t) / max(tot, 1):>6.1f}% {"%5.1f±%-5.1f" % ci(e):>13}')
+
+if any(h["fight"] for h, _ in data.values()):
+    print("\n== fight stations (busy: share of lit enemies counted as shooting a friend; depth/ahead: station/ship m past the local enemy centre, p50 of match p50s; past: share > 0; dist: ship to station)")
+    print(f'{"build":>12} {"class":>6} {"searches":>13} {"busy":>7} {"depth_p50":>15} {"depth_p90":>15} {"past":>7} {"ahead_p50":>15} {"dist_p50":>13} {"dist_p90":>13}')
+    for label, (h, _) in data.items():
+        for c in sorted({k for d in h["fight"] for k in d}):
+            ms = [d[c] for d in h["fight"] if c in d]
+            q = lambda f, k: "%7.0f±%-6.0f" % ci([m[f][k] for m in ms if m[f]["n"] > 0])
+            busy = sum(m["busy"] for m in ms) / max(sum(m["enemies"] for m in ms), 1)
+            past = sum(m["depth"].get("past", 0) for m in ms) / max(sum(m["depth"]["n"] for m in ms), 1)
+            print(f'{label:>12} {c:>6} {"%7.0f±%-5.0f" % ci([m["searches"] for m in ms]):>13} {100 * busy:>6.1f}% {q("depth", "p50"):>15} {q("depth", "p90"):>15} '
+                  f'{100 * past:>6.1f}% {q("ahead", "p50"):>15} {q("dist", "p50"):>13} {q("dist", "p90"):>13}')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

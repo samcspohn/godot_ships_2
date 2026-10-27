@@ -43,6 +43,8 @@ const SALVO_GAP_S: float = 1.0
 const SALVO_BEARING: float = deg_to_rad(10.0)
 const MIN_SPREAD_M: float = 5.0
 const SAIL_DT: float = 0.25
+## Unseen, enemies this far past their gun range still set the axis: they are closing.
+const AXIS_ADVANCE_M: float = 2000.0
 ## Citadel box in shares of length and beam, when the hull has no citadel part.
 const CITADEL_FALLBACK := Vector2(0.6, 0.5)
 
@@ -377,7 +379,7 @@ func _turn_s(ctx: SkillContext, angle: float) -> float:
 func _fire_axis(ctx: SkillContext) -> float:
 	var v := Vector2.ZERO
 	for sh in _shooters:
-		v += Vector2(sin(float(sh.bearing)), cos(float(sh.bearing))) * float(sh.weight)
+		v += Vector2(sin(float(sh.bearing)), cos(float(sh.bearing))) * float(sh.weight) * float(sh.threat)
 	if v.length_squared() < 1e-6:
 		var t: Ship = ctx.target
 		if t == null or not is_instance_valid(t):
@@ -558,6 +560,33 @@ static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: fl
 	return maxf(float(e.ap_dps) * (1.0 + CITADEL_W * float(e.ap_cit)), float(e.he_dps) * (1.0 + CITADEL_W * float(e.he_cit)))
 
 
+## Main and secondary dps on us at this range; one closing from past its range counts at its range.
+static func _threat(shooter: Ship, ship: Ship, d: float) -> float:
+	var c := BotBehavior.dps_curve(shooter, ship)
+	return BotBehavior._curve_at(c, minf(d, BotBehavior.POINT_BLANK_M + (c.size() - 1) * BotBehavior.DESIRED_STEP_M))
+
+
+## threat_axis while under fire, else the same weighting over every enemy the
+## team knows of within AXIS_ADVANCE_M of its gun range; INF with none.
+func axis_now(ctx: SkillContext) -> float:
+	if is_finite(_axis):
+		return _axis
+	var ship: Ship = ctx.ship
+	if ship.team == null or ctx.server == null:
+		return INF
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var v := Vector2.ZERO
+	for b in ctx.server._team_belief(ship.team.team_id):
+		var e: Ship = b.ship
+		if not is_instance_valid(e) or e.artillery_controller == null:
+			continue
+		var to: Vector2 = b.pos - here
+		if to.length() > e.artillery_controller.get_params()._range + AXIS_ADVANCE_M or to.length() < 1.0:
+			continue
+		v += to.normalized() * BYSTANDER_WEIGHT * float(b.weight) * _threat(e, ship, to.length())
+	return atan2(v.x, v.y) if v.length_squared() > 1e-6 else INF
+
+
 ## Every gun that can reach us, weighted by how sure we are it is on us. False
 ## while unseen or while nothing shoots or aims here.
 func _survey(ctx: SkillContext) -> bool:
@@ -598,6 +627,7 @@ func _survey(ctx: SkillContext) -> bool:
 		var next: float = ctx.behavior.salvo_clock.next_landing(s, now)
 		var b: int = ids.find(s.get_instance_id())
 		_shooters.append({"bearing": atan2(to.x, to.z), "rows": rows, "weight": float(weight[s]), "bit": b if b < 63 else -1,
+			"threat": _threat(s, ship, Vector2(to.x, to.z).length()),
 			"pos": Vector2(s.global_position.x, s.global_position.z), "range": s.artillery_controller.get_params()._range,
 			"reload": reload, "next": next if is_finite(next) else reload * 0.5})
 	return not _shooters.is_empty()

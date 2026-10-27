@@ -135,6 +135,7 @@ script = ExtResource("12_3udb7")
 script = ExtResource("9_mgr2a")
 max_speed_knots = 35.0
 turning_circle_radius = 325.0
+turn_speed_loss = 0.2
 rudder_response_time = 6.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 

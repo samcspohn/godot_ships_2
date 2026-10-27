@@ -35,6 +35,8 @@ const BLOCKED_TTL_S := 60.0
 const VERIFY_TRIES := 3
 ## Each enemy that sees us clips the search to this either side of its bearing to us: no cover past it.
 const CLIP_HALF := deg_to_rad(35.0)
+## Our speed to a station, as a share of full, when slower now: we will be under way.
+const LEAD_SPEED_FRAC := 0.75
 
 var mode: int = Mode.OFFENSE
 var _dark: bool = false
@@ -186,7 +188,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var opts := {"pos": PackedVector2Array(), "det_r": PackedFloat32Array(), "dark_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
 		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shells": PackedByteArray(), "shootable": PackedByteArray(),
-		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array()}
+		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array(), "lead": PackedVector2Array()}
 	var lit: bool = ship.is_detected()
 	for b in belief:
 		var e: Ship = b.ship
@@ -201,6 +203,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship) else 0)
 		opts.shootable.append(1 if all_targets or ctx.behavior._aimable(e) else 0)
 		opts.ids.append(e.get_instance_id())
+		opts.lead.append(Vector2(e.linear_velocity.x, e.linear_velocity.z) if int(b.source) == 0 else Vector2.ZERO)
 		if lit and here.distance_to(b.pos) <= maxf(seen_from, force):
 			opts.clip_pos.append(b.pos)
 	for r in params.get("refs", []):
@@ -213,12 +216,17 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.shells.append(0)
 		opts.shootable.append(1 if all_targets else 0)
 		opts.ids.append(int(r.id))
+		opts.lead.append(Vector2.ZERO)
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
 		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false))),
 		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF)),
-		"clip_half": CLIP_HALF}, true)
+		"clip_half": CLIP_HALF, "from": here,
+		"speed": maxf(ship.linear_velocity.length(), ship.movement_controller.max_speed * LEAD_SPEED_FRAC)}, true)
+	# Offense stations are fought from, not run to ahead of a pursuer.
+	if mode != Mode.DEFENSE:
+		opts.lead = PackedVector2Array()
 	return opts
 
 ## Whether `p` is within CLIP_HALF of each seeing enemy's bearing to `from`, as cover_search clips.

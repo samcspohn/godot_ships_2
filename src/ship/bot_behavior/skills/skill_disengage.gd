@@ -21,6 +21,20 @@ var _cover := SkillCover.new()
 var _ran_at := -INF
 ## Away longer than this, a new disengage searches afresh.
 const FRESH_S := 2.0
+## "<class>/<leg>" -> [ticks, entries], for match metrics.
+static var legs: Dictionary = {}
+
+static func leg_summary() -> Dictionary:
+	var out := {}
+	for k in legs:
+		out[k] = {"ticks": legs[k][0], "entries": legs[k][1]}
+	return out
+
+func _count(ctx: SkillContext, was: int) -> void:
+	var c: Array = legs.get_or_add("%s/%s" % [Ship.ShipClass.keys()[ctx.ship.ship_class], Leg.keys()[leg]], [0, 0])
+	c[0] += 1
+	if leg != was:
+		c[1] += 1
 
 func reset() -> void:
 	_cover.reset()
@@ -58,15 +72,18 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_cover.seed = Vector2.INF
 	var dive := _cover.execute(ctx, {"mode": SkillCover.Mode.DEFENSE, "fire_en_route": cant_go_dark,
 		"allow_dark": not cant_go_dark, "cone_axis": cone, "cone_half": CONE, "away_ratio": away_ratio})
+	var was := leg
 	if dive != null:
 		leg = Leg.DARK if _cover.is_dark() else Leg.COVER
+		_count(ctx, was)
 		return dive
 	leg = Leg.KITE
+	_count(ctx, was)
 	return _kite(ctx, params)
 
-## Stance's fire axis, else the bearing of the priority.
+## Stance's weighted fire axis, else the bearing of the priority.
 static func _threat_axis(ctx: SkillContext) -> float:
-	var axis: float = ctx.behavior._skill_stance.threat_axis()
+	var axis: float = ctx.behavior._skill_stance.axis_now(ctx)
 	if is_finite(axis):
 		return axis
 	var pp: Vector3 = ctx.behavior.priority_point()
