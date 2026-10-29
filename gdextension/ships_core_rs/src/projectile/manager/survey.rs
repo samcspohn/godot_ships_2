@@ -686,7 +686,6 @@ impl ProjectileManager {
         let ev_jobs: PackedByteArray = opt("ev_jobs").try_to().unwrap_or_default();
         let ev_jobs = ev_jobs.as_slice();
         let kernel = (!ev_payouts.is_empty()).then(|| super::ev::EvKernel {
-            sigma: opt("ev_sigma").to_f64(),
             guarantee: opt("ev_guarantee").to_f64(),
             ellipse: (ellipse.x as f64, ellipse.y as f64),
             payouts: ev_payouts.as_slice().to_vec(),

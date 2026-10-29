@@ -85,6 +85,7 @@ var _skill_camp: SkillCamp = SkillCamp.new()
 var _skill_engage: SkillEngage = SkillEngage.new()
 var _skill_disengage: SkillDisengage = SkillDisengage.new()
 var _skill_fight: SkillFight = SkillFight.new()
+var churn := DestChurn.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_stance: SkillStance = SkillStance.new()
@@ -513,7 +514,7 @@ func aim_lead_point(target: Ship, contact: Dictionary, aim_point: Vector3) -> Va
 	accel.x *= k
 	accel.y *= k
 	return ProjectilePhysicsWithDragV2.calculate_leading_launch_vector_motion(
-		_ship.global_position, aim_point, fwd, target.linear_velocity.dot(fwd) * k,
+		_ship.global_position, contact.position, aim_point - contact.position, fwd, target.linear_velocity.dot(fwd) * k,
 		_believed_yaw_rate(target, contact), accel, speeds, mult, shell_params)[2]
 
 ## Forward acceleration, sampled every ACCEL_SAMPLE_S while we aim at a target; a gap over ACCEL_GAP_S starts over.
@@ -2582,8 +2583,12 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 			skill_name = &"Fight"
 		_:
 			push_error("%s asked for skill %s: only Fight and Disengage run" % [_ship.ship_name, skill_name])
+	if skill_name == &"Fight":
+		churn.fight_calls += 1
 	if intent != null:
 		_active_skill_name = skill_name
+		churn.goal = _skill_fight._goal if skill_name == &"Fight" else Vector2(intent.target_position.x, intent.target_position.z)
+		churn.stand = false
 	return intent
 
 ## Everything the ladder reads about the current moment, gathered once.
@@ -2660,6 +2665,7 @@ const CORNERED_THREAT: float = 0.9
 ## The ladder. Subclasses call this from get_nav_intent() after setting up ctx.
 func _nav_core(ctx: SkillContext) -> NavIntent:
 	var d := _doc()
+	churn.begin_tick()
 	update_priorities(ctx.server)
 	var sit := _build_situation(ctx)
 	var prev_skill := _active_skill_name
@@ -2809,6 +2815,9 @@ func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 			return null
 	elif time_to_die(ctx) >= win * (STAY_MARGIN if leaving else 1.0) * exp(-AGGRESSION_STAY * aggression()):
 		return null
+	churn.dis_why = "threat" if win < 0.0 else "ttw"
+	churn.dis_ttd = time_to_die(ctx)
+	churn.dis_ttw = win
 	var out := _disengage(ctx, sit)
 	if out != null:
 		sit["arm"] = &"close"
@@ -2834,6 +2843,7 @@ func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		intent = _intent_stand(ctx)
 		_active_skill_name = &"Fight"
 		return intent
+	churn.dis_why = "brawl_tuck"
 	var tuck := _run_skill(&"Disengage", ctx, {"ahead_only": true})
 	if tuck == null or _skill_disengage.leg == SkillDisengage.Leg.KITE:
 		return _run_skill(&"Fight", ctx, push)
@@ -2924,6 +2934,7 @@ func _fight(ctx: SkillContext, params: Dictionary = {}, stand: bool = true) -> N
 	var intent := _run_skill(&"Fight", ctx, params)
 	if intent != null and _fighting(SkillFight.Mode.STATION) and _skill_fight.station.doomed() \
 			and get_threat_score(ctx) >= DISENGAGE_THREAT:
+		churn.dis_why = "doomed"
 		var out := _run_skill(&"Disengage", ctx, {"toward": _skill_fight.station.station_xz()})
 		if out != null:
 			wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
@@ -2952,6 +2963,8 @@ func _intent_stand(ctx: SkillContext) -> NavIntent:
 	var p := priority_point()
 	var to: Vector3 = (p - at) if p.is_finite() else (_get_spotted_danger_center() - at)
 	var intent := NavIntent.create(Vector3(at.x, 0.0, at.z), atan2(to.x, to.z), ctx.ship.movement_controller.ship_length)
+	churn.goal = Vector2(at.x, at.z)
+	churn.stand = true
 	return intent
 
 ## Whether the active posture is Fight in `mode`.
@@ -3044,6 +3057,9 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	if intent == null:
 		_skill_stance.reset()
 		return null
+	churn.arm = String(sit.get("arm", ""))
+	churn.disengage_tick(self, ctx.ship, float(sit.get("threat", -1.0)), prev_skill)
+	churn.eased = Vector2(intent.target_position.x, intent.target_position.z)
 
 	var forced: bool = bool(sit.forced)
 	var post_ok: bool = (sit.arm in [&"engaged", &"close", &"low_threat", &"utility"] or d.post_process_idle_arms) \
@@ -3054,6 +3070,7 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		intent = _skill_stance.apply(intent, ctx)
 	else:
 		_skill_stance.reset()
+	churn.post = Vector2(intent.target_position.x, intent.target_position.z)
 	if not post_ok:
 		return intent
 
@@ -3063,7 +3080,7 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 			"spread_multiplier": d.spread_multiplier,
 		})
 		intent = _skill_spread.apply(intent, ctx, sp)
-
+	churn.post = Vector2(intent.target_position.x, intent.target_position.z)
 	return intent
 
 

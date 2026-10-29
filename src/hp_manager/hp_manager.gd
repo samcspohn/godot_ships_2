@@ -1,3 +1,4 @@
+@tool
 extends Node
 class_name HPManager
 
@@ -14,7 +15,10 @@ var current_sinking_basis: Basis = Basis.IDENTITY
 var sinking_time: float = 0.0
 var sunk_time: float = 0.0
 
-@export var _max_hp: float = 10000.0
+@export var _max_hp: float = 10000.0:
+	set(v):
+		_max_hp = v
+		_pools_changed()
 var max_hp:
 	get:
 		return _max_hp * params.p().mult
@@ -26,11 +30,51 @@ var current_hp:
 		return _current_hp * params.p().mult
 	# set(value):
 	# 	_current_hp = value / params.p().mult
-@export var bow_percent: float = 0.06
-@export var stern_percent: float = 0.06
-@export var superstructure_percent: float = 0.03
-@export var casemate_percent: float = 0.15
-@export var hull_percent: float = 0.75
+@export var bow_percent: float = 0.06:
+	set(v):
+		bow_percent = v
+		_pools_changed()
+@export var stern_percent: float = 0.06:
+	set(v):
+		stern_percent = v
+		_pools_changed()
+@export var superstructure_percent: float = 0.03:
+	set(v):
+		superstructure_percent = v
+		_pools_changed()
+@export var casemate_percent: float = 0.15:
+	set(v):
+		casemate_percent = v
+		_pools_changed()
+@export var hull_percent: float = 0.75:
+	set(v):
+		hull_percent = v
+		_pools_changed()
+
+const POOL_ROWS: Array[StringName] = [&"bow", &"stern", &"superstructure", &"casemate", &"hull"]
+
+func _pools_changed() -> void:
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+
+func _get_property_list() -> Array[Dictionary]:
+	var out: Array[Dictionary] = [{"name": "Pool HP", "type": TYPE_NIL, "usage": PROPERTY_USAGE_GROUP, "hint_string": "pool_hp_"}]
+	for n in POOL_ROWS + [&"sections"]:
+		out.append({"name": "pool_hp_%s" % n, "type": TYPE_STRING, "usage": PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY})
+	return out
+
+func _get(property: StringName) -> Variant:
+	if not String(property).begins_with("pool_hp_"):
+		return null
+	var n := String(property).trim_prefix("pool_hp_")
+	var pct: float = 0.0
+	if n == "sections":
+		for r in POOL_ROWS:
+			if r != &"hull":
+				pct += float(get("%s_percent" % r))
+	else:
+		pct = float(get("%s_percent" % n))
+	return "%.0f hp   (%.0f%% of %.0f)" % [_max_hp * pct, pct * 100.0, _max_hp]
 
 ## Share of a pen drawn from the hit section; the rest comes from the hull (WoWS saturation).
 const SECTION_SHARE: float = 0.5

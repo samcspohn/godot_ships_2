@@ -29,7 +29,7 @@ def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
               "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
-              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": [], "calibration": [], "manoeuvres": [], "vetoes": []}
+              "reasons": defaultdict(int), "margin": [], "nav": [], "stations": [], "disengage": [], "fight": [], "calibration": [], "manoeuvres": [], "vetoes": [], "aims": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -61,6 +61,8 @@ def load(d):
             health["manoeuvres"].append(m["manoeuvres"])
         if "vetoes" in m:
             health["vetoes"].append(m["vetoes"])
+        if "aims" in m:
+            health["aims"].append(m["aims"])
         if "points" in m:
             health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
@@ -170,9 +172,9 @@ if any(h["calibration"] for h, _ in data.values()):
 
 if any(h["manoeuvres"] for h, _ in data.values()):
     print("\n== stance manoeuvres (chosen turn/astern run, per run: priced vs taken main-battery damage. on/by: priced (before the "
-          "manoeuvre factor) and taken from shooters on us / bystanders; other: taken from ships not priced; early: first 30 s; band: run length)")
+          "manoeuvre factor) and taken from shooters on us / bystanders / unspotted (dark); other: taken from ships not priced; early: first 30 s; band: run length)")
     print(f'{"build":>6} {"class/kind/band":>18} {"n":>6} {"priced":>7} {"taken":>7} {"t/p":>5} {"on p":>7} {"on t":>7} {"by p":>7} '
-          f'{"by t":>7} {"other t":>7} {"early p":>7} {"early t":>7} {"learn":>7} {"t/l":>5} {">hp":>6} {"died":>6} {"d|>hp":>6}')
+          f'{"by t":>7} {"dark p":>7} {"dark t":>7} {"other t":>7} {"early p":>7} {"early t":>7} {"learn":>7} {"t/l":>5} {">hp":>6} {"died":>6} {"d|>hp":>6}')
     bands = ["<30s", "30-60s", "60-120s", ">120s"]
     for label, (h, _) in data.items():
         agg = defaultdict(lambda: defaultdict(float))
@@ -192,8 +194,29 @@ if any(h["manoeuvres"] for h, _ in data.values()):
             n = max(a["n"], 1)
             per = lambda f: f'{a[f] / n:>7.0f}'
             print(f'{label:>6} {k:>18} {a["n"]:>6.0f} {per("pred")} {per("real")} {a["real"] / max(a["pred"], 1):>5.2f} {per("pred_on")} {per("real_on")} '
-                  f'{per("pred_by")} {per("real_by")} {per("real_other")} {per("pred_early")} {per("real_early")} {per("learn")} {a["real"] / max(a["learn"], 1):>5.2f} '
+                  f'{per("pred_by")} {per("real_by")} {per("pred_dark")} {per("real_dark")} {per("real_other")} {per("pred_early")} {per("real_early")} {per("learn")} {a["real"] / max(a["learn"], 1):>5.2f} '
                   f'{100 * a["over_hp"] / n:>5.1f}% {100 * a["died"] / n:>5.1f}% {100 * a["died_over"] / max(a["over_hp"], 1):>5.1f}%')
+
+if any("n_dark" in v for h, _ in data.values() for mm in h["manoeuvres"] for v in mm.values()):
+    print("\n== unpriced damage by why (per run: other taken, then per tag the damage and the enemies so tagged at open; "
+          "dark: unspotted in reach, dark_far: unspotted beyond its guns, far: spotted beyond its guns, tuck: spotted in reach but left out "
+          "while nobody was on us, dead: gone at open)")
+    tags = ["dark", "dark_far", "far", "tuck", "dead"]
+    print(f'{"build":>6} {"class/kind":>10} {"n":>6} {"other t":>8} ' + " ".join(f'{t + " t":>11} {"#":>4}' for t in tags))
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: defaultdict(float))
+        for mm in h["manoeuvres"]:
+            for k, v in mm.items():
+                parts = k.split("|")
+                if len(parts) < 3:
+                    continue
+                for f, x in v.items():
+                    agg[f"{parts[0]}/{parts[1]}"][f] += x
+        for k in sorted(agg):
+            a = agg[k]
+            n = max(a["n"], 1)
+            print(f'{label:>6} {k:>10} {a["n"]:>6.0f} {a["real_other"] / n:>8.0f} '
+                  + " ".join(f'{a["other_" + t] / n:>6.0f} {100 * a["other_" + t] / max(a["real_other"], 1):>3.0f}% {a["n_" + t] / n:>4.1f}' for t in tags))
 
 if any(h["vetoes"] for h, _ in data.values()):
     print("\n== turn veto (fresh prices where turning beat backing, and the share the swing-vs-HP veto blocked)")
@@ -223,6 +246,59 @@ if any(h["calibration"] for h, _ in data.values()):
             print(f'{label:>6} {tcls:>6} {band * 5:>4}-{band * 5 + 5:<4} {a["shells"]:>8.0f} {100 * a["hits"] / a["shells"]:>6.1f}% {100 * a["pred_hits"] / a["shells"]:>7.1f}% '
                   f'{a["real"] / max(a["hits"], 1):>9.0f} {a["pred"] / a["shells"]:>11.0f} {a["real"] / a["shells"]:>11.0f} '
                   f'{a["real"] / max(a["pred"], 1):>10.2f}')
+
+HIT_NAMES = {0: "pen", 1: "partial", 2: "ricochet", 3: "overpen", 4: "shatter", 5: "citadel", 6: "cit-op"}
+
+if any(any("n_0" in v for c in h["calibration"] for v in c.values()) for h, _ in data.values()):
+    print("\n== per-hit damage (model/hit: the model's damage per landed shell; full: shell damage x result payout, every "
+          "pool full; sized: full x size_mod; real/sized: pool saturation, module caps and overkill)")
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: defaultdict(float))
+        for c in h["calibration"]:
+            for key, v in c.items():
+                _, tcls, band, *_ = key.split("|")
+                for k, x in v.items():
+                    agg[(tcls, int(band))][k] += x
+        for tcls, band in sorted(agg):
+            a = agg[(tcls, band)]
+            hits = sum(a.get(f"n_{t}", 0) for t in HIT_NAMES)
+            if hits < 200:
+                continue
+            full = sum(a.get(f"full_{t}", 0) for t in HIT_NAMES)
+            sized = sum(a.get(f"sized_{t}", 0) for t in HIT_NAMES)
+            real = sum(a.get(f"real_{t}", 0) for t in HIT_NAMES)
+            print(f'{label:>6} {tcls:>4} {band * 5:>2}-{band * 5 + 5:<2}km hits {hits:>6.0f}  model/hit {a["pred"] / max(a["pred_hits"], 1):>6.0f}'
+                  f'  full/hit {full / hits:>6.0f}  sized/hit {sized / hits:>6.0f}  real/hit {real / hits:>6.0f}  real/sized {real / max(sized, 1):>5.2f}'
+                  f'  model cit {100 * a["pred_cit"] / max(a["pred"], 1):>4.0f}%  full cit {100 * (a.get("full_5", 0) + a.get("full_6", 0)) / max(full, 1):>4.0f}%')
+            print("        " + "  ".join(f'{HIT_NAMES[t]} {100 * a.get(f"n_{t}", 0) / hits:>4.1f}% '
+                  f'r/s {a.get(f"real_{t}", 0) / max(a.get(f"sized_{t}", 0), 1):.2f}' for t in HIT_NAMES if a.get(f"n_{t}", 0) > 0))
+
+if any(h["aims"] for h, _ in data.values()):
+    print("\n== bot aim (offset aimed for: along/|along| in half-lengths forward of centre, |across| in half-beams, height m; "
+          "at impact: aim point less that offset, along (+ ahead) and |along|/|across| m, horizontal error in dispersion half-widths, "
+          "aim point on the hull; region: where on the hull the offset sits)")
+    print(f'{"build":>6} {"shooter":>7} {"target":>6} {"range":>7} {"region":>6} {"n":>7} {"along":>6} {"|along|":>7} {"|across|":>8} {"height":>6} '
+          f'{"err along":>9} {"|err al|":>8} {"|err ac|":>8} {"err/hd":>6} {"on hull":>7}')
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: defaultdict(float))
+        for mm in h["aims"]:
+            for k, v in mm.items():
+                sc, tc, band, *reg = k.split("|")
+                region = reg[0] if reg else "mid"
+                for f, x in v.items():
+                    agg[("all", tc, int(band), "all")][f] += x
+                    agg[("all", tc, int(band), region)][f] += x
+                    agg[(sc, tc, int(band), "all")][f] += x
+        order = {"all": 0, "stern": 1, "mid": 2, "bow": 3}
+        for key in sorted(agg, key=lambda k: (k[0] != "all", k[0], k[1], k[2], order[k[3]])):
+            sc, tc, band, region = key
+            a = agg[key]
+            n, ni = max(a["n"], 1), max(a["n_imp"], 1)
+            if a["n"] < 100:
+                continue
+            print(f'{label:>6} {sc:>7} {tc:>6} {band * 5:>3}-{band * 5 + 5:<3} {region:>6} {a["n"]:>7.0f} {a["along"] / n:>6.2f} {a["abs_along"] / n:>7.2f} '
+                  f'{a["abs_across"] / n:>8.2f} {a["height"] / n:>6.1f} {a["err_along"] / ni:>9.1f} {a["abs_err_along"] / ni:>8.1f} '
+                  f'{a["abs_err_across"] / ni:>8.1f} {a["err_hd"] / ni:>6.2f} {100 * a["on_hull"] / ni:>6.1f}%')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

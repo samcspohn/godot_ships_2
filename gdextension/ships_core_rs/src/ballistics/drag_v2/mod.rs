@@ -84,15 +84,16 @@ impl ProjectilePhysicsWithDragV2 {
         )
     }
 
-    /// [launch_vector, time_to_target, predicted_target_position] against a turning,
-    /// accelerating target (see advance_motion), or [null, -1, null].
+    /// [launch_vector, time_to_target, predicted_aim_position] against a turning,
+    /// accelerating target (see advance_motion) whose hull centre is `target_pos`, aiming
+    /// `offset` (world space) off it; or [null, -1, null].
     #[func]
     fn calculate_leading_launch_vector_motion(
-        start_pos: Vector3, target_pos: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64,
+        start_pos: Vector3, target_pos: Vector3, offset: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64,
         accel: Vector3, speed_range: Vector2, time_mult: f64, shell_params: Gd<Resource>,
     ) -> VarArray {
         Self::calculate_leading_launch_vector_motion_impl(
-            start_pos, target_pos, fwd, speed, yaw_rate, accel, speed_range, time_mult, &shell_params,
+            start_pos, target_pos, offset, fwd, speed, yaw_rate, accel, speed_range, time_mult, &shell_params,
         )
     }
 

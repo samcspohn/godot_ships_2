@@ -8,9 +8,16 @@ pub(crate) const EV_H0: f32 = 15.0;
 pub(crate) const EV_H_RATIO: f32 = 10.0 / 3.0;
 pub(crate) const EV_V0: f32 = 2.0;
 pub(crate) const EV_V_RATIO: f32 = 6.0;
-pub(crate) const EV_NH: usize = 3;
-pub(crate) const EV_NV: usize = 3;
-const ND: usize = EV_NH * EV_NV;
+/// Out to the lead error a fast small hull carries at long range, not just the guns' own spread.
+pub(crate) const EV_NH: usize = 5;
+pub(crate) const EV_NV: usize = 4;
+/// Dispersion sigma grid (DispersionParams.sigma: edge of the ellipse in standard deviations), linear.
+/// Spans secondaries (1.0) through the tightest main batteries; a query lerps the gun's own sigma.
+pub(crate) const EV_S0: f32 = 1.0;
+pub(crate) const EV_S_STEP: f32 = 0.5;
+pub(crate) const EV_NS: usize = 4;
+/// Kernels per pen sample: half-dispersion h x v x sigma.
+const ND: usize = EV_NH * EV_NV * EV_NS;
 /// Log-spaced penetration grids (mm) the value is sampled on and lerped between.
 const AP_PEN0: f64 = 50.0;
 const AP_PEN1: f64 = 1300.0;
@@ -27,7 +34,6 @@ fn grid_pen(i: usize, lo: f64, hi: f64) -> f64 {
 }
 
 pub(crate) struct EvKernel {
-    pub sigma: f64,
     pub guarantee: f64,
     pub ellipse: (f64, f64),
     /// Section-major, 16 codes per section, full pools.
@@ -57,9 +63,12 @@ impl EvKernel {
     }
 }
 
-fn disp_of(i: usize) -> (f64, f64) {
-    let (ih, iv) = (i / EV_NV, i % EV_NV);
-    ((EV_H0 * EV_H_RATIO.powi(ih as i32)) as f64, (EV_V0 * EV_V_RATIO.powi(iv as i32)) as f64)
+/// (half h, half v, sigma) of kernel `i`; sigma varies fastest, then v, then h.
+fn disp_of(i: usize) -> (f64, f64, f64) {
+    let (hv, is) = (i / EV_NS, i % EV_NS);
+    let (ih, iv) = (hv / EV_NV, hv % EV_NV);
+    ((EV_H0 * EV_H_RATIO.powi(ih as i32)) as f64, (EV_V0 * EV_V_RATIO.powi(iv as i32)) as f64,
+        (EV_S0 + EV_S_STEP * is as f32) as f64)
 }
 
 /// Kernel mass per cell for every distinct aim column and row, per dispersion.
@@ -75,7 +84,8 @@ struct Lattice {
     ny: usize,
     aim_u: Vec<f64>,
     aim_v: Vec<f64>,
-    g: f64,
+    /// Per kernel: the citadel guarantee's share of shells.
+    g: Vec<f64>,
     weights: Vec<Weights>,
 }
 
@@ -95,24 +105,35 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
             last = v;
         }
     }
-    let s = k.sigma.max(0.01);
-    let erf_bound = erf(s / std::f64::consts::SQRT_2);
     let ea = k.ellipse.0.max(0.01);
     let eb = k.ellipse.1.max(0.01) * 0.785;
     let guar_h = |x: f64| ((x + ea) / (2.0 * ea)).clamp(0.0, 1.0);
     let guar_v = |y: f64| 0.5 + 0.5 * y.signum() * (y.abs() / eb).min(1.0).powf(1.0 / 1.6);
-    let cdf = |x: f64| super::survey::trunc_gauss_cdf(x, s, erf_bound);
-    let p_in = (cdf(ea) - cdf(-ea)) * (cdf(eb) - cdf(-eb));
-    let g = if k.guarantee > 0.0 { k.guarantee * (1.0 - p_in).powi(3) } else { 0.0 };
+    let mut g = Vec::with_capacity(ND);
     let weights = (0..ND)
         .map(|d| {
-            let (hh, hv) = disp_of(d);
+            let (hh, hv, s) = disp_of(d);
+            let erf_bound = erf(s / std::f64::consts::SQRT_2);
+            g.push(guarantee_share(k.guarantee, k.ellipse, s));
             let (wh, qh) = aim_u.iter().map(|&a| axis_weights(&ue, a, hh, s, erf_bound, &guar_h)).unzip();
             let (wv, qv) = aim_v.iter().map(|&a| axis_weights(&ve, a, hv, s, erf_bound, &guar_v)).unzip();
             Weights { wh, qh, wv, qv }
         })
         .collect();
     Lattice { nx, ny, aim_u, aim_v, g, weights }
+}
+
+/// Share of shells DispersionCalculator moves into the citadel ellipse: `frac` of salvos, when none of
+/// its 3 shells fell inside.
+pub(crate) fn guarantee_share(frac: f64, ellipse: (f64, f64), sigma: f64) -> f64 {
+    if frac <= 0.0 {
+        return 0.0;
+    }
+    let (ea, eb) = (ellipse.0.max(0.01), ellipse.1.max(0.01) * 0.785);
+    let erf_bound = erf(sigma / std::f64::consts::SQRT_2);
+    let cdf = |x: f64| super::survey::trunc_gauss_cdf(x, sigma, erf_bound);
+    let p_in = (cdf(ea) - cdf(-ea)) * (cdf(eb) - cdf(-eb));
+    frac * (1.0 - p_in).powi(3)
 }
 
 /// Best-aim (value per shell, landed share) for every dispersion. The kernel
@@ -129,6 +150,7 @@ fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -
     };
     let (mut rw, mut rq) = (Vec::with_capacity(ny), Vec::with_capacity(ny));
     for (d, w) in l.weights.iter().enumerate() {
+        let g = l.g[d];
         let mut best = (f64::NEG_INFINITY, 0usize, 0usize);
         for iu in 0..l.aim_u.len() {
             row_sums(&w.wh[iu], pay, &mut rw);
@@ -136,7 +158,7 @@ fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -
             for iv in 0..l.aim_v.len() {
                 let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
                 let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
-                let v = (1.0 - l.g) * a + l.g * b;
+                let v = (1.0 - g) * a + g * b;
                 if v > best.0 {
                     best = (v, iu, iv);
                 }
@@ -151,7 +173,7 @@ fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -
             row_sums(&w.qh[iu], m, &mut rq);
             let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
             let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
-            ((1.0 - l.g) * a + l.g * b) as f32
+            ((1.0 - g) * a + g * b) as f32
         };
         let value = best.0 as f32;
         let share = |x: f32| if value > 0.0 { (x / value).clamp(0.0, 1.0) } else { 0.0 };
@@ -207,6 +229,8 @@ fn thresholds(b: &[u8], h: &BlobHdr, om_max: f64) -> Vec<u16> {
 /// HE:                          u8 value[NP][ND] | u8 landed[NP][ND] on the HE pen grid
 /// LEVELS, per AP class then HE: u8 heavy[NP][ND] | u8 medium[NP][ND]
 /// AP LANDED, per AP class: u8 landed[NP][ND] (version 12)
+/// ND = EV_NH x EV_NV x EV_NS kernels, sigma fastest (version 13; 5 x 4 x 4 since 14)
+/// Baked without the citadel guarantee since 15: DamageModel mixes it in under the lead error.
 /// ```
 /// value = expected payout per shell fired (fraction of alpha) at the best
 /// aim, landed = share of shells on the hull there, heavy / medium = shares
@@ -278,6 +302,12 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
     out
 }
 
+fn grid_lin(x: f32, x0: f32, step: f32, n: usize) -> (usize, f32) {
+    let t = ((x - x0) / step).clamp(0.0, (n - 1) as f32);
+    let i = (t.floor() as usize).min(n - 2);
+    (i, t - i as f32)
+}
+
 fn grid_pos(x: f32, x0: f32, ratio: f32, n: usize) -> (usize, f32) {
     let t = ((x.max(1e-3) / x0).ln() / ratio.ln()).clamp(0.0, (n - 1) as f32);
     let i = (t.floor() as usize).min(n - 2);
@@ -285,9 +315,9 @@ fn grid_pos(x: f32, x0: f32, ratio: f32, n: usize) -> (usize, f32) {
 }
 
 /// (value per shell fired as a fraction of alpha, landed share) for one shell
-/// against one bucket chunk: lerped in log pen and log half-dispersion.
-pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<(f32, f32)> {
-    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v)?;
+/// against one bucket chunk: lerped in log pen, log half-dispersion and sigma.
+pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v, sigma)?;
     let vals = if is_he { c.head + (c.n_thr + 1) * c.block } else { c.head + c.class * c.block };
     // Below the grid's first pen the value fades to zero rather than holding.
     let fade = if c.x < c.lo { (c.x / c.lo) as f32 } else { 1.0 };
@@ -306,8 +336,8 @@ impl Chunk {
 }
 
 /// (heavy, medium) shares of `ev_lookup`'s value; None for chunks baked without them.
-pub(crate) fn ev_levels(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<(f32, f32)> {
-    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v)?;
+pub(crate) fn ev_levels(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v, sigma)?;
     let levels = c.head + (c.n_thr + 1) * c.block + 2 * c.block;
     if b.len() < levels + (c.n_thr + 2) * 2 * c.block {
         return None;
@@ -326,10 +356,11 @@ struct Chunk {
     p: (usize, f32),
     h: (usize, f32),
     v: (usize, f32),
+    s: (usize, f32),
 }
 
 impl Chunk {
-    fn of(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<Self> {
+    fn of(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32, sigma: f32) -> Option<Self> {
         let n_thr = *b.first()? as usize;
         let block = NP * ND;
         let head = 1 + 2 * n_thr;
@@ -351,14 +382,18 @@ impl Chunk {
             p: grid_pos(x.max(1e-3) as f32, lo as f32, (hi / lo).powf(1.0 / (NP - 1) as f64) as f32, NP),
             h: grid_pos(half_h, EV_H0, EV_H_RATIO, EV_NH),
             v: grid_pos(half_v, EV_V0, EV_V_RATIO, EV_NV),
+            s: grid_lin(sigma, EV_S0, EV_S_STEP, EV_NS),
         })
     }
 
-    /// Trilinear in log pen x log half-dispersion of the block at `base`.
+    /// Multilinear in log pen x log half-dispersion x sigma of the block at `base`.
     fn tri(&self, b: &[u8], base: usize) -> f32 {
-        let ((ip, fp), (ih, fh), (iv, fv)) = (self.p, self.h, self.v);
-        let at = |p: usize, a: usize, c: usize| dec(b[base + p * ND + a * EV_NV + c]);
+        let ((ip, fp), (ih, fh), (iv, fv), (is, fs)) = (self.p, self.h, self.v, self.s);
         let lerp = |p: f32, q: f32, t: f32| p + (q - p) * t;
+        let at = |p: usize, a: usize, c: usize| {
+            let k = base + p * ND + (a * EV_NV + c) * EV_NS + is;
+            lerp(dec(b[k]), dec(b[k + 1]), fs)
+        };
         let plane = |p: usize| {
             let lo = lerp(at(p, ih, iv), at(p, ih, iv + 1), fv);
             let hi = lerp(at(p, ih + 1, iv), at(p, ih + 1, iv + 1), fv);

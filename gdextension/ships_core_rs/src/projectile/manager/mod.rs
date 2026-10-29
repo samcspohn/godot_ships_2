@@ -597,6 +597,7 @@ impl ProjectileManager {
         overmatch: f64,
         is_he: bool,
         half_disp: Vector2,
+        sigma: f32,
     ) -> Vector2 {
         ev::ev_lookup(
             chunk.as_slice(),
@@ -605,8 +606,22 @@ impl ProjectileManager {
             is_he,
             half_disp.x,
             half_disp.y,
+            sigma,
         )
         .map_or(Vector2::new(-1.0, -1.0), |(v, l)| Vector2::new(v, l))
+    }
+
+    /// (heavy, medium) shares of `ev_lookup`'s value; (-1, -1) if the chunk has none.
+    #[func]
+    pub(crate) fn ev_levels(chunk: PackedByteArray, pen: f64, overmatch: f64, is_he: bool, half_disp: Vector2, sigma: f32) -> Vector2 {
+        ev::ev_levels(chunk.as_slice(), pen, overmatch, is_he, half_disp.x, half_disp.y, sigma)
+            .map_or(Vector2::new(-1.0, -1.0), |(h, m)| Vector2::new(h, m))
+    }
+
+    /// See `ev::guarantee_share`.
+    #[func]
+    pub(crate) fn ev_guarantee_share(frac: f64, ellipse: Vector2, sigma: f64) -> f64 {
+        ev::guarantee_share(frac, (ellipse.x as f64, ellipse.y as f64), sigma)
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.

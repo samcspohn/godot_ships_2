@@ -10,8 +10,24 @@ const RANGE_BAND_M := 2500.0
 const ASPECT_EDGES := [25.0, 65.0]
 ## Salvos a cell needs to count as much as its parent.
 const PRIOR_SALVOS := 50.0
+## Shells a cell's hit rate needs to count as much as its parent.
+const PRIOR_SHELLS := 200.0
+## Lead error, by LEAD_BAND_M band from 0: 1-sigma metres along the target's track and across it, as
+## [along, across, along, across, ...]. Static rows: bot aim measured 2026-10-29 (mean absolute error x 1.25,
+## a Gaussian's sigma); learned cells lean on them by PRIOR_LEAD_SALVOS.
+const LEAD_BAND_M := 5000.0
+const LEAD_STATIC := {
+	"BB": [10.5, 6.3, 17.6, 12.1, 26.9, 20.3, 54.8, 36.1],
+	"CA": [16.5, 16.9, 39.4, 32.6, 87.3, 55.6, 185.1, 99.5],
+	"DD": [22.6, 29.0, 53.9, 50.3, 138.8, 101.6, 324.8, 179.1],
+}
+const MEAN_ABS_TO_SIGMA := 1.2533
+const PRIOR_LEAD_SALVOS := 100.0
 ## Ends of the time slices a turn-out's fire is booked in.
 const TURNOUT_SLICES_S := [15.0, 30.0, 60.0, 120.0, 300.0]
+## What unspotted enemies SkillStance prices really land, by class (BB, CA, DD; CV as BB): GunneryCalibration
+## probes over 20 12v12 matches, 2026-10-29. The parent of the learned dark factors.
+const DARK_TAKEN := [0.26, 0.16, 0.14]
 ## Runs a turn-out cell needs to count as much as its parent.
 const PRIOR_RUNS := 30.0
 static var _turnout_cache: Dictionary = {}
@@ -60,9 +76,67 @@ static func salvo_factor(shooter: Ship, target: Ship, range_m: float, aspect_deg
 	return _shrink((t.salvo_pair as Dictionary).get("%s|%s|%s" % [shooter.ship_name, target.ship_name, tail], {}), cls)
 
 
+## Share of `shooter`'s main-battery shells that land on `target` at this range and aspect (NAN: as it
+## lies now): the model's landed share at its aim, times what matches measured over it.
+static func hit_rate(shooter: Ship, target: Ship, range_m: float, aspect_deg: float = NAN) -> float:
+	var aspect: float = BotGunnery.aspect_from(target, shooter.global_position) if is_nan(aspect_deg) else aspect_deg
+	BotGunnery.damage_model(shooter)
+	var e: Dictionary = BotGunnery.damage_model(target).get_expected(shooter.get_instance_id(), target.get_instance_id(),
+		range_m, aspect)
+	return clampf(float(e.get("ap_landed", 0.0)) * hit_factor(shooter, target, range_m, aspect_deg), 0.0, 1.0)
+
+
+## Real hits over the model's landed share by hull pair, class pair and range band: the lead error, target
+## manoeuvres and aim the bake leaves out, which grow with range and cost small hulls most. 1 without a table.
+static func hit_factor(shooter: Ship, target: Ship, range_m: float, aspect_deg: float = NAN) -> float:
+	var t := table()
+	if t.is_empty():
+		return 1.0
+	var a := aspect_band(aspect_deg)
+	var tail := "%d|%s" % [range_band(range_m), "*" if a < 0 else str(a)]
+	var cls := _shrink_hits((t.salvo_class as Dictionary).get("%s|%s|%s" % [class_name_of(shooter), class_name_of(target), tail], {}), 1.0)
+	return _shrink_hits((t.salvo_pair as Dictionary).get("%s|%s|%s" % [shooter.ship_name, target.ship_name, tail], {}), cls)
+
+
+static func _shrink_hits(cell: Dictionary, parent: float) -> float:
+	var shells: float = float(cell.get("shells", 0.0))
+	var pred: float = float(cell.get("pred_hits", 0.0))
+	if shells <= 0.0 or pred <= 0.0:
+		return parent
+	var w: float = shells / (shells + PRIOR_SHELLS)
+	return w * float(cell.get("hits", 0.0)) / pred + (1.0 - w) * parent
+
+
+## How far shooters' aim is off `target` when their shells arrive (lead error), per LEAD_BAND_M band:
+## [along, across, ...] 1-sigma metres, for BotGunnery to widen the dispersion by.
+static func lead_sigmas(target: Ship) -> PackedFloat32Array:
+	var cls := class_name_of(target)
+	var rows: Array = LEAD_STATIC[cls]
+	var out := PackedFloat32Array()
+	var t := table()
+	for b in rows.size() / 2:
+		for j in 2:
+			var root: float = rows[2 * b + j]
+			var field := "abs_along" if j == 0 else "abs_across"
+			if t.is_empty():
+				out.append(root)
+				continue
+			var c := _shrink_lead((t.get("lead_class", {}) as Dictionary).get("%s|%d" % [cls, b], {}), field, root)
+			out.append(_shrink_lead((t.get("lead_hull", {}) as Dictionary).get("%s|%d" % [target.ship_name, b], {}), field, c))
+	return out
+
+
+static func _shrink_lead(cell: Dictionary, field: String, parent: float) -> float:
+	var n: float = float(cell.get("n", 0.0))
+	if n <= 0.0:
+		return parent
+	var w: float = n / (n + PRIOR_LEAD_SALVOS)
+	return w * MEAN_ABS_TO_SIGMA * float(cell.get(field, 0.0)) / n + (1.0 - w) * parent
+
+
 ## Per TURNOUT_SLICES_S slice, what `ship` doing `kind` ("turn", "astern") really takes over what SkillStance
-## priced from shooters on it and from bystanders, and the mean damage from ships it did not price:
-## [on factors, by factors, ambient]; empty without a learned table.
+## priced from shooters on it, bystanders and unspotted enemies, and the mean damage from ships it did not price:
+## [on factors, by factors, dark factors, ambient]; empty without a learned table.
 static func turnout(ship: Ship, kind: String) -> Array:
 	var t := table()
 	if t.is_empty():
@@ -70,32 +144,33 @@ static func turnout(ship: Ship, kind: String) -> Array:
 	var key := "%s|%s" % [ship.ship_name, kind]
 	if _turnout_cache.has(key):
 		return _turnout_cache[key]
-	var out := [[], [], []]
+	var out := [[], [], [], []]
 	for i in TURNOUT_SLICES_S.size():
 		var cls: Dictionary = (t.turnout_class as Dictionary).get("%s|%s|%d" % [class_name_of(ship), kind, i], {})
 		var hull: Dictionary = (t.turnout_hull as Dictionary).get("%s|%s|%d" % [ship.ship_name, kind, i], {})
-		for j in 2:
-			var real := "real_on" if j == 0 else "real_by"
-			var pred := "pred_on" if j == 0 else "pred_by"
-			out[j].append(_shrink_runs(hull, real, pred, _shrink_runs(cls, real, pred, 1.0)))
-		out[2].append(_shrink_runs(hull, "real_other", "", _shrink_runs(cls, "real_other", "", 0.0)))
+		for j in 3:
+			var g: String = ["on", "by", "dark"][j]
+			var root: float = DARK_TAKEN[mini(ship.ship_class, 2)] if j == 2 else 1.0
+			out[j].append(_shrink_runs(hull, "real_" + g, "pred_" + g, _shrink_runs(cls, "real_" + g, "pred_" + g, root)))
+		out[3].append(_shrink_runs(hull, "real_other", "", _shrink_runs(cls, "real_other", "", 0.0)))
 	_turnout_cache[key] = out
 	return out
 
 
-## `on` and `by` (per slice, as SkillStance prices them) as learned turn-outs say they land within
-## `window_s`, plus the ships it did not price; their plain sum without a learned table.
-static func price(ship: Ship, kind: String, on: Array, by: Array, window_s: float) -> float:
+## `on`, `by` and `dark` (per slice, as SkillStance prices them) as learned turn-outs say they land within
+## `window_s`, plus the ships it did not price; without a learned table their sum, dark at DARK_TAKEN.
+static func price(ship: Ship, kind: String, on: Array, by: Array, dark: Array, window_s: float) -> float:
 	var f := turnout(ship, kind)
 	var sum := 0.0
 	var lo := 0.0
 	for i in TURNOUT_SLICES_S.size():
 		var hi: float = TURNOUT_SLICES_S[i]
 		if f.is_empty():
-			sum += float(on[i]) + float(by[i])
+			sum += float(on[i]) + float(by[i]) + float(dark[i]) * DARK_TAKEN[mini(ship.ship_class, 2)]
 		else:
 			var covered: float = clampf((minf(window_s, hi) - lo) / (hi - lo), 0.0, 1.0)
-			sum += float(on[i]) * float(f[0][i]) + float(by[i]) * float(f[1][i]) + float(f[2][i]) * covered
+			sum += float(on[i]) * float(f[0][i]) + float(by[i]) * float(f[1][i]) + float(dark[i]) * float(f[2][i]) \
+				+ float(f[3][i]) * covered
 		lo = hi
 	return sum
 

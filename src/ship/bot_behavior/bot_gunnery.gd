@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 12
+const SOLVER_VERSION: int = 15
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -106,16 +106,18 @@ const PEN_QUANTUM_MM: float = 5.0
 
 ## DispersionCalculator: 3 of 4 salvos apply the guarantee to 1 of 3 shells.
 const CITADEL_GUARANTEE_FRAC: float = 0.25
-const CITADEL_ELLIPSE := Vector2(0.4, 0.1)
+const CITADEL_ELLIPSE := Vector2(0.36, 0.1)
+## Spread of the guarantee's moved shell, in ellipse half-axes: DamageModel GUAR_H_SD, GUAR_V_SD.
+const GUARANTEE_SD := Vector2(0.577, 0.40)
 
 ## Main-battery damage that landed over what get_expected predicted, by shooter class, target class
-## (BB, CA, DD) and range at CALIBRATION_BANDS_M; GunneryCalibration over 100 12v12 matches, 2026-10-27.
-## The bake aims every salvo at the best point; aim error grows with range and hurts small hulls most.
+## (BB, CA, DD) and range at CALIBRATION_BANDS_M; GunneryCalibration over 20 12v12 matches, bake 15, 2026-10-29.
+## Bands with no salvos hold the last measured one.
 const CALIBRATION_BANDS_M := [2500.0, 7500.0, 12500.0, 17500.0]
 const CALIBRATION := [
-	[[0.70, 0.61, 0.54, 0.45], [0.40, 0.34, 0.22, 0.11], [0.38, 0.28, 0.13, 0.04]],
-	[[0.67, 0.58, 0.50, 0.50], [0.58, 0.40, 0.22, 0.22], [0.52, 0.34, 0.14, 0.14]],
-	[[0.72, 0.71, 0.59, 0.59], [0.64, 0.50, 0.31, 0.31], [0.61, 0.48, 0.22, 0.22]],
+	[[0.75, 0.66, 0.68, 0.64], [0.73, 0.74, 0.70, 0.79], [0.89, 0.76, 1.00, 0.76]],
+	[[0.72, 0.59, 0.51, 0.51], [0.82, 0.82, 0.76, 0.76], [0.78, 0.84, 0.71, 0.71]],
+	[[0.83, 0.86, 0.67, 0.67], [0.98, 0.99, 0.78, 0.78], [1.11, 1.29, 1.07, 1.07]],
 ]
 
 
@@ -249,6 +251,7 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 	var ev: Dictionary = table["ev"]
 	var pm := _projectile_native()
 	var ai := ev_bucket_index(_aspect_index(aspect_deg))
+	var lead := DamageExpectation.lead_sigmas(target)
 	var value := [0.0, 0.0]
 	var landed_he := 0.0
 	var landed_ap := 0.0
@@ -269,10 +272,23 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 			if chunk == null:
 				continue
 			var is_he: bool = shell.type == ShellParams.ShellType.HE
-			var r: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, hd)
+			var sigma: float = m["sigma"]
+			var miss := lead_axes(s[0], aspect_deg, range_m, lead) * sigma
+			var wide := Vector2(Vector2(hd.x, miss.x).length(), Vector2(hd.y, miss.y).length())
+			var r: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, wide, sigma)
 			if r.x < 0.0:
 				continue
-			value[ammo] += r.x * shell.damage * rate
+			var medium: float = maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, wide, sigma).y, 0.0) * r.x
+			var g: float = pm.ev_guarantee_share(float(m["guarantee"]), CITADEL_ELLIPSE, sigma)
+			if g > 0.0:
+				var gw := Vector2(Vector2(hd.x * CITADEL_ELLIPSE.x * GUARANTEE_SD.x * sigma, miss.x).length(),
+					Vector2(hd.y * CITADEL_ELLIPSE.y * GUARANTEE_SD.y * sigma, miss.y).length())
+				var q: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, gw, sigma)
+				if q.x >= 0.0:
+					medium = (1.0 - g) * medium + g * maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, gw, sigma).y, 0.0) * q.x
+					r = (1.0 - g) * r + g * q
+			var size: float = HPManager.size_mod(target.mass, shell.caliber)
+			value[ammo] += (r.x - medium + medium * pen_scale(target, shell.damage * size)) * shell.damage * size * rate
 			if ammo == 0:
 				landed_ap += r.y * rate
 			else:
@@ -290,6 +306,8 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 
 
 static var _model: DamageModel = null
+## Ship instance id -> current_hp when its pools were last pushed to _model.
+static var _pools_at: Dictionary = {}
 
 
 ## The shared native copy of expected(), with `ship` registered as both a
@@ -298,8 +316,16 @@ static func damage_model(ship: Ship = null) -> DamageModel:
 	if _model == null:
 		_model = DamageModel.new()
 		_model.set_edges(_aspect_edges(), descent_edges())
-	if ship != null and is_instance_valid(ship) and not _model.has_hull(ship.get_instance_id()):
-		_register(ship)
+		_model.set_hp_rules(HPManager.DMG_MOD_REF_SHIP_PER_CAL_SQ, HPManager.DMG_MOD_SMALL, HPManager.DMG_MOD_SMALL_RATIO,
+			HPManager.SECTION_SHARE, SATURATED_FLOOR, DMG_PENETRATION)
+	if ship != null and is_instance_valid(ship):
+		var id := ship.get_instance_id()
+		if not _model.has_hull(id):
+			_register(ship)
+		var hp: float = ship.health_controller.current_hp
+		if _pools_at.get(id, -1.0) != hp:
+			_pools_at[id] = hp
+			_model.set_pools(id, pool_state(ship))
 	return _model
 
 
@@ -319,6 +345,7 @@ static func warm(ships: Array) -> void:
 	for id in _warmed.keys():
 		if not is_instance_id_valid(id):
 			_warmed.erase(id)
+			_pools_at.erase(id)
 	damage_model().warm_grids(PackedInt64Array(_warmed.keys()))
 
 ## Ship instance id -> true, for every ship warm() has seen.
@@ -333,7 +360,8 @@ static func _register(ship: Ship) -> void:
 	var rp := fm.rparams.p() as ResistanceParams if fm != null and fm.rparams != null else null
 	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
 	_model.set_hull(id, table["ev"] if table != null and (table as Dictionary).has("ev") else {}, hp,
-		rp.max_buildup if rp != null else 0.0, fire_dps(ship), fire_burn_s(ship), fire_zones(ship))
+		rp.max_buildup if rp != null else 0.0, fire_dps(ship), fire_burn_s(ship), fire_zones(ship),
+		DamageExpectation.lead_sigmas(ship), ship.mass)
 	var hpp := ship.health_controller.params.p() as HPParams if ship.health_controller.params != null else null
 	if hpp != null:
 		_model.set_repair(id, hpp.light_repair, hpp.pen_repair, hpp.citadel_repair)
@@ -350,7 +378,8 @@ static func _register(ship: Ship) -> void:
 		tables.append(_shell_table(shell) if shell != null else null)
 		ammo.append_array([shell.overmatch if shell != null else 0.0,
 			1.0 if shell != null and shell.type == ShellParams.ShellType.HE else 0.0,
-			shell.damage if shell != null else 0.0, shell.fire_buildup if shell != null else 0.0])
+			shell.damage if shell != null else 0.0, shell.fire_buildup if shell != null else 0.0,
+			shell.caliber if shell != null else 0.0])
 	var r: float = SHELL_RANGE_STEP_M
 	while r <= top:
 		for t in tables:
@@ -359,7 +388,8 @@ static func _register(ship: Ship) -> void:
 		var hd := _half_disp(m, r)
 		curve.append_array([hd.x, hd.y])
 		r += SHELL_RANGE_STEP_M
-	_model.set_shooter(id, SHELL_RANGE_STEP_M, curve, float(m["rate"]), ammo)
+	_model.set_shooter(id, SHELL_RANGE_STEP_M, curve, float(m["rate"]), float(m["sigma"]), float(m["guarantee"]),
+		CITADEL_ELLIPSE, ammo)
 
 
 ## HP per second one fire takes off `ship`, its build included.
@@ -1274,6 +1304,54 @@ static func _battery(p: GunParams, base: GunParams, mod: TargetMod,
 		"guns": gun_count,
 		"guarantee": guarantee,
 	}
+
+
+## Lead error on the target (DamageExpectation.lead_sigmas), 1-sigma metres horizontal and vertical at the aim:
+## DamageModel's lead_axes().
+static func lead_axes(desc_deg: float, aspect_deg: float, range_m: float, lead: PackedFloat32Array) -> Vector2:
+	var bands := lead.size() / 2
+	if bands == 0:
+		return Vector2.ZERO
+	var t := clampf(range_m / DamageExpectation.LEAD_BAND_M - 0.5, 0.0, bands - 1)
+	var i := mini(int(t), maxi(bands - 2, 0))
+	var j := mini(i + 1, bands - 1)
+	var f := t - i
+	var al := lerpf(lead[2 * i], lead[2 * j], f)
+	var ac := lerpf(lead[2 * i + 1], lead[2 * j + 1], f)
+	var sa := sin(deg_to_rad(aspect_deg))
+	var ca := cos(deg_to_rad(aspect_deg))
+	return Vector2(Vector2(al * sa, ac * ca).length(), Vector2(al * ca, ac * sa).length() * sin(deg_to_rad(desc_deg)))
+
+
+## [weight, current pool] per HP section, the hull section first, weighted by pool size, in max_hp's units.
+static func pool_state(target: Ship) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var hp = target.health_controller
+	if hp == null or hp.hull == null:
+		return out
+	var mult: float = hp.params.p().mult
+	for part in [hp.hull, hp.casemate, hp.bow, hp.stern, hp.superstructure]:
+		if part != null and part.pool > 0.0:
+			out.append_array([part.pool, maxf(part.current_pool, 0.0) * mult])
+	return out
+
+
+## What a penetration of an `alpha` shell pays on `target`'s pools as they stand, over full ones: DamageModel's
+## pen_scale().
+static func pen_scale(target: Ship, alpha: float) -> float:
+	var pools := pool_state(target)
+	if pools.size() < 2 or alpha <= 0.0:
+		return 1.0
+	var d: float = alpha * DMG_PENETRATION
+	var hull: float = pools[1]
+	var paid := 0.0
+	var weight := 0.0
+	for i in pools.size() / 2:
+		var absorbed: float = minf(hull, d) if i == 0 else \
+			minf(pools[2 * i + 1], d * HPManager.SECTION_SHARE) + minf(hull, d * (1.0 - HPManager.SECTION_SHARE))
+		paid += pools[2 * i] * maxf(absorbed, alpha * SATURATED_FLOOR)
+		weight += pools[2 * i]
+	return paid / weight / d if weight > 0.0 else 1.0
 
 
 static func _half_disp(m: Dictionary, range_m: float) -> Vector2:

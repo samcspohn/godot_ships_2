@@ -649,14 +649,7 @@ func _calculate_target_info():
 		if hit_target:
 			aim_position = result.position
 		else:
-			var weapon = player_controller.current_weapon_controller
-			var candidates: Array = [_ray_water_plane(ray_origin, aim_direction)]
-			if weapon.has_method("get_shell_params"):
-				var ship_pos = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
-				candidates.append(_shell_plane_aim(ray_origin, aim_direction, locked_target, weapon.get_shell_params(), ship_pos))
-			candidates = candidates.filter(func(c): return c != null)
-			candidates.sort_custom(func(a, b): return ray_origin.distance_squared_to(a) < ray_origin.distance_squared_to(b))
-			aim_position = candidates[0] if candidates.size() > 0 else ray_origin + aim_direction * ray_length
+			aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
 	else:
 		# Unlocked: existing physics raycast against land/armor/water.
 		var ray_params = PhysicsRayQueryParameters3D.new()

@@ -276,17 +276,6 @@ static func merge() -> void:
 
 
 ## The expected-damage summary scores every shooter with one kernel.
-func _median_main_sigma() -> float:
-	var sig: Array = []
-	for h in _hulls:
-		for m in BotGunnery._batteries(h, BotGunnery.KIND_MAIN, 0.0):
-			sig.append(float(m.sigma))
-	if sig.is_empty():
-		return 1.8
-	sig.sort()
-	return sig[sig.size() / 2]
-
-
 func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max: float) -> void:
 	DirAccess.make_dir_recursive_absolute(STAGE_DIR)
 	var pm = ProjectileManager.get_raw()
@@ -335,12 +324,11 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 				edges.append_array(geo["edges"])
 				edge_off.append(edges.size())
 	var t_geo := Time.get_ticks_msec()
-	var ev_sigma := _median_main_sigma()
 	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
 		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
 		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt,
-		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(), "ev_sigma": ev_sigma,
-		"ev_guarantee": BotGunnery.CITADEL_GUARANTEE_FRAC, "ev_ellipse": BotGunnery.CITADEL_ELLIPSE,
+		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(),
+		"ev_guarantee": 0.0,
 		"ev_turret_cap": BotGunnery.DMG_TURRET})
 	var st: Dictionary = res.get("stats", {})
 	print("bake: %d buckets  geometry %.1f s  sweep %.1f s  threads %d  busy %.0f/%.0f/%.0f ms (min/mean/max)  steals %d (%d cross-node)" % [
@@ -365,7 +353,6 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 			"om_max": om_max,
 			"buckets": {},
 			"ev": {},
-			"ev_sigma": ev_sigma,
 			"walks": 0,
 		})
 	for j in blobs.size():

@@ -20,6 +20,8 @@ func _initialize() -> void:
 	var salvo_class := {}
 	var turnout_hull := {}
 	var turnout_class := {}
+	var lead_hull := {}
+	var lead_class := {}
 	var used := 0
 	var stale := 0
 	for f in files:
@@ -44,11 +46,19 @@ func _initialize() -> void:
 			var p: PackedStringArray = key.split("|")
 			var w := _weight(current, p[0], p[1])
 			var c: Dictionary = s.turnout[key]
+			# Before unspotted enemies were priced their damage sat in real_other.
+			if not c.has("pred_dark"):
+				continue
 			_add(turnout_hull, "%s|%s|%s" % [p[0], p[2], p[3]], c, w)
 			_add(turnout_class, "%s|%s|%s" % [hulls.get(p[0], {}).get("cls", "?"), p[2], p[3]], c, w)
+		for key in s.get("lead", {}):
+			var p: PackedStringArray = key.split("|")
+			var w := _weight(current, p[0], p[1])
+			_add(lead_hull, "%s|%s" % [p[0], p[2]], s.lead[key], w)
+			_add(lead_class, "%s|%s" % [hulls.get(p[0], {}).get("cls", "?"), p[2]], s.lead[key], w)
 	var out := {"version": 1, "bake": bake, "built": Time.get_datetime_string_from_system(true), "matches": used,
 		"fingerprints": current, "salvo_pair": salvo_pair, "salvo_class": salvo_class,
-		"turnout_hull": turnout_hull, "turnout_class": turnout_class}
+		"turnout_hull": turnout_hull, "turnout_class": turnout_class, "lead_hull": lead_hull, "lead_class": lead_class}
 	var fa := FileAccess.open(de.TABLE_PATH, FileAccess.WRITE)
 	fa.store_string(JSON.stringify(out, "\t", true))
 	print("learn: %d matches (%d stale salvo cells), %d hull-pair and %d class-pair salvo cells, %d turn-out cells -> %s" % [

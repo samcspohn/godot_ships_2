@@ -424,6 +424,11 @@ func _physics_process(delta: float) -> void:
 # ===========================================================================
 
 func _update_nav_intent() -> void:
+	_query_nav_intent()
+	if behavior != null:
+		behavior.churn.sample(behavior, _ship, destination)
+
+func _query_nav_intent() -> void:
 	var _dbg := int(_ship.name) < 1004
 
 	var new_intent: NavIntent = null

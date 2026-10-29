@@ -295,18 +295,24 @@ impl P {
     }
 
     pub(crate) fn calculate_leading_launch_vector_motion_impl(
-        start_pos: Vector3, target_pos: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64, accel: Vector3,
+        start_pos: Vector3, target_pos: Vector3, offset: Vector3, fwd: Vector3, speed: f64, yaw_rate: f64, accel: Vector3,
         speed_range: Vector2, time_mult: f64, shell_params: &Gd<Resource>,
     ) -> VarArray {
         let Some((v0, _beta, _vt, _tau)) = Self::extract_params(shell_params) else {
             return no_solution3();
         };
-        let initial_result = crate::ballistics::physics::ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, v0);
+        let initial_result = crate::ballistics::physics::ProjectilePhysics::calculate_launch_vector(start_pos, target_pos + offset, v0);
         if initial_result.at(0).is_nil() {
             return no_solution3();
         }
         let mut time_estimate: f64 = initial_result.at(1).to_f64();
-        let at = |t: f64| Self::advance_motion(target_pos, fwd, speed, yaw_rate, accel, speed_range, time_mult, t);
+        // The aimed-at point turns with the hull: a stern offset swings opposite the bow.
+        let at = |t: f64| {
+            let c = Self::advance_motion(target_pos, fwd, speed, yaw_rate, accel, speed_range, time_mult, t);
+            let (sn, cs) = (yaw_rate * t / time_mult.max(1e-6)).sin_cos();
+            let (ox, oz) = (offset.x as f64, offset.z as f64);
+            Vector3::new(c.x + (ox * cs + oz * sn) as f32, c.y + offset.y, c.z + (oz * cs - ox * sn) as f32)
+        };
         for _ in 0..3 {
             let iter_result = Self::calculate_launch_vector_impl(start_pos, at(time_estimate), shell_params);
             if iter_result.at(0).is_nil() {

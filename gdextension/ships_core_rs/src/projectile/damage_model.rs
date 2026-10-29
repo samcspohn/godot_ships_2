@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use crate::projectile::manager::ev::{ev_levels, ev_lookup};
+use crate::projectile::manager::ev::{ev_levels, ev_lookup, guarantee_share};
 
 /// HpParams defaults: light, pen, citadel repair.
 const DEFAULT_REPAIR: [f32; 3] = [0.95, 0.5, 0.15];
@@ -18,12 +18,18 @@ struct Ammo {
     is_he: bool,
     damage: f32,
     fire_buildup: f32,
+    caliber: f32,
 }
 
 struct Shooter {
     step: f32,
     curve: Vec<f32>,
     rate: f32,
+    /// DispersionParams.sigma of the battery, the EV chunks' fourth axis.
+    sigma: f32,
+    /// Citadel guarantee: share of salvos and ellipse in half-dispersions (DispersionCalculator).
+    guarantee: f32,
+    ellipse: (f32, f32),
     ammo: [Option<Ammo>; 2],
 }
 
@@ -38,6 +44,78 @@ struct Hull {
     fire_zones: f32,
     /// Repairable share of light, medium and heavy damage (HpParams).
     repair: [f32; 3],
+    /// Shooters' lead error on this hull, 1-sigma metres along its track and across it, per LEAD_BAND_M band.
+    lead: Vec<f32>,
+    mass: f32,
+    /// [weight, current pool] per HP section, the hull section first; HP as max_hp counts it.
+    pools: Vec<f32>,
+}
+
+/// HPManager's damage rules the payouts leave out: size_mod and section/hull pool saturation.
+#[derive(Clone, Copy)]
+struct HpRules {
+    size_ref: f32,
+    size_small: f32,
+    size_small_ratio: f32,
+    section_share: f32,
+    floor: f32,
+    pen: f32,
+}
+
+impl HpRules {
+    fn size_mod(&self, mass: f32, caliber: f32) -> f32 {
+        if self.size_ref <= 0.0 {
+            return 1.0;
+        }
+        let ratio = mass / (caliber * caliber).max(1.0) / self.size_ref;
+        (self.size_small + (ratio - self.size_small_ratio) / (1.0 - self.size_small_ratio) * (1.0 - self.size_small)).min(1.0)
+    }
+
+    /// What a penetration of an `alpha` shell pays on the hull's pools as they stand, over what it pays on full ones.
+    fn pen_scale(&self, pools: &[f32], alpha: f32) -> f32 {
+        if pools.len() < 2 || alpha <= 0.0 || self.pen <= 0.0 {
+            return 1.0;
+        }
+        let d = alpha * self.pen;
+        let hull = pools[1];
+        let (mut paid, mut weight) = (0.0, 0.0);
+        for (i, c) in pools.chunks_exact(2).enumerate() {
+            let absorbed = if i == 0 {
+                hull.min(d)
+            } else {
+                c[1].min(d * self.section_share) + hull.min(d * (1.0 - self.section_share))
+            };
+            paid += c[0] * absorbed.max(alpha * self.floor);
+            weight += c[0];
+        }
+        if weight > 0.0 { paid / weight / d } else { 1.0 }
+    }
+}
+
+/// Spread of the guarantee's moved shell, in ellipse half-axes: uniform across, pow(u, 1.6) of a
+/// half-ellipse up and down.
+const GUAR_H_SD: f32 = 0.577;
+const GUAR_V_SD: f32 = 0.40;
+
+const LEAD_BAND_M: f32 = 5000.0;
+
+/// Lead error on the hull at this range, 1-sigma metres (horizontal, vertical) at the aim: along-track error
+/// lies across the line of fire as the hull turns broadside; what lies along the line of fire falls into the
+/// vertical by the descent. A kernel's standard deviation is its half-width over sigma, so misses add as
+/// hypot(half, sigma * lead).
+fn lead_axes(desc_deg: f32, aspect_deg: f32, range: f32, lead: &[f32]) -> (f32, f32) {
+    let bands = lead.len() / 2;
+    if bands == 0 {
+        return (0.0, 0.0);
+    }
+    let t = (range / LEAD_BAND_M - 0.5).clamp(0.0, (bands - 1) as f32);
+    let i = (t.floor() as usize).min(bands.saturating_sub(2));
+    let j = (i + 1).min(bands - 1);
+    let f = t - i as f32;
+    let al = lead[2 * i] + (lead[2 * j] - lead[2 * i]) * f;
+    let ac = lead[2 * i + 1] + (lead[2 * j + 1] - lead[2 * i + 1]) * f;
+    let (sa, ca) = aspect_deg.to_radians().sin_cos();
+    ((al * sa).hypot(ac * ca), (al * ca).hypot(ac * sa) * desc_deg.to_radians().sin())
 }
 
 /// dps of one shooter on one hull by range and aspect, sampled off expected().
@@ -99,6 +177,7 @@ pub struct DamageModel {
     shooters: HashMap<i64, Shooter>,
     hulls: HashMap<i64, Hull>,
     grids: HashMap<(i64, i64), DpsGrid>,
+    rules: Option<HpRules>,
 }
 
 fn upper(edges: &[f64], x: f64) -> usize {
@@ -164,9 +243,34 @@ impl DamageModel {
             }
             let di = even(upper(&self.descent_edges, desc as f64), n_desc);
             let Some(chunk) = h.chunks.get(&(ai * self.bucket_stride + di)) else { continue };
-            let Some((v, l)) = ev_lookup(chunk, pen as f64, a.overmatch as f64, a.is_he, hd_h, hd_v) else { continue };
-            value[k] = v * a.damage;
-            if let Some((heavy, medium)) = ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, hd_h, hd_v) {
+            let (perp, los) = lead_axes(desc, aspect_deg, range, &h.lead);
+            let (sp, sl) = (s.sigma * perp, s.sigma * los);
+            let look = |dh: f32, dv: f32| -> Option<(f32, f32, (f32, f32))> {
+                let (v, l) = ev_lookup(chunk, pen as f64, a.overmatch as f64, a.is_he, dh, dv, s.sigma)?;
+                Some((v, l, ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, dh, dv, s.sigma).unwrap_or((0.0, 0.0))))
+            };
+            let Some((mut v, mut l, (va_h, va_m))) = look(hd_h.hypot(sp), hd_v.hypot(sl)) else { continue };
+            let (mut heavy_v, mut medium_v) = (v * va_h, v * va_m);
+            // The guarantee's shell lands in a small ellipse round the aim, which the lead error carries off.
+            let g = guarantee_share(s.guarantee as f64, (s.ellipse.0 as f64, s.ellipse.1 as f64), s.sigma as f64) as f32;
+            if g > 0.0 {
+                let gh = (hd_h * s.ellipse.0 * GUAR_H_SD * s.sigma).hypot(sp);
+                let gv = (hd_v * s.ellipse.1 * GUAR_V_SD * s.sigma).hypot(sl);
+                if let Some((gv_, gl, (gh_h, gh_m))) = look(gh, gv) {
+                    heavy_v = (1.0 - g) * heavy_v + g * gv_ * gh_h;
+                    medium_v = (1.0 - g) * medium_v + g * gv_ * gh_m;
+                    v = (1.0 - g) * v + g * gv_;
+                    l = (1.0 - g) * l + g * gl;
+                }
+            }
+            let (size, pen_scale) = self.rules.map_or((1.0, 1.0), |r| {
+                let size = r.size_mod(h.mass, a.caliber);
+                (size, r.pen_scale(&h.pools, a.damage * size))
+            });
+            let paid = v - medium_v + medium_v * pen_scale;
+            value[k] = paid * a.damage * size;
+            if paid > 0.0 {
+                let (heavy, medium) = (heavy_v / paid, medium_v * pen_scale / paid);
                 let light = (1.0 - heavy - medium).max(0.0);
                 heal[k] = light * h.repair[0] + medium * h.repair[1] + heavy * h.repair[2];
                 cit[k] = heavy;
@@ -218,29 +322,49 @@ impl DamageModel {
     }
 
     /// `curve`: per `step` metres from `step`, [desc0, pen0, desc1, pen1, half_h, half_v]
-    /// (NaN for a missing ammo). `ammo`: [overmatch, is_he, damage, fire_buildup] x 2,
+    /// (NaN for a missing ammo). `ammo`: [overmatch, is_he, damage, fire_buildup, caliber] x 2,
     /// damage <= 0 where the slot is empty. `rate`: shells per second.
     #[func]
-    fn set_shooter(&mut self, id: i64, step: f32, curve: PackedFloat32Array, rate: f32, ammo: PackedFloat32Array) {
+    fn set_shooter(&mut self, id: i64, step: f32, curve: PackedFloat32Array, rate: f32, sigma: f32, guarantee: f32,
+        ellipse: Vector2, ammo: PackedFloat32Array) {
         let a = ammo.as_slice();
         let slot = |k: usize| -> Option<Ammo> {
-            let b = &a.get(4 * k..4 * k + 4)?;
-            (b[2] > 0.0).then(|| Ammo { overmatch: b[0], is_he: b[1] != 0.0, damage: b[2], fire_buildup: b[3] })
+            let b = &a.get(5 * k..5 * k + 5)?;
+            (b[2] > 0.0).then(|| Ammo { overmatch: b[0], is_he: b[1] != 0.0, damage: b[2], fire_buildup: b[3], caliber: b[4] })
         };
         self.grids.retain(|k, _| k.0 != id);
-        self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, ammo: [slot(0), slot(1)] });
+        self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, sigma, guarantee, ellipse: (ellipse.x, ellipse.y),
+            ammo: [slot(0), slot(1)] });
+    }
+
+    /// HPManager's size_mod (DMG_MOD_*) and pool rules (SECTION_SHARE, the saturated floor and a penetration's
+    /// share of alpha).
+    #[func]
+    fn set_hp_rules(&mut self, size_ref: f32, size_small: f32, size_small_ratio: f32, section_share: f32, floor: f32, pen: f32) {
+        self.rules = Some(HpRules { size_ref, size_small, size_small_ratio, section_share, floor, pen });
+        self.grids.clear();
+    }
+
+    /// [weight, current pool] per HP section of hull `id`, the hull section first, in max_hp's units.
+    #[func]
+    fn set_pools(&mut self, id: i64, pools: PackedFloat32Array) {
+        if let Some(h) = self.hulls.get_mut(&id) {
+            h.pools = pools.to_vec();
+        }
     }
 
     /// `ev`: the hull table's "ev" dictionary, bucket id -> chunk.
     #[func]
-    fn set_hull(&mut self, id: i64, ev: VarDictionary, max_hp: f32, max_buildup: f32, fire_dps: f32, fire_burn_s: f32, fire_zones: f32) {
+    fn set_hull(&mut self, id: i64, ev: VarDictionary, max_hp: f32, max_buildup: f32, fire_dps: f32, fire_burn_s: f32, fire_zones: f32,
+        lead: PackedFloat32Array, mass: f32) {
         let chunks = ev
             .iter_shared()
             .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()? as usize, v.try_to::<PackedByteArray>().ok()?.to_vec())))
             .collect();
         self.grids.retain(|k, _| k.1 != id);
         let repair = self.hulls.get(&id).map_or(DEFAULT_REPAIR, |h| h.repair);
-        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps, fire_burn_s, fire_zones, repair });
+        let pools = self.hulls.get(&id).map_or(Vec::new(), |h| h.pools.clone());
+        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps, fire_burn_s, fire_zones, repair, lead: lead.to_vec(), mass, pools });
     }
 
     /// Repairable shares of light, medium and heavy damage on hull `id` (HpParams).

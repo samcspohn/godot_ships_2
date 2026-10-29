@@ -87,8 +87,9 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 script = ExtResource("10_dxypq")
 acceleration_time = 40.0
 deceleration_time = 40.0
-turning_circle_radius = 500.0
-rudder_response_time = 15.0
+turning_circle_radius = 550.0
+turn_speed_loss = 0.45
+rudder_response_time = 16.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
 [sub_resource type="Resource" id="Resource_etgj4"]

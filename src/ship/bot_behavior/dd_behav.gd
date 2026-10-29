@@ -287,6 +287,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if intent == null:
 		intent = _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.SPOT, "launch_range": _torpedo_reach(ship)})
 	if intent == null and sit.has_spotted:
+		churn.dis_why = "dd_no_spot"
 		intent = _run_skill(&"Disengage", ctx)
 	return intent
 
@@ -304,6 +305,7 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var hurt: bool = hc.current_hp < hc.max_hp * GUNBOAT_TORPEDO_HP
 	var intent: NavIntent = null
 	if _ship.is_detected() and hurt:
+		churn.dis_why = "dd_gunboat_hurt"
 		intent = _run_skill(&"Disengage", ctx)
 	if intent == null and not hurt and _has_shootable_contact(ctx):
 		intent = _fight(ctx, _gunboat_params(ctx), false)
