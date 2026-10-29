@@ -1269,6 +1269,11 @@ func _broadcast_match_end():
 
 	if bot_match or CmdArgs.has("--metrics"):
 		_write_match_metrics(winning_team, leaderboard, win_reason)
+	# Learned damage expectations come from bots only: humans aim and dodge differently.
+	if players.values().all(func(p): return p[0].team.is_bot):
+		GunneryCalibration.save_samples()
+	else:
+		GunneryCalibration.reset_match()
 
 	# Finalize the replay file server-side.
 	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),

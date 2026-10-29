@@ -415,11 +415,12 @@ func _get_angles_to_target(cam_pos, target_pos):
 
 
 func _update_target_lock():
-	if locked_target:
+	var torpedo_active := player_controller.current_weapon_controller is TorpedoController
+	if locked_target and not torpedo_active:
 		if locked_target.global_position.distance_to(_ship.global_position) > player_controller.current_weapon_controller.get_max_range():
 			_unlock_target()
 
-	if target_lock_enabled and (!locked_target.visible_to_enemy or locked_target.health_controller.is_dead()):
+	if target_lock_enabled and ((!torpedo_active and !locked_target.visible_to_enemy) or locked_target.health_controller.is_dead()):
 		_unlock_target()
 
 	if target_lock_enabled:
@@ -630,17 +631,38 @@ func _calculate_target_info():
 	var ray_origin: Vector3 = aim.global_position
 	var ray_length: float = 200000.0
 
+	if ray_exclude.size() == 0:
+		ray_exclude = recurs_collision_bodies(_ship)
+	var space_state = get_world_3d().direct_space_state
+
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
+		var ray_params = PhysicsRayQueryParameters3D.new()
+		ray_params.from = ray_origin
+		ray_params.to = ray_origin + aim_direction * ray_length
+		ray_params.collision_mask = (1 << 1) | (1 << 2) # armor | ships
+		ray_params.exclude = ray_exclude
+		ray_params.collide_with_areas = true
+		ray_params.collide_with_bodies = true
+
+		var result = space_state.intersect_ray(ray_params)
+		var hit_target = result and (result.collider == locked_target or (result.collider is ArmorPart and result.collider.ship == locked_target))
+		if hit_target:
+			aim_position = result.position
+		else:
+			var weapon = player_controller.current_weapon_controller
+			var candidates: Array = [_ray_water_plane(ray_origin, aim_direction)]
+			if weapon.has_method("get_shell_params"):
+				var ship_pos = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
+				candidates.append(_shell_plane_aim(ray_origin, aim_direction, locked_target, weapon.get_shell_params(), ship_pos))
+			candidates = candidates.filter(func(c): return c != null)
+			candidates.sort_custom(func(a, b): return ray_origin.distance_squared_to(a) < ray_origin.distance_squared_to(b))
+			aim_position = candidates[0] if candidates.size() > 0 else ray_origin + aim_direction * ray_length
 	else:
 		# Unlocked: existing physics raycast against land/armor/water.
-		var space_state = get_world_3d().direct_space_state
 		var ray_params = PhysicsRayQueryParameters3D.new()
 		ray_params.from = ray_origin
 		ray_params.to = ray_origin + aim_direction * ray_length
 		ray_params.collision_mask = 1 | (1 << 1) | (1 << 3) # land | armor | water
-		if ray_exclude.size() == 0:
-			ray_exclude = recurs_collision_bodies(_ship)
 		ray_params.exclude = ray_exclude
 		ray_params.collide_with_areas = true
 		ray_params.collide_with_bodies = true
@@ -678,6 +700,20 @@ func _ray_water_or_far(ray_origin: Vector3, ray_dir: Vector3, ray_length: float)
 	if p != null:
 		return p as Vector3
 	return ray_origin + ray_dir * ray_length
+
+func _shell_plane_aim(ray_origin: Vector3, ray_dir: Vector3, target: Ship, shell: ShellParams, ship_pos: Vector3) -> Variant:
+	var plane_center := target.get_aabb().get_center()
+	var launch = ProjectilePhysicsWithDragV2.calculate_launch_vector(ship_pos, plane_center, shell)
+	if not launch[0]:
+		return null
+	var normal: Vector3 = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(launch[0], launch[1], shell).normalized()
+	var denom := ray_dir.dot(normal)
+	if absf(denom) < 0.0001:
+		return null
+	var s := (plane_center - ray_origin).dot(normal) / denom
+	if s <= 0.0:
+		return null
+	return ray_origin + ray_dir * s
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()
@@ -786,7 +822,8 @@ func _auto_update_target_lock(delta: float):
 	# Auto-unlock any lock whose target has left the hysteresis zone.
 	# Use the same distance scaling as lock-on so the lock-off zone matches
 	# the zone in which the lock was acquired.
-	if not in_transition and target_lock_enabled and locked_target and is_instance_valid(locked_target):
+	var torpedo_active := player_controller.current_weapon_controller is TorpedoController
+	if not in_transition and not torpedo_active and target_lock_enabled and locked_target and is_instance_valid(locked_target):
 		var cam = get_viewport().get_camera_3d()
 		var to_target = locked_target.global_position - global_position
 		if to_target.dot(-global_basis.z) <= 0.0:

@@ -209,11 +209,7 @@ pub fn walk_plates(
             if shell.velocity.length_squared() > 0.0 {
                 offset += shell.velocity.normalized() * (EPSILON as f32);
             }
-            if shell.fuze < 0.0
-                && e_armor >= spec.arming_threshold
-                && armor_mm >= spec.arming_threshold * 0.325
-            // <= 350mm arms on angled 19mm armor. 500mm arms on angled 27mm
-            {
+            if shell.fuze < 0.0 && e_armor >= spec.arming_threshold {
                 shell.fuze = 0.0;
             }
         } else if impact_angle >= spec.auto_bounce {

@@ -4,7 +4,7 @@ ARGS ?=
 JOBS ?= $(shell nproc)
 HULLS ?= $(wildcard assets/Ships/*/*.tscn)
 
-.PHONY: native bake sim smoke ab watch
+.PHONY: native bake sim smoke ab watch learn
 
 native:
 	$(MAKE) -C gdextension/ships_core_rs e
@@ -38,6 +38,10 @@ AB_N ?= 50
 A ?= HEAD
 B ?= WORKTREE
 AB_OUT ?= $(HOME)/Documents/ships_sim/ab_$(shell date +%Y%m%d_%H%M%S)
+# Rebuild assets/damage_prior.json from every saved bot-only match sample in user://damage_samples.
+learn:
+	$(GODOT) --headless --path . -s res://tools/learn_damage.gd
+
 ab:
 	GODOT="$(GODOT)" tools/botmatch/ab.sh "$(AB_OUT)" $(AB_N) $(A) $(B)
 

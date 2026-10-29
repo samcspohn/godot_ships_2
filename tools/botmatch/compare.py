@@ -172,7 +172,7 @@ if any(h["manoeuvres"] for h, _ in data.values()):
     print("\n== stance manoeuvres (chosen turn/astern run, per run: priced vs taken main-battery damage. on/by: priced (before the "
           "manoeuvre factor) and taken from shooters on us / bystanders; other: taken from ships not priced; early: first 30 s; band: run length)")
     print(f'{"build":>6} {"class/kind/band":>18} {"n":>6} {"priced":>7} {"taken":>7} {"t/p":>5} {"on p":>7} {"on t":>7} {"by p":>7} '
-          f'{"by t":>7} {"other t":>7} {"early p":>7} {"early t":>7} {">hp":>6} {"died":>6} {"d|>hp":>6}')
+          f'{"by t":>7} {"other t":>7} {"early p":>7} {"early t":>7} {"learn":>7} {"t/l":>5} {">hp":>6} {"died":>6} {"d|>hp":>6}')
     bands = ["<30s", "30-60s", "60-120s", ">120s"]
     for label, (h, _) in data.items():
         agg = defaultdict(lambda: defaultdict(float))
@@ -192,7 +192,7 @@ if any(h["manoeuvres"] for h, _ in data.values()):
             n = max(a["n"], 1)
             per = lambda f: f'{a[f] / n:>7.0f}'
             print(f'{label:>6} {k:>18} {a["n"]:>6.0f} {per("pred")} {per("real")} {a["real"] / max(a["pred"], 1):>5.2f} {per("pred_on")} {per("real_on")} '
-                  f'{per("pred_by")} {per("real_by")} {per("real_other")} {per("pred_early")} {per("real_early")} '
+                  f'{per("pred_by")} {per("real_by")} {per("real_other")} {per("pred_early")} {per("real_early")} {per("learn")} {a["real"] / max(a["learn"], 1):>5.2f} '
                   f'{100 * a["over_hp"] / n:>5.1f}% {100 * a["died"] / n:>5.1f}% {100 * a["died_over"] / max(a["over_hp"], 1):>5.1f}%')
 
 if any(h["vetoes"] for h, _ in data.values()):
@@ -205,6 +205,24 @@ if any(h["vetoes"] for h, _ in data.values()):
                 agg[c][1] += x["vetoed"]
         for c in sorted(agg):
             print(f'{label:>12} {c:>4} {agg[c][0] / max(len(h["vetoes"]), 1):>8.1f}/match cheaper  {100 * agg[c][1] / max(agg[c][0], 1):>5.1f}% vetoed')
+
+if any(h["calibration"] for h, _ in data.values()):
+    print("\n== salvo split (real side: hit rate and damage per hit by target and range; pred/shell is the model's expectation per shell fired)")
+    print(f'{"build":>6} {"target":>6} {"range km":>9} {"shells":>8} {"hit %":>7} {"model %":>8} {"real/hit":>9} {"pred/shell":>11} {"real/shell":>11} {"real/pred":>10}')
+    for label, (h, _) in data.items():
+        agg = defaultdict(lambda: defaultdict(float))
+        for c in h["calibration"]:
+            for key, v in c.items():
+                _, tcls, band, *_ = key.split("|")
+                for k, x in v.items():
+                    agg[(tcls, int(band))][k] += x
+        for tcls, band in sorted(agg):
+            a = agg[(tcls, band)]
+            if a["shells"] < 100:
+                continue
+            print(f'{label:>6} {tcls:>6} {band * 5:>4}-{band * 5 + 5:<4} {a["shells"]:>8.0f} {100 * a["hits"] / a["shells"]:>6.1f}% {100 * a["pred_hits"] / a["shells"]:>7.1f}% '
+                  f'{a["real"] / max(a["hits"], 1):>9.0f} {a["pred"] / a["shells"]:>11.0f} {a["real"] / a["shells"]:>11.0f} '
+                  f'{a["real"] / max(a["pred"], 1):>10.2f}')
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
 groups = []

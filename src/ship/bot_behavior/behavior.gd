@@ -2509,8 +2509,6 @@ const RADIUS_TTL_S: float = 5.0
 ## Probe distance and sweep step for guns_bear_aspect.
 const BEAR_PROBE_M: float = 5000.0
 const BEAR_STEP_DEG: float = 0.5
-## The most of a main battery's fire a dodging ship sheds.
-const DODGE_MAX: float = 0.6
 const SEC_RANGE_BUCKET_M: float = 500.0
 const SEC_ASPECT_BUCKET_DEG: float = 15.0
 ## Never inside an enemy's secondary range plus this, unless out-trading it there.
@@ -3236,29 +3234,15 @@ func _reach_now(ctx: SkillContext) -> Dictionary:
 	return out
 
 ## What `enemy`'s main and secondary batteries do to us per second at `range_m`,
-## seen `aspect_deg` off our bow, less the main-battery salvos we dodge.
+## seen `aspect_deg` off our bow, main battery as much as lands (DamageExpectation).
 func incoming_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
-	return maxf(SkillStance._expected(_ship, enemy, range_m, aspect_deg).x, 0.0) * dodge(_ship, enemy, range_m) \
+	return maxf(SkillStance._expected(_ship, enemy, range_m, aspect_deg).x, 0.0) * DamageExpectation.salvo_factor(enemy, _ship, range_m, aspect_deg) \
 		+ _secondary_dps(enemy, _ship, range_m, aspect_deg)
 
-## Share of `shooter`'s main-battery fire still landing once `target` dodges:
-## a shell that flies longer than its rudder takes to bite plus a hull length of
-## turn can be stepped away from.
-static func dodge(target: Ship, shooter: Ship, range_m: float) -> float:
-	var tof: float = BotGunnery.flight_time(shooter, range_m)
-	if not is_finite(tof):
-		return 1.0
-	var mc = target.movement_controller
-	var speed: float = maxf(mc.max_speed, 1.0)
-	# A turn of radius R at speed v moves the hull sideways v²t²/2R: a hull length takes sqrt(2RL)/v.
-	var shift_s: float = sqrt(2.0 * mc._p().turning_circle_radius * mc.ship_length) / speed
-	var reactable: float = clampf((tof - mc._p().rudder_response_time) / maxf(shift_s, 0.1), 0.0, 1.0)
-	return 1.0 - DODGE_MAX * reactable
-
 ## What our main and secondary batteries do to `enemy` per second at `range_m`,
-## seen `aspect_deg` off its bow, less the main-battery salvos it dodges.
+## seen `aspect_deg` off its bow, main battery as much as lands (DamageExpectation).
 func outgoing_dps(enemy: Ship, range_m: float, aspect_deg: float) -> float:
-	return maxf(SkillStance._expected(enemy, _ship, range_m, aspect_deg).x, 0.0) * dodge(enemy, _ship, range_m) \
+	return maxf(SkillStance._expected(enemy, _ship, range_m, aspect_deg).x, 0.0) * DamageExpectation.salvo_factor(_ship, enemy, range_m, aspect_deg) \
 		+ _secondary_dps(_ship, enemy, range_m, aspect_deg)
 
 ## [shooter id, target id, range bucket, aspect bucket] -> secondary dps; the
@@ -3516,12 +3500,10 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 		return c
 	var aspect: float = guns_bear_aspect(target)
 	var p = shooter.artillery_controller.get_params()
-	var shell: ShellParams = p.shell1 if p.shell1 != null else p.shell2
-	var main_mod: float = HPManager.size_mod(target.mass, shell.caliber) if shell != null else 1.0
 	var sec_mod: float = HPManager.size_mod(target.mass, secondary_caliber(shooter))
 	var r := POINT_BLANK_M
 	while r <= p._range:
-		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * dodge(target, shooter, r) * main_mod
+		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * DamageExpectation.salvo_factor(shooter, target, r, aspect)
 			+ _secondary_dps(shooter, target, r, aspect) * sec_mod)
 		r += DESIRED_STEP_M
 	_dps_curves[key] = c

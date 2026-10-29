@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 11
+const SOLVER_VERSION: int = 12
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -119,8 +119,13 @@ const CALIBRATION := [
 ]
 
 
-## Share of get_expected's damage that `shooter` lands on `target` at `range_m`; CVs count as BB.
+## Share of get_expected's damage `shooter` lands on `target` at `range_m`: the learned table, else static.
 static func calibration(shooter: Ship, target: Ship, range_m: float) -> float:
+	return DamageExpectation.salvo_factor(shooter, target, range_m)
+
+
+## CALIBRATION interpolated; CVs count as BB.
+static func static_calibration(shooter: Ship, target: Ship, range_m: float) -> float:
 	var row: Array = CALIBRATION[mini(shooter.ship_class, 2)][mini(target.ship_class, 2)]
 	var bands: Array = CALIBRATION_BANDS_M
 	if range_m <= bands[0]:
@@ -246,6 +251,7 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 	var ai := ev_bucket_index(_aspect_index(aspect_deg))
 	var value := [0.0, 0.0]
 	var landed_he := 0.0
+	var landed_ap := 0.0
 	var fire := 0.0
 	var total_rate := 0.0
 	for m in _batteries(shooter, kind, range_m, bearing_deg):
@@ -267,7 +273,9 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 			if r.x < 0.0:
 				continue
 			value[ammo] += r.x * shell.damage * rate
-			if ammo == 1:
+			if ammo == 0:
+				landed_ap += r.y * rate
+			else:
 				landed_he += r.y * rate
 				fire += _raw_fire_chance(shell, target) * r.y * rate
 	if total_rate <= 0.0:
@@ -277,7 +285,7 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 	var burning: float = fire * burn
 	var fire_ev: float = fire / total_rate * fire_dps(target) * burn * (minf(1.0, fire_zones(target) / burning) if burning > 0.0 else 1.0)
 	var he_ev: float = value[1] / total_rate + fire_ev
-	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": fire_ev, "he_landed": landed_he / total_rate,
+	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": fire_ev, "he_landed": landed_he / total_rate, "ap_landed": landed_ap / total_rate,
 		"ap_dps": ap_ev * total_rate, "he_dps": he_ev * total_rate}
 
 

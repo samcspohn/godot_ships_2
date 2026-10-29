@@ -65,7 +65,7 @@ func recent_damage_from(owner: Ship) -> float:
 	return rec[0] * exp(-(SimClock.now() - rec[1]) / DAMAGE_MEMORY_SEC)
 const SHELL_DAMAGE_RADIUS_MOD: float = 17.0
 const DMG_MOD_REF_SHIP_PER_CAL_SQ: float = 40000000.0 / (406.0 * 406.0)
-const DMG_MOD_SMALL: float = 0.7
+const DMG_MOD_SMALL: float = 0.8
 const DMG_MOD_SMALL_RATIO: float = 0.1
 
 ## Damage share a shell of `caliber` mm does to a hull of `mass` kg: less to a small hull from a big gun.

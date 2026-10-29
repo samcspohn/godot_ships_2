@@ -198,7 +198,8 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 		var to: Vector3 = intent.target_position - ctx.ship.global_position
 		var cheaper := _turn_beats_astern(ctx, hdg, near, far, goal, Vector2(to.x, to.z).length())
 		# A turn whose swing lands more than we have left is no way out, however it compares.
-		_turning = (_turning or cheaper) and _turn_hp * SWING_TAKEN[mini(ctx.ship.ship_class, 2)] < ctx.ship.health_controller.current_hp
+		var swing_hp: float = _turn_hp if DamageExpectation.learned() else _turn_hp * SWING_TAKEN[mini(ctx.ship.ship_class, 2)]
+		_turning = (_turning or cheaper) and swing_hp < ctx.ship.health_controller.current_hp
 		end = far if _turning else near
 		astern = not _turning
 		if SimClock.now() == _priced_at:
@@ -206,6 +207,7 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 				GunneryCalibration.on_veto(ctx.ship, not _turning)
 			var track: Array = _turn_track if _turning else _back_track
 			var split := _track_split(track, _vmax, ctx.ship.team.team_id, _window_s, _swing_s)
+			split["learn"] = DamageExpectation.price(ctx.ship, "turn" if _turning else "astern", split.slices_on, split.slices_by, _window_s)
 			GunneryCalibration.open_probe(ctx.ship, &"turn" if _turning else &"astern", split.on + split.by,
 				_window_s, _swing_s, split,
 				_shooters.filter(func(sh): return float(sh.weight) >= 1.0).map(func(sh): return sh.id),
@@ -243,11 +245,11 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 		var swing: float = absf(left) if way == short else TAU - absf(left)
 		var track := _escape_track(start, hdg, goal, want, vmax, vmax, w * way, p.rudder_response_time, swing, false, clearance, reach)
 		if not track.is_empty():
-			var cost := _track_taken(track, vmax, team_id)
+			var cost := _priced(ctx, "turn", track, vmax, team_id, &"rows", INF)
 			if cost < _turn_cost:
 				_turn_cost = cost
 				_swing_s = p.rudder_response_time + swing / maxf(w, 1e-3)
-				_turn_hp = _track_taken(track, vmax, team_id, &"raw", _swing_s)
+				_turn_hp = _priced(ctx, "turn", track, vmax, team_id, &"raw", _swing_s)
 				_turn_track = track
 	var back := _escape_track(start, near, goal, want, vmax, vmax * p.reverse_speed_ratio, 0.0, 0.0, 0.0, true, clearance, reach)
 	_back_track = back
@@ -258,8 +260,8 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	_astern_hp = INF
 	if not back.is_empty():
 		# Same window as the turn; what backing has not covered by its end is sailed on at this rate.
-		_astern_cost = _track_taken(back, vmax, team_id, &"rows", _window_s)
-		_astern_hp = _track_taken(back, vmax, team_id, &"raw", _window_s)
+		_astern_cost = _priced(ctx, "astern", back, vmax, team_id, &"rows", _window_s)
+		_astern_hp = _priced(ctx, "astern", back, vmax, team_id, &"raw", _window_s)
 		var k: int = mini(int(_window_s / ESCAPE_DT), back.size()) - 1
 		var made: float = (back[k][0] as Vector2 - start).dot(Vector2(sin(goal), cos(goal))) if k >= 0 else 0.0
 		var short_s: float = maxf(want - made, 0.0) / vmax
@@ -303,10 +305,16 @@ func _escape_track(at: Vector2, hdg: float, goal: float, want: float, vmax: floa
 
 ## Whole salvos landing along `track`, each on its shooter's clock: at the hull's
 ## aspect to it then, nothing once out of its range or behind land from it, less what speed dodges.
-## _track_taken's unweighted damage in the first `window_s`, split by who it is booked to: {on (shooters
-## on us), by (bystanders), early (both, landing in the first `early_s`)}; for GunneryCalibration's probes.
+## Unweighted salvos landing along `track` (each on its shooter's clock, at the hull's aspect to it, none once out of
+## its range or behind land, less what speed dodges) in the first `window_s`, split by who it is booked to: {on (shooters
+## on us), by (bystanders), early (both, landing in the first `early_s`), slices_on / slices_by (per
+## DamageExpectation.TURNOUT_SLICES_S)}; for GunneryCalibration's probes.
 func _track_split(track: Array, vmax: float, team_id: int, window_s: float, early_s: float) -> Dictionary:
-	var out := {"on": 0.0, "by": 0.0, "early": 0.0}
+	var slices: Array = DamageExpectation.TURNOUT_SLICES_S
+	var out := {"on": 0.0, "by": 0.0, "early": 0.0, "slices_on": [], "slices_by": []}
+	for i in slices.size():
+		out.slices_on.append(0.0)
+		out.slices_by.append(0.0)
 	if track.is_empty():
 		return out
 	var end: float = minf(track.size() * ESCAPE_DT, window_s)
@@ -322,21 +330,40 @@ func _track_split(track: Array, vmax: float, team_id: int, window_s: float, earl
 			if to.length() <= float(sh.range) and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
 				var d: float = float(sh.reload) * float(sh.weight) * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
-				out["on" if float(sh.weight) >= 1.0 else "by"] += d
+				var on: bool = float(sh.weight) >= 1.0
+				out["on" if on else "by"] += d
+				var si: int = 0
+				while si < slices.size() - 1 and t >= slices[si]:
+					si += 1
+				out["slices_on" if on else "slices_by"][si] += d
 				if t < early_s:
 					out.early += d
 			t += float(sh.reload)
 	return out
 
 
-func _track_taken(track: Array, vmax: float, team_id: int, rows: StringName = &"rows", window_s: float = INF) -> float:
+## `kind`'s salvos along `track` in `window_s`, sliced and priced by DamageExpectation (learned turn-outs).
+func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, rows: StringName, window_s: float) -> float:
+	var s := _track_slices(track, vmax, team_id, rows, window_s)
+	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], minf(window_s, track.size() * ESCAPE_DT))
+
+
+## [on, by]: `rows` salvos along `track` (as _track_split) per DamageExpectation.TURNOUT_SLICES_S slice, from shooters on us and bystanders.
+func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float) -> Array:
+	var slices: Array = DamageExpectation.TURNOUT_SLICES_S
+	var on: Array = []
+	var by: Array = []
+	on.resize(slices.size())
+	by.resize(slices.size())
+	on.fill(0.0)
+	by.fill(0.0)
 	var end: float = minf(track.size() * ESCAPE_DT, window_s)
-	var sum: float = 0.0
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	var masks := {}
 	for sh in _shooters:
 		var reload: float = sh.reload
 		var t: float = float(sh.next)
+		var is_on: bool = float(sh.weight) >= 1.0
 		while t < end:
 			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
 			var at: Vector2 = track[k][0]
@@ -347,9 +374,17 @@ func _track_taken(track: Array, vmax: float, team_id: int, rows: StringName = &"
 			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
 			if to.length() <= float(sh.range) and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				sum += reload * float(sh.weight) * sh[rows][a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				var si: int = 0
+				while si < slices.size() - 1 and t >= slices[si]:
+					si += 1
+				var d: float = reload * float(sh.weight) * sh[rows][a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				if is_on:
+					on[si] += d
+				else:
+					by[si] += d
 			t += reload
-	return sum
+	return [on, by]
+
 
 
 ## The heading to bear loaded tubes, else loaded guns idle at `base`; INF when

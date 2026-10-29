@@ -206,11 +206,10 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_s8ahg"]
 script = ExtResource("16_qh7xe")
-heal_per_sec = 0.02
 icon = ExtResource("17_m572y")
 disabled_icon = ExtResource("16_ac8mu")
-cooldown_time = 40.0
-duration = 15.0
+cooldown_time = 80.0
+duration = 30.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 

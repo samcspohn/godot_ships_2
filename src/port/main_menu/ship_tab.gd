@@ -133,6 +133,7 @@ func _load_ship_buttons():
 		{"name": "Shimakaze", "path": "res://assets/Ships/Shimakaze/Shimakaze.tscn"},
 		{"name": "Des Moines", "path": "res://assets/Ships/DesMoines/DesMoines.tscn"},
 		{"name": "Montana", "path": "res://assets/Ships/Montana/Montana.tscn"},
+		{"name": "Vermont", "path": "res://assets/Ships/Vermont/Montana_t11.tscn"},
 		{"name": "MLK-16-130", "path": "res://assets/Ships/MLK-16-130/MLK-16-130.tscn"},
 	]
 

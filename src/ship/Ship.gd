@@ -428,7 +428,7 @@ func _clamp_to_map_bounds() -> void:
 			linear_velocity.z = 0
 
 func get_aabb() -> AABB:
-	return self.aabb * global_transform
+	return global_transform * self.aabb
 
 @rpc("any_peer", "reliable")
 func initialized_client():

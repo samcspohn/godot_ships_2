@@ -206,6 +206,7 @@ fn thresholds(b: &[u8], h: &BlobHdr, om_max: f64) -> Vec<u16> {
 /// AP, per class 0..=n_thr:     u8 value[NP][ND] on the AP pen grid
 /// HE:                          u8 value[NP][ND] | u8 landed[NP][ND] on the HE pen grid
 /// LEVELS, per AP class then HE: u8 heavy[NP][ND] | u8 medium[NP][ND]
+/// AP LANDED, per AP class: u8 landed[NP][ND] (version 12)
 /// ```
 /// value = expected payout per shell fired (fraction of alpha) at the best
 /// aim, landed = share of shells on the hull there, heavy / medium = shares
@@ -238,7 +239,7 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
         let om = if class == 0 { 0.0 } else { thr[class - 1] as f64 };
         let rows: Vec<Row> = (0..NP).map(|i| eval(grid_pen(i, AP_PEN0, AP_PEN1), om, false)).collect();
         if classes.last().is_some_and(|(_, prev)| {
-            prev.iter().zip(&rows).all(|(p, q)| (0..ND).all(|d| close(p[d].value, q[d].value)))
+            prev.iter().zip(&rows).all(|(p, q)| (0..ND).all(|d| close(p[d].value, q[d].value) && close(p[d].landed, q[d].landed)))
         }) {
             continue;
         }
@@ -269,6 +270,11 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
             out.extend(row.iter().map(|r| enc(r.medium)));
         }
     }
+    for (_, rows) in &classes {
+        for row in rows {
+            out.extend(row.iter().map(|r| enc(r.landed)));
+        }
+    }
     out
 }
 
@@ -285,7 +291,18 @@ pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h:
     let vals = if is_he { c.head + (c.n_thr + 1) * c.block } else { c.head + c.class * c.block };
     // Below the grid's first pen the value fades to zero rather than holding.
     let fade = if c.x < c.lo { (c.x / c.lo) as f32 } else { 1.0 };
-    Some((c.tri(b, vals) * fade, if is_he { c.tri(b, vals + c.block) * fade } else { 0.0 }))
+    Some((c.tri(b, vals) * fade, if is_he { c.tri(b, vals + c.block) * fade } else { c.ap_landed(b) }))
+}
+
+impl Chunk {
+    /// AP landed share (unfaded: geometry, not value), one block per AP class after the levels.
+    fn ap_landed(&self, b: &[u8]) -> f32 {
+        let base = self.head + (self.n_thr + 1) * self.block + 2 * self.block + (self.n_thr + 2) * 2 * self.block + self.class * self.block;
+        if b.len() < base + self.block {
+            return 0.0;
+        }
+        self.tri(b, base)
+    }
 }
 
 /// (heavy, medium) shares of `ev_lookup`'s value; None for chunks baked without them.

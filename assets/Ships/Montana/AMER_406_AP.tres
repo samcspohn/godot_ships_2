@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ShellParams" format=3 uid="uid://dnnthh4bhhwsv"]
+
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="1_ug8bt"]
+
+[resource]
+script = ExtResource("1_ug8bt")
+speed = 762.0
+drag = 1.799999999999995e-05
+damage = 13500.0
+size = 2.436
+caliber = 406.0
+mass = 1225.0
+overmatch = 29
+arming_threshold = 67
+metadata/_custom_type_script = "uid://d0r4vucnli08f"

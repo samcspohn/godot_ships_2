@@ -76,6 +76,9 @@ pub(crate) struct Expected {
     pub he_cit: f32,
     /// Fire's share of ap_dps when lighting fires first beats AP alone; else 0.
     pub ap_fire_dps: f32,
+    /// Share of shells that land on the hull at the best aim.
+    pub ap_landed: f32,
+    pub he_landed: f32,
 }
 
 impl Expected {
@@ -152,6 +155,7 @@ impl DamageModel {
         let mut heal = [h.repair[1]; 2];
         let mut cit = [0.0f32; 2];
         let mut landed_he = 0.0f32;
+        let mut landed_ap = 0.0f32;
         for (k, ammo) in s.ammo.iter().enumerate() {
             let Some(a) = ammo else { continue };
             let (desc, pen) = (at(2 * k), at(2 * k + 1));
@@ -167,7 +171,9 @@ impl DamageModel {
                 heal[k] = light * h.repair[0] + medium * h.repair[1] + heavy * h.repair[2];
                 cit[k] = heavy;
             }
-            if k == 1 {
+            if k == 0 {
+                landed_ap = l;
+            } else {
                 landed_he = l;
             }
         }
@@ -196,7 +202,7 @@ impl DamageModel {
         let he_ev = value[1] + fire_ev;
         let he_heal = if he_ev > 0.0 { (value[1] * heal[1] + fire_ev * h.repair[0]) / he_ev } else { heal[1] };
         Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate,
-            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 }, ap_fire_dps })
+            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 }, ap_fire_dps, ap_landed: landed_ap, he_landed: landed_he })
     }
 }
 
@@ -290,6 +296,8 @@ impl DamageModel {
             d.set("ap_cit", e.ap_cit);
             d.set("he_cit", e.he_cit);
             d.set("ap_fire_dps", e.ap_fire_dps);
+            d.set("ap_landed", e.ap_landed);
+            d.set("he_landed", e.he_landed);
         }
         d
     }
