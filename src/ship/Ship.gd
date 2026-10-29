@@ -982,7 +982,6 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			super_structure = node
 		elif node.name.to_lower().contains("citadel"):
 			armor_part.type = ArmorPart.Type.CITADEL
-			armor_part.hp_part = hp.citadel
 			self.citadel = armor_part
 
 	# handle colonly type

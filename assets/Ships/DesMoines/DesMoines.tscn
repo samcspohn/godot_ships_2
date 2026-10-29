@@ -5,7 +5,6 @@
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_q1kic"]
 [ext_resource type="PackedScene" uid="uid://vy30mcxy1oat" path="res://assets/turrets/AMER_203mm_3b_auto.tscn" id="3_6vusf"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_s7tx1"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="3_seiyl"]
 [ext_resource type="PackedScene" uid="uid://brjx836dkpsi3" path="res://assets/turrets/AMER_127mm_2b.tscn" id="4_4rujh"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_seiyl"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_jjc8t"]
@@ -35,40 +34,10 @@ pen_repair = 0.7
 torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_6pn0f"]
-script = ExtResource("3_seiyl")
-pool1 = 14430.0
-pool2 = 144300.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_qcn8p"]
-script = ExtResource("3_seiyl")
-pool1 = 4810.0
-pool2 = 19240.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_slang"]
-script = ExtResource("3_seiyl")
-pool1 = 962.0
-pool2 = 3848.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_jbscf"]
-script = ExtResource("3_seiyl")
-pool1 = 962.0
-pool2 = 3848.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_kqusw"]
-script = ExtResource("3_seiyl")
-pool1 = 2886.0
-pool2 = 11544.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
 [sub_resource type="Resource" id="Resource_vpkcl"]
 script = ExtResource("4_seiyl")
-radius = 9500.0
-air_radius = 4750.0
+radius = 9000.0
+air_radius = 4500.0
 bloom_duration = 16.0
 unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
@@ -153,13 +122,6 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_f6wpl")
 _max_hp = 48100.0
-superstructure_percent = 0.3
-casemate_percent = 0.5
-citadel = SubResource("Resource_6pn0f")
-casemate = SubResource("Resource_qcn8p")
-bow = SubResource("Resource_slang")
-stern = SubResource("Resource_jbscf")
-superstructure = SubResource("Resource_kqusw")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_vpkcl")

@@ -4,7 +4,6 @@
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_ly65a"]
 [ext_resource type="PackedScene" uid="uid://d4lppccv45ox5" path="res://assets/turrets/RUS_130mm_4b.tscn" id="2_wg7ll"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_ntw8q"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_vpmni"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_jk4tg"]
 [ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_3b3d2"]
 [ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="7_g8rmw"]
@@ -34,31 +33,6 @@ pen_repair = 0.8
 light_repair = 0.99
 torpedo_protection = 0.1
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
-
-[sub_resource type="Resource" id="Resource_jk4tg"]
-script = ExtResource("4_vpmni")
-pool1 = 9300.0
-pool2 = 93000.0
-
-[sub_resource type="Resource" id="Resource_nqh4u"]
-script = ExtResource("4_vpmni")
-pool1 = 4960.0
-pool2 = 19840.0
-
-[sub_resource type="Resource" id="Resource_or535"]
-script = ExtResource("4_vpmni")
-pool1 = 620.0
-pool2 = 2480.0
-
-[sub_resource type="Resource" id="Resource_kcqxc"]
-script = ExtResource("4_vpmni")
-pool1 = 620.0
-pool2 = 2480.0
-
-[sub_resource type="Resource" id="Resource_mgr2a"]
-script = ExtResource("4_vpmni")
-pool1 = 3100.0
-pool2 = 12400.0
 
 [sub_resource type="Resource" id="Resource_vpmni"]
 script = ExtResource("5_jk4tg")
@@ -177,11 +151,6 @@ ship_model_glb_path = "uid://big5obrj2bets"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_ly65a")
 _max_hp = 31000.0
-citadel = SubResource("Resource_jk4tg")
-casemate = SubResource("Resource_nqh4u")
-bow = SubResource("Resource_or535")
-stern = SubResource("Resource_kcqxc")
-superstructure = SubResource("Resource_mgr2a")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_vpmni")

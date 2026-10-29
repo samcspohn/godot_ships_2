@@ -3,7 +3,6 @@
 [ext_resource type="PackedScene" uid="uid://cd80jwtjyecpn" path="res://assets/Ships/Vermont/Montana_t11.glb" id="1_2sq35"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_l40ls"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_gvj22"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_tavw5"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_6g2ey"]
 [ext_resource type="Resource" uid="uid://cn2vhqx8mtla3" path="res://src/artillary/Dispersion/default_main.tres" id="6_0l3ti"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="7_oe32w"]
@@ -33,31 +32,6 @@ script = ExtResource("3_gvj22")
 pen_repair = 0.6
 torpedo_protection = 0.45
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
-
-[sub_resource type="Resource" id="Resource_f23a6"]
-script = ExtResource("4_tavw5")
-pool1 = 345000.0
-pool2 = 345000.0
-
-[sub_resource type="Resource" id="Resource_pcle4"]
-script = ExtResource("4_tavw5")
-pool1 = 13800.0
-pool2 = 55200.0
-
-[sub_resource type="Resource" id="Resource_gpi7b"]
-script = ExtResource("4_tavw5")
-pool1 = 2300.0
-pool2 = 9200.0
-
-[sub_resource type="Resource" id="Resource_icaqi"]
-script = ExtResource("4_tavw5")
-pool1 = 2300.0
-pool2 = 9200.0
-
-[sub_resource type="Resource" id="Resource_ykcfj"]
-script = ExtResource("4_tavw5")
-pool1 = 11500.0
-pool2 = 46000.0
 
 [sub_resource type="Resource" id="Resource_w1byb"]
 script = ExtResource("5_6g2ey")
@@ -171,12 +145,6 @@ ship_model_glb_path = "uid://cd80jwtjyecpn"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_flfk4")
 _max_hp = 115000.0
-casemate_percent = 0.6
-citadel = SubResource("Resource_f23a6")
-casemate = SubResource("Resource_pcle4")
-bow = SubResource("Resource_gpi7b")
-stern = SubResource("Resource_icaqi")
-superstructure = SubResource("Resource_ykcfj")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_w1byb")

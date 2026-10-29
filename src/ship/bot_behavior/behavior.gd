@@ -785,6 +785,33 @@ static func score_parts(scorer: Ship, target: Ship, r: float, allied_dps: float 
 	var harm: float = minf(threat / maxf(ours + allied_dps / hp, 1e-6), PRIORITY_HARM_CAP)
 	return Vector4(100.0 * threat, 100.0 * ours, 1.0, harm)
 
+## priority_value(score_parts(scorer, target, r)) for each of `ranges`, ending after the first above `stop_above`.
+static func priority_at(scorer: Ship, target: Ship, ranges: PackedFloat64Array, stop_above: float = INF) -> PackedFloat64Array:
+	var danger := danger_curve(target, scorer)
+	var tdanger := torpedo_danger(target, scorer)
+	var c := dps_curve(scorer, target)
+	var torp := torpedo_curve(scorer, target)
+	var shp: float = maxf(scorer.health_controller.current_hp, 1.0)
+	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	var reach: float = reach_m(scorer)
+	var speed := 1.0
+	var reload := 0.0
+	if not torp.is_empty():
+		speed = maxf(scorer.torpedo_controller.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
+		reload = scorer.torpedo_controller.get_params().reload_time
+	var out := PackedFloat64Array()
+	for r in ranges:
+		var threat: float = _curve_at(danger, r) / shp + _curve_at(tdanger, r)
+		var at: float = minf(r, reach)
+		var salvo: float = _curve_at(torp, at)
+		var ours: float = (c[clampi(roundi((at - POINT_BLANK_M) / DESIRED_STEP_M), 0, c.size() - 1)] if not c.is_empty() else 0.0) / hp \
+			+ (1.0 / (at / speed + reload * maxf(hp / salvo - 1.0, 0.0)) if salvo > 0.0 else 0.0)
+		var v: float = priority_value(Vector4(100.0 * threat, 100.0 * ours, 1.0, minf(threat / maxf(ours, 1e-6), PRIORITY_HARM_CAP)))
+		out.append(v)
+		if v > stop_above:
+			break
+	return out
+
 ## Length of the sea route from `here` to `to` for contact `key`, re-planned
 ## when either end moves PRIORITY_PATH_MOVE_M or after PRIORITY_PATH_TTL_S;
 ## the straight line without a graph or a route.
@@ -3463,17 +3490,20 @@ func _desired_by_trade(enemy: Ship) -> Vector2:
 	var best := 0.0
 	var even := -1.0
 	var even_trade: float = EVEN_TRADE * exp(-AGGRESSION_TRADE * aggression())
-	var r := POINT_BLANK_M
-	while r <= minf(our_reach, their_reach):
-		var out: float = kill_rate(_ship, enemy, r)
-		var theirs: float = kill_rate(enemy, _ship, r)
+	var both: float = minf(our_reach, their_reach)
+	var n: int = int((both - POINT_BLANK_M) / DESIRED_STEP_M) + 1 if both >= POINT_BLANK_M else 0
+	var outs := kill_rates(_ship, enemy, n)
+	var ins := kill_rates(enemy, _ship, n)
+	for k in n:
+		var r: float = POINT_BLANK_M + k * DESIRED_STEP_M
+		var out: float = outs[k]
+		var theirs: float = ins[k]
 		var ratio: float = out / theirs if theirs > 0.0 else (INF if out > 0.0 else 0.0)
 		if ratio > best:
 			best = ratio
 			best_r = r
 		if ratio >= even_trade:
 			even = r
-		r += DESIRED_STEP_M
 	var hurt: float = aptitude.hurt_push * (1.0 - clampf(our_hp / maxf(_ship.health_controller.max_hp, 1.0), 0.0, 1.0))
 	var edge: float = minf(their_gun + LOSE_MARGIN_M, our_gun)
 	var eased := func(at: float) -> float: return lerpf(at, maxf(at, edge), hurt)
@@ -3611,6 +3641,31 @@ static func heavy_guns(shooter: Ship, target: Ship) -> bool:
 		best = maxf(best, v)
 	return best * HEAVY_GUNS_TTK_S >= maxf(target.health_controller.max_hp, 1.0)
 
+## torpedo_rate at every DESIRED_STEP_M from POINT_BLANK_M, n steps.
+static func _torp_rates(shooter: Ship, target: Ship, n: int) -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	out.resize(n)
+	var c := torpedo_curve(shooter, target)
+	if c.is_empty():
+		return out
+	var tc: TorpedoController = shooter.torpedo_controller
+	var speed: float = maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
+	var reload: float = tc.get_params().reload_time
+	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	for k in mini(n, c.size()):
+		if c[k] > 0.0:
+			out[k] = 1.0 / ((POINT_BLANK_M + k * DESIRED_STEP_M) / speed + reload * maxf(hp / c[k] - 1.0, 0.0))
+	return out
+
+## kill_rate at every DESIRED_STEP_M from POINT_BLANK_M, n steps.
+static func kill_rates(shooter: Ship, target: Ship, n: int) -> PackedFloat64Array:
+	var out := _torp_rates(shooter, target, n)
+	var c := dps_curve(shooter, target)
+	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	for k in mini(n, c.size()):
+		out[k] += c[k] / hp
+	return out
+
 ## Share of `target`'s HP `shooter` takes per second at `range_m`: guns and torpedoes.
 static func kill_rate(shooter: Ship, target: Ship, range_m: float) -> float:
 	return _curve_at(dps_curve(shooter, target), range_m) / maxf(target.health_controller.current_hp, 1.0) \
@@ -3715,15 +3770,18 @@ func aggro_radius(ctx: SkillContext, e: Ship, at: Vector2, within: float) -> flo
 	if tank > 0.0:
 		var take := -1.0
 		var release := -1.0
+		var ranges := PackedFloat64Array()
 		var r: float = minf(reach_m(e), within)
 		while r >= POINT_BLANK_M:
-			var mine: float = priority_value(score_parts(e, _ship, r))
-			if mine > tank * PRIORITY_SWITCH:
-				break
-			take = r
-			if mine <= tank / PRIORITY_SWITCH:
-				release = r
+			ranges.append(r)
 			r -= DESIRED_STEP_M
+		var mine_at := priority_at(e, _ship, ranges, tank * PRIORITY_SWITCH)
+		for i in mine_at.size():
+			if mine_at[i] > tank * PRIORITY_SWITCH:
+				break
+			take = ranges[i]
+			if mine_at[i] <= tank / PRIORITY_SWITCH:
+				release = ranges[i]
 		if take > 0.0:
 			var back: float = maxf(_ship.movement_controller.max_speed * _ship.movement_controller._p().reverse_speed_ratio, 1.0)
 			var cost: float = kill_rate(e, _ship, take) * maxf(release - take, 0.0) / back

@@ -4,7 +4,6 @@
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_5bir6"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="4_kxwob"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_onxit"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="5_5tc2e"]
 [ext_resource type="Resource" uid="uid://ppinkghgx71y" path="res://src/artillary/Guns/sec_gun2.tres" id="6_4ubhj"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="6_id6nr"]
@@ -42,39 +41,10 @@ script = ExtResource("4_kxwob")
 torpedo_protection = 0.24
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_kp8pn"]
-script = ExtResource("4_onxit")
-pool1 = 237000.0
-pool2 = 237000.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_iohum"]
-script = ExtResource("4_onxit")
-pool1 = 21066.666666666668
-pool2 = 42133.333333333336
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_4564o"]
-script = ExtResource("4_onxit")
-pool1 = 9216.666666666666
-pool2 = 18433.333333333332
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_u0hyh"]
-script = ExtResource("4_onxit")
-pool1 = 9216.666666666666
-pool2 = 18433.333333333332
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_ks2dr"]
-script = ExtResource("4_onxit")
-pool1 = 13166.666666666666
-pool2 = 26333.333333333332
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
 [sub_resource type="Resource" id="Resource_ktcsn"]
 script = ExtResource("14_w4pwy")
-radius = 13000.0
+radius = 11000.0
+air_radius = 5500.0
 bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
@@ -228,11 +198,6 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_afiln")
 _max_hp = 79000.0
-citadel = SubResource("Resource_kp8pn")
-casemate = SubResource("Resource_iohum")
-bow = SubResource("Resource_4564o")
-stern = SubResource("Resource_u0hyh")
-superstructure = SubResource("Resource_ks2dr")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_ktcsn")
@@ -418,6 +383,7 @@ shape = SubResource("ConvexPolygonShape3D_u0hyh")
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="45" unique_id=1385002033]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
+visible = false
 script = ExtResource("28_usy8k")
 template = ExtResource("29_wake")
 emit_rate = 0.03
@@ -427,6 +393,7 @@ auto_start = true
 
 [node name="TrailEmitter3" type="Node3D" parent="." index="46" unique_id=1953850310]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
+visible = false
 script = ExtResource("28_usy8k")
 template = ExtResource("29_wake")
 emit_rate = 0.03

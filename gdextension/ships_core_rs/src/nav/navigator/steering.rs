@@ -1,12 +1,19 @@
 use godot::prelude::*;
 use std::f64::consts::PI;
 
+use super::hull::rudder_to_heading;
 use super::{
-    ShipNavigator, SteeringChoice, ThreatEval, DODGE_COMMITMENT_BIAS, DODGE_COMMITMENT_DURATION,
+    ShipNavigator, SteerCache, SteeringChoice, ThreatEval, DODGE_COMMITMENT_BIAS, DODGE_COMMITMENT_DURATION,
     PARKED_SPEED_THRESHOLD, SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER, TURN_LATCH_MIN,
     TURN_LATCH_PENALTY_S, TURN_LATCH_RELEASE,
 };
 use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint, DynamicObstacle};
+
+/// A cached plan is searched again after this long, or once the hull leaves its arc by STEER_REUSE_DRIFT_M / _RAD.
+const STEER_REUSE_MAX_S: f32 = 1.0;
+const STEER_REUSE_DRIFT_M: f32 = 10.0;
+const STEER_REUSE_DRIFT_RAD: f32 = 0.05;
+const STEER_REUSE_TARGET_M: f32 = 25.0;
 
 /// Seconds added to a reverse arc the behaviour forbade: still a way out when every ahead arc is blocked.
 const FORBID_REVERSE_PENALTY_S: f32 = 120.0;
@@ -127,6 +134,7 @@ impl ShipNavigator {
             self.turn_latch = 0.0;
         }
         let desired_rudder = if self.turn_latch * -desired_rudder < 0.0 { -desired_rudder } else { desired_rudder };
+        let cache = self.steer_cache.take();
         let mut result = SteeringChoice {
             rudder: desired_rudder,
             throttle: desired_throttle,
@@ -249,6 +257,22 @@ impl ShipNavigator {
         // real test needs the simulated arcs, which do not exist yet.
         let torpedoes_present = self.obstacles.values().any(|o| o.is_torpedo());
 
+        if let Some(c) = cache.filter(|c| !torpedoes_present && !wp_is_virtual && self.plan_still_holds(c, desired_throttle, wp_target)) {
+            let mut choice = c.choice;
+            if self.steer_clock - c.at >= c.commit_t {
+                let bow_at = c.aim.unwrap_or(wp_target);
+                let d = bow_at - self.state.position;
+                let astern = c.follow_throttle < 0;
+                let bow = if astern { normalize_angle(d.x.atan2(d.y) + PI as f32) } else { d.x.atan2(d.y) };
+                choice.rudder = rudder_to_heading(&self.hull_now(), &self.params, bow, astern);
+                choice.throttle = c.follow_throttle;
+            }
+            self.steer_cache = Some(c);
+            self.perf_last_steering_candidates_simulated = 0;
+            self.arm_turn_latch(&choice, turn_err);
+            return choice;
+        }
+
         let rudder_offsets: [f32; 7] = [0.0, 0.3, -0.3, 0.6, -0.6, -1.0, 1.0];
         // Include all 7 offsets (+-0.3, +-0.6, +-1.0) so the ship can execute hard
         // full-rudder turns to dodge torpedoes - previously only +-0.3 were tried.
@@ -354,6 +378,7 @@ impl ShipNavigator {
             threats: ThreatEval,
             any_obs_collision: bool,
             rollout: Option<(Vec<ArcPoint>, f32)>,
+            cand: usize,
         }
         const MAX_PASS_ENTRIES: usize = 48;
         let mut pass_data: Vec<PassEntry> = Vec::new();
@@ -477,6 +502,7 @@ impl ShipNavigator {
                         threats,
                         any_obs_collision: obs_col,
                         rollout: None,
+                        cand: i,
                     });
                 }
             } else {
@@ -567,6 +593,7 @@ impl ShipNavigator {
                         threats,
                         any_obs_collision: obs_col,
                         rollout: Some((ro.points, ro.commit_t)),
+                        cand: i,
                     });
                 }
             }
@@ -718,6 +745,24 @@ impl ShipNavigator {
             Some((points, commit_t)) => {
                 self.winning_arc_inputs = self.arc_inputs(result.rudder, result.throttle, commit_t);
                 self.winning_arc = points;
+                if !torpedoes_present && !torpedoes_threaten {
+                    let ci = pass_data[best_idx as usize].cand;
+                    self.steer_cache = Some(SteerCache {
+                        choice: SteeringChoice { collision_imminent: any_collision || result.rudder != desired_rudder || result.throttle != desired_throttle, ..result },
+                        at: self.steer_clock,
+                        commit_t,
+                        aim: candidates[ci].aim,
+                        follow_throttle,
+                        desired_throttle,
+                        wp: wp_target,
+                        target: self.target.position,
+                        target_heading: self.target.heading,
+                        hold_radius: self.target.hold_radius,
+                        heading_weight: self.target.heading_weight,
+                        prefer_reverse: self.target.prefer_reverse,
+                        forbid_reverse: self.target.forbid_reverse,
+                    });
+                }
             }
             None => self.set_winning_arc(self.predict_arc_internal(result.rudder, result.throttle, sim_lookahead), result.rudder, result.throttle),
         }
@@ -749,6 +794,34 @@ impl ShipNavigator {
         self.arm_turn_latch(&result, turn_err);
 
         result
+    }
+
+    fn plan_still_holds(&self, c: &SteerCache, desired_throttle: i32, wp: Vector2) -> bool {
+        let t = &self.target;
+        let elapsed = self.steer_clock - c.at;
+        if elapsed >= STEER_REUSE_MAX_S
+            || desired_throttle != c.desired_throttle
+            || wp.distance_to(c.wp) > STEER_REUSE_TARGET_M
+            || t.position.distance_to(c.target) > STEER_REUSE_TARGET_M
+            || angle_difference(t.heading, c.target_heading).abs() > STEER_REUSE_DRIFT_RAD
+            || (t.hold_radius - c.hold_radius).abs() > STEER_REUSE_TARGET_M
+            || (t.heading_weight - c.heading_weight).abs() > 0.05
+            || t.prefer_reverse != c.prefer_reverse
+            || t.forbid_reverse != c.forbid_reverse
+        {
+            return false;
+        }
+        let arc = &self.winning_arc;
+        let Some(j) = arc.iter().position(|p| p.time >= elapsed) else { return false };
+        let pred = if j == 0 {
+            arc[0]
+        } else {
+            let (a, b) = (arc[j - 1], arc[j]);
+            let f = (elapsed - a.time) / (b.time - a.time).max(1e-4);
+            ArcPoint { position: a.position.lerp(b.position, f), heading: a.heading + angle_difference(a.heading, b.heading) * f, ..b }
+        };
+        self.state.position.distance_to(pred.position) <= STEER_REUSE_DRIFT_M.max(0.25 * self.params.ship_beam)
+            && angle_difference(self.state.heading, pred.heading).abs() <= STEER_REUSE_DRIFT_RAD
     }
 
     /// Which way the rudder acts: the hull's actual direction through the water.

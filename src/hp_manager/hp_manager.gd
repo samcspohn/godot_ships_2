@@ -1,4 +1,3 @@
-@tool
 extends Node
 class_name HPManager
 
@@ -27,22 +26,20 @@ var current_hp:
 		return _current_hp * params.p().mult
 	# set(value):
 	# 	_current_hp = value / params.p().mult
-@export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
-@export var bow_percent: float = 0.1
-@export var stern_percent: float = 0.1
-@export var superstructure_percent: float = 0.5
-@export var casemate_percent: float = 0.8
+@export var bow_percent: float = 0.06
+@export var stern_percent: float = 0.06
+@export var superstructure_percent: float = 0.03
+@export var casemate_percent: float = 0.15
+@export var hull_percent: float = 0.75
 
-const POOL1_RATIO: float = 0.2
-const POOL2_RATIO: float = 1.0 - POOL1_RATIO
+## Share of a pen drawn from the hit section; the rest comes from the hull (WoWS saturation).
+const SECTION_SHARE: float = 0.5
 
-
-@export var citadel: HpPartMod
-@export var casemate: HpPartMod
-@export var bow: HpPartMod
-@export var stern: HpPartMod
-@export var superstructure: HpPartMod
-# @export var module: HpPartMod <- put in artillery/secondary controller/turret params
+var casemate: HpPartMod
+var bow: HpPartMod
+var stern: HpPartMod
+var superstructure: HpPartMod
+var hull: HpPartMod
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
@@ -73,18 +70,13 @@ static func size_mod(mass: float, caliber: float) -> float:
 	var size_ratio: float = (mass / maxf(caliber * caliber, 1.0)) / DMG_MOD_REF_SHIP_PER_CAL_SQ
 	return minf(remap(size_ratio, DMG_MOD_SMALL_RATIO, 1.0, DMG_MOD_SMALL, 1.0), 1.0)
 
+func parts() -> Array[HpPartMod]:
+	return [casemate, bow, stern, superstructure, hull]
+
 func _recalculate_healable_damage() -> void:
 	healable_damage = light_damage
-	if casemate:
-		healable_damage += casemate.healable_damage
-	if bow:
-		healable_damage += bow.healable_damage
-	if stern:
-		healable_damage += stern.healable_damage
-	if superstructure:
-		healable_damage += superstructure.healable_damage
-	if citadel:
-		healable_damage += citadel.healable_damage
+	for part in parts():
+		healable_damage += part.healable_damage
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
@@ -114,35 +106,6 @@ enum DAMAGE_LEVEL {
 	HEAVY,
 }
 
-func _generate_armor_parts():
-	if !Engine.is_editor_hint():
-		return
-
-	if !citadel:
-		citadel = HpPartMod.new()
-	var _ship: Ship = $"../.."
-	if _ship.ship_class == Ship.ShipClass.CA:
-		citadel.pool1 = _max_hp * 0.3
-	else:
-		citadel.pool1 = _max_hp  * 3.0
-	citadel.pool2 = _max_hp * 3.0
-	if !casemate:
-		casemate = HpPartMod.new()
-	casemate.pool1 = _max_hp * casemate_percent * POOL1_RATIO
-	casemate.pool2 = _max_hp * casemate_percent * POOL2_RATIO
-	if !bow:
-		bow = HpPartMod.new()
-	bow.pool1 = _max_hp * bow_percent * POOL1_RATIO
-	bow.pool2 = _max_hp * bow_percent * POOL2_RATIO
-	if !stern:
-		stern = HpPartMod.new()
-	stern.pool1 = _max_hp * stern_percent * POOL1_RATIO
-	stern.pool2 = _max_hp * stern_percent * POOL2_RATIO
-	if !superstructure:
-		superstructure = HpPartMod.new()
-	superstructure.pool1 = _max_hp * superstructure_percent * POOL1_RATIO
-	superstructure.pool2 = _max_hp * superstructure_percent * POOL2_RATIO
-
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
@@ -153,22 +116,18 @@ func _ready() -> void:
 	params = params.instantiate(ship) as HPParams
 	_current_hp = _max_hp
 
-	if citadel:
-		citadel = citadel.instantiate(ship) as HpPartMod
-		citadel.hp = self
-	if casemate:
-		casemate = casemate.instantiate(ship) as HpPartMod
-		casemate.hp = self
-	if bow:
-		bow = bow.instantiate(ship) as HpPartMod
-		bow.hp = self
-	if stern:
-		stern = stern.instantiate(ship) as HpPartMod
-		stern.hp = self
-	if superstructure:
-		superstructure = superstructure.instantiate(ship) as HpPartMod
-		superstructure.hp = self
+	casemate = HpPartMod.make(ship, _max_hp * casemate_percent)
+	bow = HpPartMod.make(ship, _max_hp * bow_percent)
+	stern = HpPartMod.make(ship, _max_hp * stern_percent)
+	superstructure = HpPartMod.make(ship, _max_hp * superstructure_percent)
+	hull = HpPartMod.make(ship, _max_hp * hull_percent)
+	for part in parts():
+		part.hp = self
 	_recalculate_healable_damage()
+
+func _part_damage(part: HpPartMod, dmg: float, repair_rate: float) -> float:
+	return part.apply_damage(dmg * SECTION_SHARE, repair_rate) \
+		+ hull.apply_damage(dmg * (1.0 - SECTION_SHARE), repair_rate)
 
 func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, damage_type: DAMAGE_TYPE, damage_level: DAMAGE_LEVEL, owner: Ship, shell_cal: float) -> Array:
 	if sunk:
@@ -214,17 +173,15 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		# Module hits have no hp_part to track healable; route applied damage to the
 		# ship-wide light_damage pool, same as the armor_part==null branch above.
 		light_damage += _dmg * repair_rate
-	elif armor_part.type == ArmorPart.Type.CITADEL:
-		_dmg = citadel.apply_damage(dmg, 0.5, repair_rate)
-	elif armor_part.hp_part != null: # handled by module
-		_dmg = armor_part.hp_part.apply_damage(dmg, 0.5, repair_rate)
+	elif !is_pen or armor_part.hp_part == null:
+		_dmg = dmg
+		light_damage += dmg * repair_rate
+	else:
+		_dmg = _part_damage(armor_part.hp_part, dmg, repair_rate)
 
 	if is_pen:
 		dmg = max(_dmg, base_dmg * 0.1)
 
-	# Spill = HP loss not absorbed by the armor part's pools (overpen floor, pool capped,
-	# or split overflow). It must follow the same repair_rate the hit used; otherwise a
-	# repair_rate of 1.0 would still produce unhealable damage when spill > 0.
 	var spill_healable_damage = max(dmg - _dmg, 0.0) * repair_rate
 	if spill_healable_damage > 0.0:
 		light_damage += spill_healable_damage
@@ -249,28 +206,21 @@ func heal(amount: float) -> float:
 		return 0.0
 	# ship.update_static_mods = true
 	amount /= params.p().mult
-	var casemate_dmg = self.casemate.healable_damage
-	var bow_dmg = self.bow.healable_damage
-	var stern_dmg = self.stern.healable_damage
-	var superstructure_dmg = self.superstructure.healable_damage
-	var citadel_dmg = self.citadel.healable_damage
-
-	var total = casemate_dmg + bow_dmg + stern_dmg + superstructure_dmg + citadel_dmg + light_damage
-	if total > 0.0001:
-		var ret = 0.0
-		ret += casemate.heal(amount * (casemate_dmg / total))
-		ret += bow.heal(amount * (bow_dmg / total))
-		ret += stern.heal(amount * (stern_dmg / total))
-		ret += superstructure.heal(amount * (superstructure_dmg / total))
-		ret += citadel.heal(amount * (citadel_dmg / total))
-		var light_heal = min(amount * (light_damage / total), light_damage)
-		ret += light_heal
-		light_damage -= light_heal
-		_recalculate_healable_damage()
-		_current_hp += ret
-		hp_changed.emit(_current_hp)
-		return ret * params.p().mult
-	return 0.0
+	var total: float = light_damage
+	for part in parts():
+		total += part.healable_damage
+	if total <= 0.0001:
+		return 0.0
+	var ret: float = 0.0
+	for part in parts():
+		ret += part.heal(amount * part.healable_damage / total)
+	var light_heal: float = minf(amount * light_damage / total, light_damage)
+	ret += light_heal
+	light_damage -= light_heal
+	_recalculate_healable_damage()
+	_current_hp += ret
+	hp_changed.emit(_current_hp)
+	return ret * params.p().mult
 
 # @rpc("any_peer", "reliable", "call_remote")
 func sink(damage_type: DAMAGE_TYPE, sinker: Ship):

@@ -6,7 +6,6 @@
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="3_lj70x"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_m6fp7"]
 [ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="4_ahn8k"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_qs287"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_ae8na"]
 [ext_resource type="PackedScene" uid="uid://pnbbid3q4h4n" path="res://assets/turrets/GER_240mm_2b_gerat85.tscn" id="5_ahn8k"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_qs287"]
@@ -38,31 +37,6 @@ script = ExtResource("3_m6fp7")
 pen_repair = 0.6
 torpedo_protection = 0.71
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
-
-[sub_resource type="Resource" id="Resource_ni6b4"]
-script = ExtResource("4_qs287")
-pool1 = 1605000.0
-pool2 = 1605000.0
-
-[sub_resource type="Resource" id="Resource_yebuv"]
-script = ExtResource("4_qs287")
-pool1 = 142666.66666666666
-pool2 = 285333.3333333333
-
-[sub_resource type="Resource" id="Resource_b7fic"]
-script = ExtResource("4_qs287")
-pool1 = 12483.333333333334
-pool2 = 24966.666666666668
-
-[sub_resource type="Resource" id="Resource_rhces"]
-script = ExtResource("4_qs287")
-pool1 = 12483.333333333334
-pool2 = 24966.666666666668
-
-[sub_resource type="Resource" id="Resource_ni6n4"]
-script = ExtResource("4_qs287")
-pool1 = 89166.66666666667
-pool2 = 178333.33333333334
 
 [sub_resource type="Resource" id="Resource_qxtxi"]
 script = ExtResource("5_qs287")
@@ -265,11 +239,6 @@ ship_model_glb_path = "uid://bcvs6o6pxlp70"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_pewsc")
 _max_hp = 535000.0
-citadel = SubResource("Resource_ni6b4")
-casemate = SubResource("Resource_yebuv")
-bow = SubResource("Resource_b7fic")
-stern = SubResource("Resource_rhces")
-superstructure = SubResource("Resource_ni6n4")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_qxtxi")

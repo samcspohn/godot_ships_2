@@ -7,6 +7,8 @@ use super::ShipNavigator;
 use crate::nav::map::NavigationMap;
 use crate::nav::types::{angle_difference, normalize_angle, throttle_to_speed_fraction, ArcPoint};
 
+const FOLLOW_DT: f32 = 0.5;
+
 pub(crate) struct Rollout {
     pub points: Vec<ArcPoint>,
     /// First time the hull is inside `limit`, INF when never.
@@ -41,6 +43,8 @@ impl ShipNavigator {
         let astern = follow_throttle < 0;
         let (hold_power, follow_power) = (throttle_to_speed_fraction(throttle), throttle_to_speed_fraction(follow_throttle));
         let emit = self.get_ship_clearance();
+        // Lateral slip relaxes over rudder_response_time; a coarser step overshoots it.
+        let follow_dt = FOLLOW_DT.min(0.5 * p.rudder_response_time).max(SIM_DT);
 
         let mut h = self.hull_now();
         let mut out = Rollout { points: vec![ArcPoint::new(h.pos, h.heading, h.speed(), 0.0)], hit_t: f32::INFINITY, veto_t: 0.0, min_sdf: f32::INFINITY, cost: f32::INFINITY, commit_t: horizon };
@@ -75,8 +79,9 @@ impl ShipNavigator {
             }
             let (r, pw) = if holding { (rudder, hold_power) } else { (rudder_to_heading(&h, p, bow, astern), follow_power) };
             let prev = h.pos;
-            h.step(p, r, pw, SIM_DT);
-            t += SIM_DT;
+            let dt = if holding { SIM_DT } else { follow_dt };
+            h.step(p, r, pw, dt);
+            t += dt;
             travelled += h.pos.distance_to(prev);
 
             let sdf = map.map_or(f32::INFINITY, |m| m.get_distance_impl(h.pos.x, h.pos.y));

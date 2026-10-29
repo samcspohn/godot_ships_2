@@ -306,15 +306,14 @@ func _saturation_test() -> void:
 	_say("")
 	_say("%s vs %s, %.0fmm AP %.0f dmg" % [_shooter.scene_file_path.get_file(),
 		_target.scene_file_path.get_file(), ap.caliber, ap.damage])
-	_say("section pools: bow %.0f+%.0f  casemate %.0f+%.0f  super %.0f+%.0f  (max hp %.0f)" % [
-		hp.bow.pool1, hp.bow.pool2, hp.casemate.pool1, hp.casemate.pool2,
-		hp.superstructure.pool1, hp.superstructure.pool2, hp.max_hp])
+	_say("section pools: bow %.0f  casemate %.0f  super %.0f  hull %.0f  (max hp %.0f)" % [
+		hp.bow.pool, hp.casemate.pool, hp.superstructure.pool, hp.hull.pool, hp.max_hp])
 
 	var stages := [
 		["fresh", []],
-		["bow pool1 spent (saturated)", [["bow", 1]]],
-		["bow spent (destroyed)", [["bow", 1], ["bow", 2]]],
-		["bow + casemate spent", [["bow", 1], ["bow", 2], ["casemate", 1], ["casemate", 2]]],
+		["bow spent (saturated)", ["bow"]],
+		["bow + hull spent", ["bow", "hull"]],
+		["bow + casemate + hull spent", ["bow", "casemate", "hull"]],
 	]
 	# Scan for the geometries this pair actually aims at the bow from, so the
 	# stages below exercise the case the modifier exists for.
@@ -344,7 +343,7 @@ func _saturation_test() -> void:
 		for stage in stages:
 			_restore_pools(hp)
 			for drain in (stage[1] as Array):
-				_drain_pool(hp, String(drain[0]), int(drain[1]))
+				_drain_pool(hp, String(drain))
 			G.clear_all()
 			_place(pr[0], pr[1])
 			var sol: Dictionary = G.solve(_shooter, _target)
@@ -356,11 +355,10 @@ func _saturation_test() -> void:
 		_restore_pools(hp)
 
 	_say("")
-	_say("AP payout by section, fresh vs bow destroyed (fraction of shell damage):")
+	_say("AP payout by section, fresh vs bow saturated (fraction of shell damage):")
 	_restore_pools(hp)
 	var fresh: PackedFloat64Array = G._payouts(_target, ap.damage)
-	_drain_pool(hp, "bow", 1)
-	_drain_pool(hp, "bow", 2)
+	_drain_pool(hp, "bow")
 	var spent: PackedFloat64Array = G._payouts(_target, ap.damage)
 	_restore_pools(hp)
 	_say("  %-14s %-8s %-8s %-8s" % ["section", "pen", "citadel", "overpen"])
@@ -378,20 +376,14 @@ func _saturation_test() -> void:
 
 
 func _restore_pools(hp: HPManager) -> void:
-	for part in [hp.bow, hp.stern, hp.casemate, hp.superstructure, hp.citadel]:
-		if part != null:
-			part.current_pool1 = part.pool1
-			part.current_pool2 = part.pool2
+	for part in hp.parts():
+		part.current_pool = part.pool
 
 
-func _drain_pool(hp: HPManager, name: String, pool: int) -> void:
+func _drain_pool(hp: HPManager, name: String) -> void:
 	var part: HpPartMod = hp.get(name)
-	if part == null:
-		return
-	if pool == 1:
-		part.current_pool1 = 0.0
-	else:
-		part.current_pool2 = 0.0
+	if part != null:
+		part.current_pool = 0.0
 
 
 ## The section and result the solver's chosen aim point actually lands on, read

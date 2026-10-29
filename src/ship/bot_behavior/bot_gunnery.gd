@@ -32,14 +32,14 @@ const CELL_SECTION_MASK: int = 0xE0
 const FLAG_CITADEL: int = 0x01
 const FLAG_TURRET: int = 0x02
 
-## HP sections, indexed by ArmorPart.Type: which of HPManager's pool pairs a
+## HP sections, indexed by ArmorPart.Type: which of HPManager's part pools a
 ## hit's damage is drawn from. A cell's byte carries the section of the part the
 ## shell ends in, which is the part HPManager.apply_damage is handed.
 const SECTION_COUNT: int = 6
 const SEC_MODULE: int = 0
 const SEC_CITADEL: int = 1
 
-## What a penetration still does once its section's pools are spent:
+## What a penetration still does once its section and the hull are spent:
 ## HPManager's `max(_dmg, base_dmg * 0.1)` floor.
 const SATURATED_FLOOR: float = 0.1
 
@@ -426,19 +426,12 @@ static func _is_pen_result(code: int) -> bool:
 		or code == NativeArmorInteraction.CITADEL_OVERPEN
 
 
-## What a section can still absorb: (pool1, pool2) remaining.
-##
-## A section is a 1/3 + 2/3 pool pair that every hit splits evenly across
-## (HpPartMod.apply_damage), so the small pool empties first and the section
-## then absorbs half of what it used to - the "saturated" state - before
-## running out entirely.
-##
-## MODULE hits never reach a pool: HPManager caps them at 10% of base and routes
-## them to the ship-wide light pool. The citadel is treated as bottomless, since
-## a citadel is always worth full damage.
+## What a section can still absorb: (section, hull) remaining. MODULE hits never
+## reach a pool: HPManager caps them at 10% of base and routes them to light damage.
+## Citadels have no pool and always pay full.
 static func _section_pools(target: Ship, section: int) -> Vector2:
 	var hp = target.health_controller
-	if hp == null or section == SEC_MODULE or section == SEC_CITADEL:
+	if hp == null or hp.hull == null or section == SEC_MODULE or section == SEC_CITADEL:
 		return Vector2(INF, INF)
 	var part: HpPartMod = null
 	match section:
@@ -448,7 +441,7 @@ static func _section_pools(target: Ship, section: int) -> Vector2:
 		int(ArmorPart.Type.SUPERSTRUCTURE): part = hp.superstructure
 	if part == null:
 		return Vector2(INF, INF)
-	return Vector2(maxf(part.current_pool1, 0.0), maxf(part.current_pool2, 0.0))
+	return Vector2(maxf(part.current_pool, 0.0), maxf(hp.hull.current_pool, 0.0))
 
 
 ## Payout per (section, result), section-major, as the native kernel indexes it.
@@ -478,7 +471,8 @@ static func _payouts(target: Ship, shell_damage: float) -> PackedFloat64Array:
 				value = SATURATED_FLOOR
 			elif _is_pen_result(code) and shell_damage > 0.0:
 				var d: float = frac * shell_damage
-				var absorbed: float = minf(pools.x, d * 0.5) + minf(pools.y, d * 0.5)
+				var absorbed: float = minf(pools.x, d * HPManager.SECTION_SHARE) \
+					+ minf(pools.y, d * (1.0 - HPManager.SECTION_SHARE))
 				value = maxf(absorbed / shell_damage, SATURATED_FLOOR)
 			out[section * 16 + code] = value
 	return out
@@ -492,13 +486,11 @@ static func _saturation_sig(target: Ship) -> int:
 	if hp == null:
 		return 0
 	var sig: int = 0
-	for part in [hp.casemate, hp.bow, hp.stern, hp.superstructure]:
+	for part in hp.parts():
 		if part == null:
 			continue
 		sig = sig * (SATURATION_STEPS + 1) + clampi(
-			int(SATURATION_STEPS * part.current_pool1 / maxf(part.pool1, 1.0)), 0, SATURATION_STEPS)
-		sig = sig * (SATURATION_STEPS + 1) + clampi(
-			int(SATURATION_STEPS * part.current_pool2 / maxf(part.pool2, 1.0)), 0, SATURATION_STEPS)
+			int(SATURATION_STEPS * part.current_pool / maxf(part.pool, 1.0)), 0, SATURATION_STEPS)
 	var fm = target.fire_manager
 	if fm != null:
 		for f in fm.fires:

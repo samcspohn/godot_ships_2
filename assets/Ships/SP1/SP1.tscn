@@ -4,7 +4,6 @@
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_62bm0"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="3_rk6eg"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_xqdg0"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_klw4b"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="4_smt5x"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="5_rk6eg"]
 [ext_resource type="PackedScene" uid="uid://d4mxymjiltp2p" path="res://assets/turrets/GER_105mm_2b.tscn" id="6_8hv6v"]
@@ -45,35 +44,8 @@ light_repair = 0.98
 torpedo_protection = 0.08
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_uxi1d"]
-script = ExtResource("4_klw4b")
-pool1 = 75000.0
-pool2 = 75000.0
-
-[sub_resource type="Resource" id="Resource_vafbj"]
-script = ExtResource("4_klw4b")
-pool1 = 3000.0
-pool2 = 12000.0
-
-[sub_resource type="Resource" id="Resource_yrvno"]
-script = ExtResource("4_klw4b")
-pool1 = 500.0
-pool2 = 2000.0
-
-[sub_resource type="Resource" id="Resource_js85v"]
-script = ExtResource("4_klw4b")
-pool1 = 500.0
-pool2 = 2000.0
-
-[sub_resource type="Resource" id="Resource_a02lg"]
-script = ExtResource("4_klw4b")
-pool1 = 2000.0
-pool2 = 8000.0
-
 [sub_resource type="Resource" id="Resource_3xcad"]
 script = ExtResource("3_rk6eg")
-radius = 6000.0
-air_radius = 3000.0
 bloom_duration = 12.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
@@ -268,11 +240,6 @@ ship_model_glb_path = "uid://b6pesrya5x88t"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_cdljw")
 _max_hp = 25000.0
-citadel = SubResource("Resource_uxi1d")
-casemate = SubResource("Resource_vafbj")
-bow = SubResource("Resource_yrvno")
-stern = SubResource("Resource_js85v")
-superstructure = SubResource("Resource_a02lg")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_3xcad")

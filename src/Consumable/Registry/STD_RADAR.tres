@@ -6,6 +6,7 @@
 
 [resource]
 script = ExtResource("1_j7v5u")
+spotting_range = 7000.0
 name = "standard radar"
 icon = ExtResource("2_wnres")
 disabled_icon = ExtResource("1_ka1ce")

@@ -83,6 +83,24 @@ pub mod path_fail_reason {
     pub const NO_ROUTE_BLIND: i32 = 5;
 }
 
+/// A scored plan replayed on later updates while the ship sails it as predicted.
+#[derive(Clone, Copy)]
+pub(crate) struct SteerCache {
+    pub choice: SteeringChoice,
+    pub at: f32,
+    pub commit_t: f32,
+    pub aim: Option<Vector2>,
+    pub follow_throttle: i32,
+    pub desired_throttle: i32,
+    pub wp: Vector2,
+    pub target: Vector2,
+    pub target_heading: f32,
+    pub hold_radius: f32,
+    pub heading_weight: f32,
+    pub prefer_reverse: bool,
+    pub forbid_reverse: bool,
+}
+
 /// What replays need to re-simulate winning_arc: start rudder/speed/drift, then the
 /// arc's commanded rudder and throttle until turn_t, then straight until end_t.
 #[derive(Clone, Copy, Default)]
@@ -251,6 +269,9 @@ pub struct ShipNavigator {
     pub(crate) dodge_commitment_timer: f32,
     /// Heading-change side of a big turn in progress (+1 raises heading), 0 none.
     pub(crate) turn_latch: f32,
+    pub(crate) steer_cache: Option<SteerCache>,
+    /// Seconds of update() deltas, for steer_cache age.
+    pub(crate) steer_clock: f32,
     /// Seconds the engine order keeps its direction after reversing.
     pub(crate) engine_commit_timer: f32,
     /// True on the last `select_best_steering` when a torpedo threatened at
@@ -372,6 +393,8 @@ impl IRefCounted for ShipNavigator {
             dodge_committed_rudder: 0.0,
             dodge_commitment_timer: 0.0,
             turn_latch: 0.0,
+            steer_cache: None,
+            steer_clock: 0.0,
             engine_commit_timer: 0.0,
             torpedo_override_active: false,
             threat_registry: None,

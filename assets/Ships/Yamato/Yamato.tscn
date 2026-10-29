@@ -7,7 +7,6 @@
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="4_073m0"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="4_swscg"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="5_oixol"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="5_p50sc"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="6_p50sc"]
 [ext_resource type="PackedScene" uid="uid://b2dlkknny86q5" path="res://assets/turrets/IJN_460mm_3b_type94.tscn" id="7_073m0"]
 [ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="7_ql1xb"]
@@ -44,35 +43,10 @@ citadel_repair = 0.2
 torpedo_protection = 0.51
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_wckrl"]
-script = ExtResource("5_p50sc")
-pool1 = 291600.0
-pool2 = 291600.0
-
-[sub_resource type="Resource" id="Resource_u3en7"]
-script = ExtResource("5_p50sc")
-pool1 = 15552.0
-pool2 = 62208.0
-
-[sub_resource type="Resource" id="Resource_kv3r5"]
-script = ExtResource("5_p50sc")
-pool1 = 1944.0
-pool2 = 7776.0
-
-[sub_resource type="Resource" id="Resource_euctv"]
-script = ExtResource("5_p50sc")
-pool1 = 1944.0
-pool2 = 7776.0
-
-[sub_resource type="Resource" id="Resource_hcnip"]
-script = ExtResource("5_p50sc")
-pool1 = 9720.0
-pool2 = 38880.0
-
 [sub_resource type="Resource" id="Resource_eppy3"]
 script = ExtResource("6_p50sc")
-radius = 13000.0
-air_radius = 6500.0
+radius = 12000.0
+air_radius = 6000.0
 bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
@@ -272,11 +246,6 @@ ship_model_glb_path = "uid://cuxnkbgacr6mr"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_y3atb")
 _max_hp = 97200.0
-citadel = SubResource("Resource_wckrl")
-casemate = SubResource("Resource_u3en7")
-bow = SubResource("Resource_kv3r5")
-stern = SubResource("Resource_euctv")
-superstructure = SubResource("Resource_hcnip")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_eppy3")

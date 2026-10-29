@@ -14,6 +14,7 @@ use crate::nav::types::{
 impl ShipNavigator {
     pub(crate) fn update(&mut self, delta: f32) {
         let t0 = Instant::now();
+        self.steer_clock += delta;
 
         if self.path_fail_warn_cooldown > 0.0 {
             self.path_fail_warn_cooldown = (self.path_fail_warn_cooldown - delta).max(0.0);

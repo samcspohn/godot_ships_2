@@ -4,7 +4,6 @@
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_x3pwv"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_8soek"]
 [ext_resource type="PackedScene" uid="uid://crqcxtlvo2tif" path="res://assets/turrets/IJN_127mm_2b_3rd_yr.tscn" id="3_l33cj"]
-[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="3_pxp4h"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_o13ib"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_o13ib"]
 [ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_dujys"]
@@ -41,36 +40,6 @@ citadel_repair = 0.6
 pen_repair = 0.8
 light_repair = 0.98
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
-
-[sub_resource type="Resource" id="Resource_4n5yk"]
-script = ExtResource("3_pxp4h")
-pool1 = 45300.0
-pool2 = 45300.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_mrsjx"]
-script = ExtResource("3_pxp4h")
-pool1 = 1812.0
-pool2 = 7248.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_ldxem"]
-script = ExtResource("3_pxp4h")
-pool1 = 755.0
-pool2 = 3020.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_xci8g"]
-script = ExtResource("3_pxp4h")
-pool1 = 755.0
-pool2 = 3020.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_vwm28"]
-script = ExtResource("3_pxp4h")
-pool1 = 1208.0
-pool2 = 4832.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e6iqp"]
 script = ExtResource("4_o13ib")
@@ -210,13 +179,6 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_v7rh5")
 _max_hp = 15100.0
-bow_percent = 0.25
-stern_percent = 0.25
-citadel = SubResource("Resource_4n5yk")
-casemate = SubResource("Resource_mrsjx")
-bow = SubResource("Resource_ldxem")
-stern = SubResource("Resource_xci8g")
-superstructure = SubResource("Resource_vwm28")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_e6iqp")
