@@ -36,6 +36,8 @@ var _shown_at: float = -INF
 const EASE_GAIN_MPS := 1.0
 ## A goal moving less than this is the same destination.
 const EASE_SAME_M := 50.0
+## Resuming with the eased point this far behind us restarts it from the hull.
+const EASE_BEHIND_M := 200.0
 var _goal := Vector2.INF
 var _goal_since: float = -INF
 ## The route the eased point walks, built from it when the goal moves; _path_i is the next waypoint.
@@ -68,11 +70,11 @@ func snap_to(p: Vector3) -> void:
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var intent := _choose(ctx, params)
+	if intent == null:
+		return null
 	var now: float = SimClock.now()
 	var dt: float = now - _shown_at
 	_shown_at = now
-	if intent == null:
-		return null
 	var goal := Vector2(intent.target_position.x, intent.target_position.z)
 	if not _goal.is_finite() or _goal.distance_to(goal) > EASE_SAME_M:
 		_goal_since = now
@@ -80,7 +82,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var speed: float = ctx.ship.movement_controller.max_speed + EASE_GAIN_MPS * (now - _goal_since)
 	# Resuming from a cover or kite leg behind us: ease from the hull, never sail back to it.
 	var here := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
-	if _shown.is_finite() and (_shown - here).dot(goal - here) < 0.0:
+	if _shown.is_finite() and (_shown - here).dot((goal - here).normalized()) < -EASE_BEHIND_M:
 		_shown = here
 		_path_goal = Vector2.INF
 	if not _shown.is_finite() or dt > EASE_GAP_S:
@@ -89,7 +91,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if not _path_goal.is_finite() or _path_goal.distance_to(goal) > EASE_SAME_M:
 			_path = NavigationMapManager.find_path(Vector3(_shown.x, 0.0, _shown.y), Vector3(goal.x, 0.0, goal.y),
 				ctx.behavior._get_ship_clearance())
-			_path_i = 0
+			# path[0] is the start snapped to the grid, possibly behind us.
+			_path_i = 1
 			_path_goal = goal
 		_walk(goal, speed * maxf(dt, 0.0))
 	if _shown.distance_to(goal) > 1.0:
@@ -112,6 +115,9 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var only: int = int(params.get("only", -1))
 	if only >= 0:
 		return _run(ctx, only, params)
+	var kept := _keep_mode(ctx, params)
+	if kept != null:
+		return kept
 	if bool(params.get("prefer_cover", false)):
 		var held := _run(ctx, Mode.COVER, _checkpoint(ctx, advance_cover_params(ctx)))
 		if held != null:
@@ -141,6 +147,32 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if held != null:
 			return held
 	return _close_in(ctx, params)
+
+## SPOT, a fallback, is held at least this long once taken.
+const SPOT_MIN_S := 10.0
+var _mode_since: float = -INF
+
+## The current mode again while its station still works: STATION while it passes _choose's
+## open-water test, COVER while it keeps its station, SPOT for SPOT_MIN_S.
+func _keep_mode(ctx: SkillContext, params: Dictionary) -> NavIntent:
+	if not current().has_station():
+		return null
+	match mode:
+		Mode.STATION:
+			var threat: float = ctx.behavior.get_threat_score(ctx)
+			if station.resting() or bool(params.get("presumed", false)):
+				return null
+			var intent := _run(ctx, Mode.STATION, params)
+			if intent != null and not station.doomed() \
+					and (threat < BotBehavior.DISENGAGE_THREAT or station.station_threat() < BotBehavior.DISENGAGE_THREAT):
+				return intent
+		Mode.COVER:
+			var p := advance_cover_params(ctx)
+			return _run(ctx, Mode.COVER, _checkpoint(ctx, p) if bool(params.get("prefer_cover", false)) else p)
+		Mode.SPOT:
+			if SimClock.now() - _mode_since < SPOT_MIN_S:
+				return _run(ctx, Mode.SPOT, {})
+	return null
 
 ## Fight where the enemy is presumed to be, else close on our priority.
 func _close_in(ctx: SkillContext, params: Dictionary) -> NavIntent:
@@ -210,11 +242,24 @@ func _checkpoint(ctx: SkillContext, p: Dictionary) -> Dictionary:
 				cover.reset()
 	return p.merged({"near_d": minf(float(p.near_d), _checkpoint_d)})
 
+## STATION and COVER hand their station to each other on a switch, so a covered fight
+## station or a cover with a fight stays put. Kept this long for a switch back.
+const HANDOFF_TTL_S := 10.0
+var _handoff := Vector2.INF
+var _handoff_at: float = -INF
+
 ## Runs one search, resetting the last on a switch so its claim and station go.
 func _run(ctx: SkillContext, m: int, params: Dictionary) -> NavIntent:
 	if m != mode:
-		current().reset()
+		var old := current()
+		if mode != Mode.SPOT and old.has_station():
+			_handoff = Vector2(old.station_position().x, old.station_position().z)
+			_handoff_at = SimClock.now()
+		old.reset()
 		mode = m
+		_mode_since = SimClock.now()
+		if m != Mode.SPOT and SimClock.now() - _handoff_at <= HANDOFF_TTL_S:
+			current().carry = _handoff
 	var pos := current()
 	pos.seed = fresh_seed()
 	var intent := pos.execute(ctx, params)

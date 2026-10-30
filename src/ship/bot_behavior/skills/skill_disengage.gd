@@ -2,8 +2,8 @@ class_name SkillDisengage
 extends BotSkill
 
 ## Getting out: the nearest safe cell SkillCover DEFENSE finds within CONE of
-## the threat axis, toward or away (only away once the bow points away), behind an island or,
-## while going dark still works, in dark water; else a fighting retreat on the
+## the threat axis, toward or away (only away once the bow points away), behind an island or
+## shielded; dark water only without one, while going dark still works; else a fighting retreat on the
 ## angled away-heading. Stance decides whether the hull turns or backs out.
 ## Params: cant_go_dark, toward (the toward cone turns onto it, at most CONE off the threat axis), ahead_only (no away cone).
 
@@ -73,7 +73,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# The cone on the threat axis picks where to go, not where the last station was headed.
 	_cover.seed = Vector2.INF
 	var dive := _cover.execute(ctx, {"mode": SkillCover.Mode.DEFENSE, "fire_en_route": cant_go_dark,
-		"allow_dark": not cant_go_dark, "cone_axis": cone, "cone_half": CONE, "away_ratio": away_ratio})
+		"allow_dark": not cant_go_dark, "dark_last": true, "cone_axis": cone, "cone_half": CONE, "away_ratio": away_ratio})
 	var was := leg
 	if dive != null:
 		leg = Leg.DARK if _cover.is_dark() else Leg.COVER

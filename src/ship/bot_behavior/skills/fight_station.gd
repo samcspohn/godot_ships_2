@@ -36,8 +36,10 @@ const MARCH_CROSSFIRE := 1.0
 ## What reaching each of the top priorities is worth, in order; any other lit enemy.
 const MARCH_PRIORITY_COUNT := 4
 const MARCH_OTHER_VALUE := 0.3
-## A cell gives up this share of the held station's net value per km from the last station.
+## A cell gives up this share of the held station's net value per km of route from the last station,
+## each metre weighted by ROUTE_W: (seen by a free enemy, hidden, hidden with a target in reach).
 const MOVE_COST_PER_KM := 0.1
+const ROUTE_W := Vector3(3.0, 0.4, 0.2)
 const MOVE_COST_FLOOR := 0.002
 ## A chase cell counts this many metres nearer its target per metre from the last station.
 const CHASE_ANCHOR_W := 0.5
@@ -106,8 +108,14 @@ var _harm_price: float = 1.0
 var _horizon: float = 0.0
 var _cells: int = 0
 
+## Why the last station went, and the params of the last search: tags for DestChurn's fight_jump.
+var _lost := "start"
+var _sig := ""
+var _params_moved := false
+
 func reset() -> void:
 	super()
+	_lost = "reset"
 	_held = {}
 	_chasing = false
 	_route_hp = 0.0
@@ -137,6 +145,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	var gun_range: float = float(g.range)
 	_presumed = bool(params.get("presumed", false))
+	var sig := "%s|%s|%s|%s" % [params.get("band_m", ""), params.get("desired_range", ""), _presumed, params.get("away", false)]
+	_params_moved = _params_moved or (sig != _sig and _sig != "")
+	_sig = sig
 	var pos := PackedVector2Array()
 	var band := PackedFloat32Array()
 	var reach := PackedFloat32Array()
@@ -180,7 +191,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if _has_station and _chasing and (_route_hp >= SURVIVE_SHARE or not _chase_to.is_finite()
 			or here.distance_to(_chase_to) - Vector2(_station.x, _station.z).distance_to(_chase_to) < CHASE_MIN_PROGRESS_M):
 		_chase_failed_at = SimClock.now()
-		return _decline()
+		_decline()
+		_lost = "chase_fail"
+		return null
 	if not _has_station:
 		return null
 	opts.shootable = _union(prio, live)
@@ -197,8 +210,17 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 		prio: PackedByteArray, live: PackedByteArray, belief: Array[Dictionary]) -> void:
 	var mo := _march_opts(ctx, belief, live, rings)
 	_prio_lit = _ids_in(belief, _bits(prio)).size()
+	if not _has_station and carry.is_finite():
+		var ok: bool = bool(vis.fight_eval(carry, pos, mo).ok)
+		DestChurn.handoff("to_station", "kept" if ok else "fight_eval_fail")
+		if ok:
+			_chasing = false
+			_adopt(Vector3(carry.x, 0.0, carry.y), 0.0, {})
+			_marched_ms = -100000
+	carry = Vector2.INF
 	if _has_station and not _chasing and not bool(vis.fight_eval(Vector2(_station.x, _station.z), pos, mo).ok):
 		_drop()
+		_lost = "eval"
 	var now_ms: int = SimClock.now_ms()
 	if _has_station and now_ms - _marched_ms < MARCH_MS:
 		return
@@ -235,6 +257,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	var p: Vector2 = r.pos
 	if bool(r.chase):
 		if not holding:
+			_tag_jump(p, "chase_" + ("re" if _chasing else _lost))
 			_chasing = true
 			_chase_to = r.get("chase_to", Vector2.INF)
 			_target = null
@@ -243,6 +266,8 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	var held: float = float(r.held_score) if holding and bool(r.held_ok) else -INF
 	if holding and float(r.score) <= held + maxf(MARCH_SWITCH_ABS, absf(held) * MARCH_SWITCH_REL):
 		return
+	_tag_jump(p, ("beat" if bool(r.held_ok) else "held_not_ok") if holding else ("from_chase" if _chasing else "fresh_" + _lost))
+	_lost = "held"
 	_chasing = false
 	if bool(r.get("checkpoint", false)):
 		_checkpoints += 1
@@ -355,7 +380,7 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		"front": front, "front_hp": front_hp, "focus": MARCH_FOCUS, "crossfire": MARCH_CROSSFIRE, "ring": rings, "walk_r": walk_r,
 		"chase_ring": chase_ring, "window_m": WINDOW_M, "speed": ship.movement_controller.max_speed,
 		"dark": not ship.visible_to_enemy, "anchor": _anchor_for(ship), "chase_anchor_w": CHASE_ANCHOR_W,
-		"move_cost": MOVE_COST_PER_KM / 1000.0 * maxf(_march_score, MOVE_COST_FLOOR),
+		"move_cost": MOVE_COST_PER_KM / 1000.0 * maxf(_march_score, MOVE_COST_FLOOR), "route_w": ROUTE_W,
 		"walk_slack": WALK_SLACK_M,
 		"claims": _other_claims(ship.team.team_id, ship.get_instance_id(), SimClock.now_ms()), "claim_r": SPACING_M,
 		"claim_cost": SPACING_COST * maxf(_march_score, MOVE_COST_FLOOR),
@@ -489,7 +514,14 @@ static func _ids_in(belief: Array[Dictionary], mask: int) -> Dictionary:
 
 func _decline() -> NavIntent:
 	_drop()
+	_lost = "decline"
 	return null
+
+func _tag_jump(p: Vector2, why: String) -> void:
+	DestChurn.handoff("fight_adopt", "all")
+	if _last_adopted.is_finite() and _last_adopted.distance_to(p) > DestChurn.JUMP_M:
+		DestChurn.handoff("fight_jump", why + ("+params" if _params_moved else ""))
+	_params_moved = false
 
 ## How close to fight `e`, believed `at`: an explicit band_m or desired_range, else the ship's own ring for it.
 static func radius_for(ctx: SkillContext, e: Ship, at: Vector2, params: Dictionary) -> float:

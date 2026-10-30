@@ -90,6 +90,8 @@ static func draw(s: Dictionary, team: Dictionary, w: World) -> void:
 	if s.dis_text != "":
 		Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), s.dis_text, Color(1.0, 0.8, 1.0), 14)
 	Debug.draw_label(ship_pos + Vector3(0.0, 160.0, 0.0), s.stance_text, Color(1.0, 1.0, 0.6), 14)
+	if s.get("dials", "") != "":
+		Debug.draw_label(ship_pos + Vector3(0.0, 200.0, 0.0), s.dials, Color(0.6, 1.0, 1.0), 14)
 	for trail in s.trails:
 		var pts: PackedVector2Array = trail.pts
 		var n: PackedInt32Array = trail.n

@@ -5,7 +5,7 @@
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_q1kic"]
 [ext_resource type="PackedScene" uid="uid://vy30mcxy1oat" path="res://assets/turrets/AMER_203mm_3b_auto.tscn" id="3_6vusf"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_s7tx1"]
-[ext_resource type="PackedScene" uid="uid://brjx836dkpsi3" path="res://assets/turrets/AMER_127mm_2b.tscn" id="4_4rujh"]
+[ext_resource type="PackedScene" uid="uid://celhxu25dgc5h" path="res://assets/turrets/AMER_127mm_2b.tscn" id="4_4rujh"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_seiyl"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_jjc8t"]
 [ext_resource type="Resource" uid="uid://bgyjeju48t7qa" path="res://src/artillary/CA_disp.tres" id="6_40mw7"]
@@ -80,7 +80,7 @@ shell2 = SubResource("Resource_yupck")
 dispersion = ExtResource("6_40mw7")
 reload_time = 6.0
 traverse_speed = 6.0
-_range = 13000.0
+_range = 12500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_mvdm"]

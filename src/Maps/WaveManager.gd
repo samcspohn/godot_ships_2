@@ -39,7 +39,7 @@ const STERN_FOAM_AT := 0.7       # stern ribbon origin aft of centre, in half-le
 const FULL_FOAM_SPEED := 28.0    # m/s (~27 kn at 2x speed)
 const TELEPORT_SPEED := 150.0    # m/s; faster frame-to-frame motion is a reposition, not sailing
 const BOW_GAIN := 0.1            # stem hump as a fraction of U^2/2g
-const HULL_GAIN := 0.25           # hull pressure as metres of head, per metre of draft
+const HULL_GAIN := 0.17           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
 const MAX_RINGS := 64           # keep in sync with rings[] / ring_hulls[] in ocean.gdshader

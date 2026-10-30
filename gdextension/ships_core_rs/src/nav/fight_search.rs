@@ -34,10 +34,12 @@ pub(crate) struct FightArgs {
     pub speed: f32,
     /// Unseen now: the route costs only where it would be seen.
     pub dark: bool,
-    /// The last station: a cell scores `move_cost` less per metre from it, a
-    /// chase cell counts `chase_anchor_w` metres per metre from it.
+    /// The last station: a cell scores `move_cost` less per weighted metre of water route from it, a
+    /// chase cell counts `chase_anchor_w` straight metres per metre from it.
     pub anchor: Vector2,
     pub move_cost: f32,
+    /// Route weight per metre through cells some free heavy enemy sees, hidden ones, and hidden ones our guns reach a target from.
+    pub route_w: Vector3,
     pub chase_anchor_w: f32,
     /// A new station lies no more than `walk_slack` behind `walk_from` along
     /// `walk_axis` (zero: any way), and every station's offset from
@@ -86,6 +88,7 @@ impl FightArgs {
             dark: o.get("dark").is_some_and(|v| v.to::<bool>()),
             anchor: o.get("anchor").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
             move_cost: f("move_cost", 0.0),
+            route_w: o.get("route_w").and_then(|v| v.try_to::<Vector3>().ok()).unwrap_or(Vector3::ONE),
             chase_anchor_w: f("chase_anchor_w", 0.0),
             walk_axis: o.get("walk_axis").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
             walk_from: o.get("walk_from").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
@@ -181,6 +184,17 @@ pub(crate) fn exposure(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &Fight
     let spread = (shooter_arc(&mut bearings[..nb]) - CROSSFIRE_FREE) / (CROSSFIRE_FULL - CROSSFIRE_FREE);
     (harm * (1.0 + a.focus * (shooters - 1.0).max(0.0)) * (1.0 + a.crossfire * spread.clamp(0.0, 1.0)), seen)
 }
+
+/// route_field's costs to the cells it settled, and how many it settled.
+#[derive(Default)]
+pub(crate) struct RouteField {
+    /// Per water cell, INF where not settled; empty for no field.
+    pub cost: Vec<f32>,
+    pub settled: usize,
+}
+
+/// route_field searches out to this many times the farthest target's straight distance.
+const ROUTE_REACH: f32 = 1.2;
 
 /// A checkpoint must gain this much toward the goal.
 const CHECKPOINT_MIN_M: f32 = 500.0;
@@ -294,13 +308,89 @@ impl VisibilityGrid {
         if a.anchor.is_finite() { self.centres[k].distance_to(a.anchor) } else { 0.0 }
     }
 
-    /// What a station at `k` gives up for leaving the anchor and crowding team-mates.
-    fn penalty(&self, k: usize, a: &FightArgs) -> f32 {
+    /// What a station at `k` gives up for the route from the anchor and for crowding team-mates.
+    fn penalty(&self, k: usize, a: &FightArgs, route: &RouteField) -> f32 {
         let p = self.centres[k];
         let crowd: f32 = if a.claim_r > 0.0 {
             a.claims.iter().map(|c| (1.0 - p.distance_to(*c) / a.claim_r).max(0.0)).sum()
         } else { 0.0 };
-        a.move_cost * self.off_anchor(k, a) + a.claim_cost * crowd
+        let moved = route.cost.get(k).copied().filter(|c| c.is_finite()).unwrap_or(self.off_anchor(k, a) * a.route_w.x);
+        a.move_cost * moved + a.claim_cost * crowd
+    }
+
+    /// Shoot-over from answers the reach planes already hold, so the route traces no rays.
+    fn route_weight(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> f32 {
+        if !self.hidden_from_free(k, inp, a) {
+            return a.route_w.x;
+        }
+        let shootable = inp.enemies.iter().take(64).enumerate().fold(0u64, |m, (i, e)| m | ((e.shootable as u64) << i));
+        let reach = inp.reach.as_ref().map_or(0, |r| r.mask_cached(self.centres[k]));
+        if reach & shootable != 0 { a.route_w.z } else { a.route_w.y }
+    }
+
+    /// Weighted metres through water at our clearance from `origin` to each of `targets`,
+    /// stopping once all are settled (with `reach_m`, to every cell within it); a target with no route is left out.
+    pub(crate) fn route_field(&self, origin: Vector2, targets: &[usize], reach_m: Option<f32>, inp: &SpotInputs, a: &FightArgs) -> RouteField {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let mut out = RouteField::default();
+        let (ox, oz) = self.grid_of(origin);
+        let Some(start) = self.water(ox, oz) else { return out };
+        let n_cells = self.centres.len();
+        out.cost = vec![f32::INFINITY; n_cells];
+        let mut want = vec![false; n_cells];
+        let mut left = 0usize;
+        for &k in targets {
+            if !want[k] {
+                want[k] = true;
+                left += 1;
+            }
+        }
+        let reach = reach_m.unwrap_or_else(|| targets.iter().map(|&k| self.centres[k].distance_to(origin)).fold(0.0f32, f32::max) * ROUTE_REACH)
+            + 2.0 * self.cell;
+        let mut dist = vec![f32::INFINITY; n_cells];
+        let mut weight = vec![f32::NAN; n_cells];
+        let mut heap = BinaryHeap::new();
+        dist[start] = 0.0;
+        heap.push(Reverse((0u32, start)));
+        while let Some(Reverse((bits, k))) = heap.pop() {
+            let d = f32::from_bits(bits);
+            if d > dist[k] {
+                continue;
+            }
+            out.settled += 1;
+            if reach_m.is_some() || want[k] {
+                out.cost[k] = d;
+                if want[k] {
+                    want[k] = false;
+                    left -= 1;
+                    if left == 0 && reach_m.is_none() {
+                        break;
+                    }
+                }
+            }
+            if weight[k].is_nan() {
+                weight[k] = self.route_weight(k, inp, a);
+            }
+            let wk = weight[k];
+            let (ix, iz) = self.grid_of(self.centres[k]);
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let Some(n) = self.water(ix + dx, iz + dz) else { continue };
+                if self.sdf_c[n] < inp.clearance && n != start || self.centres[n].distance_to(origin) > reach {
+                    continue;
+                }
+                if weight[n].is_nan() {
+                    weight[n] = self.route_weight(n, inp, a);
+                }
+                let step = self.cell * if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+                let nd = d + step * 0.5 * (wk + weight[n]);
+                if nd < dist[n] {
+                    dist[n] = nd;
+                    heap.push(Reverse((nd.to_bits(), n)));
+                }
+            }
+        }
+        out
     }
 
     /// Inside the lateral band, and for a new station not back against the walk.
@@ -373,11 +463,23 @@ impl VisibilityGrid {
             let on = if from.distance_to(t) > 1.0 { t + (from - t).normalized() * r } else { from };
             add(from + (on - from).limit_length(Some(a.window_m)), &mut cand);
         }
+        let held_k = held.is_finite().then(|| self.grid_of(held)).and_then(|(hx, hz)| self.water(hx, hz));
+        let cells: Vec<(usize, Option<FightCell>)> = cand.iter().map(|&k| (k, self.fight_cell(k, inp, a))).collect();
+        let mut targets: Vec<usize> = cells.iter().filter(|c| c.1.is_some()).map(|c| c.0).collect();
+        targets.extend(held_k);
+        let origin = if a.anchor.is_finite() { a.anchor } else { from };
+        let top = a.best_value(inp);
+        let checkpoints = a.checkpoint > 0.0 && a.goal.is_finite() && top > 0.0;
+        let route = if a.move_cost <= 0.0 || (targets.is_empty() && !checkpoints) {
+            RouteField::default()
+        } else {
+            self.route_field(origin, &targets, checkpoints.then(|| a.window_m + origin.distance_to(from)), inp, a)
+        };
         let mut best: Option<(usize, f32, FightCell)> = None;
         let mut near: Option<(usize, f32)> = None;
-        for &k in &cand {
-            if let Some(fc) = self.fight_cell(k, inp, a) {
-                let sc = fc.value - fc.harm - self.penalty(k, a);
+        for (k, fc) in cells {
+            if let Some(fc) = fc {
+                let sc = fc.value - fc.harm - self.penalty(k, a, &route);
                 if best.as_ref().is_none_or(|b| sc > b.1) {
                     best = Some((k, sc, fc));
                 }
@@ -389,8 +491,7 @@ impl VisibilityGrid {
             }
         }
         let mut weighed = cand.len();
-        let top = a.best_value(inp);
-        if a.checkpoint > 0.0 && a.goal.is_finite() && top > 0.0 {
+        if checkpoints {
             let r = (a.window_m / self.cell).ceil() as i32;
             let (cx, cz) = self.grid_of(from);
             for iz in cz - r..=cz + r {
@@ -401,7 +502,7 @@ impl VisibilityGrid {
                     }
                     weighed += 1;
                     if let Some(fc) = self.checkpoint_cell(k, from, top, inp, a) {
-                        let sc = fc.value - fc.harm - self.penalty(k, a);
+                        let sc = fc.value - fc.harm - self.penalty(k, a, &route);
                         if best.as_ref().is_none_or(|b| sc > b.1) {
                             best = Some((k, sc, fc));
                         }
@@ -409,10 +510,9 @@ impl VisibilityGrid {
                 }
             }
         }
-        let held = held.is_finite().then(|| self.grid_of(held))
-            .and_then(|(hx, hz)| self.water(hx, hz))
+        let held = held_k
             .filter(|&k| self.walk_ok(self.centres[k], false, a))
-            .and_then(|k| self.station_cell(k, from, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a), fc)));
+            .and_then(|k| self.station_cell(k, from, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a, &route), fc)));
         let chase = if best.is_none() { near.zip(chase).map(|(x, (_, t))| (x.0, t)) } else { None };
         (best, held, chase, weighed)
     }

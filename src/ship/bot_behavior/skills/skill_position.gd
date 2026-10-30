@@ -34,6 +34,8 @@ var _trails: Array[PackedVector2Array] = []
 var _trail_counts: Array[PackedInt32Array] = []
 ## With no station of its own, the walk starts here (the station another hold mode just held).
 var seed := Vector2.INF
+## The station the other of Fight's STATION/COVER modes held when it handed over: kept if this mode's own test passes.
+var carry := Vector2.INF
 ## Label -> metres between each newly adopted station and the one before it, this process.
 static var moves: Dictionary = {}
 ## Survives _drop and reset, so a fresh search's jump counts too.

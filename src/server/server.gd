@@ -1376,6 +1376,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"disengage": SkillDisengage.leg_summary(),
 		"fight": FightStation.stats_summary(),
 		"churn": DestChurn.summary(),
+		"dials": BotDials.summary(),
 		"disengage_why": DestChurn.dis_summary(),
 		"calibration": GunneryCalibration.summary(),
 		"manoeuvres": GunneryCalibration.probe_summary(),

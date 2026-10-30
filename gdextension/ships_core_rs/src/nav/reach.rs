@@ -696,6 +696,20 @@ impl ReachLookup {
         m
     }
 
+    /// mask from answers already held, tracing no rays: a cell not yet asked about answers no.
+    pub(crate) fn mask_cached(&self, p: Vector2) -> u64 {
+        let Some(idx) = self.field.index(p.x, p.y) else { return 0 };
+        let k = self.vis_cell.get(idx).copied().unwrap_or(-1);
+        let mut m = 0u64;
+        for (i, r) in self.rays.iter().enumerate().take(64) {
+            let Some((ray, plane)) = r else { continue };
+            let hit = ray.matrix.as_ref().and_then(|g| g.answer(&ray.origins, &ray.cells, k, p, ray.range, self.outbound))
+                .unwrap_or_else(|| plane_get(plane, idx) == 2);
+            m |= (hit as u64) << i;
+        }
+        m
+    }
+
     /// mask with a ray from `p` itself for every enemy: no cell answers, no line-of-sight shortcut.
     pub(crate) fn mask_exact(&self, p: Vector2) -> u64 {
         self.rays.iter().enumerate().take(64).fold(0u64, |m, (i, r)| match r {

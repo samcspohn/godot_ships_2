@@ -1,7 +1,7 @@
 extends Node
 class_name ShipMovementV4
 
-const SHIP_SPEED_MODIFIER: float = 3.0 # display shows knots / modifier 
+const SHIP_SPEED_MODIFIER: float = 3.0 # display shows knots / modifier
 
 var debug_log: bool = true
 
@@ -56,7 +56,7 @@ const BASE_DRAG: float = 0.1
 #           pivot, so the bow swings OUTWARD with the rest of the ship — the
 #           classic drift/slide feel, with more lateral motion the larger k gets.
 # Lerps from LOW at standstill (tight carving turn) to HIGH at top speed (outward drift).
-const BOW_PIVOT_FRACTION_LOW: float = 0.9
+const BOW_PIVOT_FRACTION_LOW: float = 0.95
 const BOW_PIVOT_FRACTION_HIGH: float = 1.0
 
 # Vertical waterline spring — keeps the hull bound to y = 0 while allowing

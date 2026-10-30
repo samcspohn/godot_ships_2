@@ -12,6 +12,3 @@ volume = 0.8
 variance = 0.25
 slew_max_angle = 0.0
 glb_path = "uid://c7kxmqf5odbws"
-
-[node name="150mmTurret_col" parent="." index="1" unique_id=1535719595]
-layers = 0

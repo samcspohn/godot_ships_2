@@ -112,6 +112,22 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			if now - _blocked_since >= BLOCKED_S:
 				_block(st, now)
 				_drop()
+	if not _has_station and carry.is_finite():
+		var why := "kept"
+		var ev: Dictionary = {"ok": false, "count": 0}
+		if not _in_clip(here, carry, opts.clip_pos):
+			why = "clip"
+		elif _blocked.any(func(b: Array) -> bool: return carry.distance_to(b[0]) < COVER_HOLD_M):
+			why = "blocked"
+		else:
+			ev = vis.cover_eval(carry, opts.pos, opts)
+			why = "not_covered" if not bool(ev.ok) else ("no_target" if mode == Mode.OFFENSE and int(ev.count) == 0 else "kept")
+		DestChurn.handoff("to_cover", why)
+		if why == "kept":
+			_adopt(Vector3(carry.x, 0.0, carry.y), float(ev.count), {})
+			_target_at = now
+			_targets = {}
+	carry = Vector2.INF
 	if _has_station:
 		var ev: Dictionary = vis.cover_eval(Vector2(_station.x, _station.z), opts.pos, opts)
 		if not _in_clip(here, Vector2(_station.x, _station.z), opts.clip_pos):
@@ -133,6 +149,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var from := _resume if _resume.is_finite() else here
 		_resume = Vector2.INF
 		var axis := _axis(ctx, params, from)
+		# The cone nearer the bow is the full-reach one; the stern's costs away_ratio.
+		if mode == Mode.OFFENSE and is_finite(axis) \
+				and absf(angle_difference(ctx.behavior._get_ship_heading(), axis)) > PI / 2.0:
+			axis = wrapf(axis + PI, -PI, PI)
 		last_sweep = {"here": from, "axis": axis, "opts": opts, "ms": Time.get_ticks_msec()}
 		var r: Dictionary = {}
 		for i in VERIFY_TRIES:

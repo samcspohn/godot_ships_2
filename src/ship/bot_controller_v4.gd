@@ -427,6 +427,7 @@ func _update_nav_intent() -> void:
 	_query_nav_intent()
 	if behavior != null:
 		behavior.churn.sample(behavior, _ship, destination)
+		behavior.churn.nav_tick(behavior, _ship, navigator.get_raw())
 
 func _query_nav_intent() -> void:
 	var _dbg := int(_ship.name) < 1004
@@ -1195,6 +1196,7 @@ func debug_state(ids: Dictionary) -> Dictionary:
 	s.dis_axis = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis)) if s.dis_on else INF
 	s.dis_text = behavior._skill_disengage.debug_text() if disengaging else ""
 	s.stance_text = behavior._skill_stance.debug_text()
+	s.dials = behavior.dials.debug_text()
 	var path := PackedVector2Array()
 	if navigator != null:
 		for wp in navigator.get_current_path():

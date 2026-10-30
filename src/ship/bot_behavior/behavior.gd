@@ -86,6 +86,7 @@ var _skill_engage: SkillEngage = SkillEngage.new()
 var _skill_disengage: SkillDisengage = SkillDisengage.new()
 var _skill_fight: SkillFight = SkillFight.new()
 var churn := DestChurn.new()
+var dials := BotDials.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_stance: SkillStance = SkillStance.new()
@@ -2575,6 +2576,8 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 			# Unseen there is nothing to break contact with.
 			if ctx.ship.is_detected():
 				intent = _skill_disengage.execute(ctx, params.merged({"cant_go_dark": cant_go_dark}))
+				if intent != null:
+					_dis_params = params
 				if intent != null and _skill_disengage.leg != SkillDisengage.Leg.KITE:
 					_skill_fight.snap_to(intent.target_position)
 		&"Fight":       intent = _skill_fight.execute(ctx, params)
@@ -2686,7 +2689,11 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_to_be_concealed = true
 
 	update_rings(ctx)
-	intent = _brawl(ctx, sit)
+	_trade_now = _smoothed_trade(ctx)
+	dials.update(ctx)
+	intent = _held_disengage(ctx, sit)
+	if intent == null:
+		intent = _brawl(ctx, sit)
 	if intent == null:
 		intent = _threat_disengage(ctx, sit)
 	if intent == null:
@@ -2804,19 +2811,72 @@ const REENGAGE_THREAT: float = 0.35
 const STAY_MARGIN: float = 1.25
 ## Full aggression shrinks the time-to-win a ship must outlive by e^this; full caution grows it as much.
 const AGGRESSION_STAY: float = 0.7
+## A disengage runs this long unless we go dark; after one, none starts for COOLDOWN unless threat reaches FORCE.
+const DISENGAGE_MIN_S: float = 20.0
+const DISENGAGE_COOLDOWN_S: float = 15.0
+const DISENGAGE_FORCE_THREAT: float = 0.6
+## time_to_die and time_to_win are averaged over this, as rates: turning away must not flip the trade.
+const TRADE_TAU_S: float = 10.0
+var _dis_since: float = -INF
+var _dis_left: float = -INF
+var _dis_params: Dictionary = {}
+var _die_rate: float = 0.0
+var _win_rate: float = 0.0
+var _trade_at: float = -INF
+var _trade_now := Vector2(INF, -1.0)
+
+## Whether a Disengage may start now: threat over DISENGAGE_THREAT, and out of cooldown or at DISENGAGE_FORCE_THREAT.
+func _may_disengage(threat: float) -> bool:
+	return threat >= DISENGAGE_THREAT \
+		and (SimClock.now() - _dis_left >= DISENGAGE_COOLDOWN_S or threat >= DISENGAGE_FORCE_THREAT)
+
+## Lit inside DISENGAGE_MIN_S of starting a disengage: keep it.
+func _held_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if _active_skill_name != &"Disengage" or not ctx.ship.is_detected() \
+			or SimClock.now() - _dis_since >= DISENGAGE_MIN_S:
+		return null
+	churn.dis_why = "held"
+	var out := _run_skill(&"Disengage", ctx, _dis_params)
+	if out != null:
+		wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
+		sit["arm"] = &"close"
+	return out
+
+## Smoothed time_to_die / time_to_win; win -1 with nothing to win against.
+func _smoothed_trade(ctx: SkillContext) -> Vector2:
+	var win := time_to_win(ctx)
+	var die := time_to_die(ctx)
+	var now: float = SimClock.now()
+	var dr: float = 1.0 / die
+	var wr: float = 1.0 / win if win > 0.0 else 0.0
+	var dt: float = now - _trade_at
+	if dt > TRADE_TAU_S:
+		_die_rate = dr
+		_win_rate = wr
+	else:
+		var a: float = 1.0 - exp(-dt / TRADE_TAU_S)
+		_die_rate = lerpf(_die_rate, dr, a)
+		_win_rate = lerpf(_win_rate, wr, a)
+	_trade_at = now
+	if win < 0.0:
+		return Vector2(INF, -1.0)
+	return Vector2(INF if _die_rate <= 0.0 else 1.0 / _die_rate, INF if _win_rate <= 0.0 else 1.0 / _win_rate)
 
 func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var leaving: bool = _active_skill_name == &"Disengage"
 	if not ctx.ship.is_detected():
 		return null
-	var win := time_to_win(ctx) if aptitude == null or aptitude.trade_disengage else -1.0
-	if win < 0.0:
-		if sit.threat <= (REENGAGE_THREAT if leaving else DISENGAGE_THREAT):
+	var trade := _trade_now
+	if leaving:
+		if sit.threat <= REENGAGE_THREAT:
 			return null
-	elif time_to_die(ctx) >= win * (STAY_MARGIN if leaving else 1.0) * exp(-AGGRESSION_STAY * aggression()):
+	elif not _may_disengage(sit.threat):
+		return null
+	var win: float = trade.y if aptitude == null or aptitude.trade_disengage else -1.0
+	if win >= 0.0 and trade.x >= win * (STAY_MARGIN if leaving else 1.0) * exp(-AGGRESSION_STAY * aggression()):
 		return null
 	churn.dis_why = "threat" if win < 0.0 else "ttw"
-	churn.dis_ttd = time_to_die(ctx)
+	churn.dis_ttd = trade.x
 	churn.dis_ttw = win
 	var out := _disengage(ctx, sit)
 	if out != null:
@@ -2840,8 +2900,15 @@ func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if crossfire_arc(ctx) <= BRAWL_CROSSFIRE and not _skill_fight.station.doomed():
 		return intent
 	if not ctx.ship.is_detected():
+		# Hidden with no survivable push: the engaged arm's cover hops, not standing behind this island.
+		if _skill_fight.station.doomed():
+			sit["arm"] = &"engaged"
+			return null
+		churn.stand_why = "crossfire"
 		intent = _intent_stand(ctx)
 		_active_skill_name = &"Fight"
+		return intent
+	if not _may_disengage(sit.threat):
 		return intent
 	churn.dis_why = "brawl_tuck"
 	var tuck := _run_skill(&"Disengage", ctx, {"ahead_only": true})
@@ -2933,7 +3000,7 @@ const PUSH_MAX_THREAT: float = 0.6
 func _fight(ctx: SkillContext, params: Dictionary = {}, stand: bool = true) -> NavIntent:
 	var intent := _run_skill(&"Fight", ctx, params)
 	if intent != null and _fighting(SkillFight.Mode.STATION) and _skill_fight.station.doomed() \
-			and get_threat_score(ctx) >= DISENGAGE_THREAT:
+			and _may_disengage(get_threat_score(ctx)):
 		churn.dis_why = "doomed"
 		var out := _run_skill(&"Disengage", ctx, {"toward": _skill_fight.station.station_xz()})
 		if out != null:
@@ -3030,12 +3097,16 @@ func _trace(intent: NavIntent, ctx: SkillContext, sit: Dictionary) -> void:
 		Vector2(pp.x - at.x, pp.z - at.z).length() / 1000 if pp.is_finite() else -1.0,
 		desired(pt).x / 1000 if pt != null else -1.0, sit.get("threat", -1.0), aggression(),
 		ctx.target.ship_name if ctx.target != null else "-",
-		(_skill_fight.debug_text() if _active_skill_name == &"Fight" else "") + " | " + _skill_stance.debug_text()])
+		(_skill_fight.debug_text() if _active_skill_name == &"Fight" else "") + " | " + _skill_stance.debug_text() + " | " + dials.debug_text()])
 
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
 func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
 	var d := _doc()
+	if _active_skill_name == &"Disengage" and prev_skill != &"Disengage":
+		_dis_since = SimClock.now()
+	elif prev_skill == &"Disengage" and _active_skill_name != &"Disengage":
+		_dis_left = SimClock.now()
 	_log_skill_time(intent)
 	_trace(intent, ctx, sit)
 
