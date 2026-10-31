@@ -9,7 +9,7 @@ var bulletId: int = 0
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
 var _pd_shape_query := PhysicsShapeQueryParameters3D.new()
-const TORPEDO_SPEED_MULTIPLIER = 3.0
+const TORPEDO_SPEED_MULTIPLIER = 4.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
@@ -32,6 +32,8 @@ class TorpedoData:
 	var launcher: TorpedoLauncher
 	var armed: bool = false
 	var ships_passed: Array[Ship] = []
+	## How far the firing bot's intercept lay at launch; INF unknown.
+	var aim_d: float = INF
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float, tl: TorpedoLauncher, _armed: bool = false) -> void:
 		self.position = pos
@@ -348,7 +350,8 @@ func _physics_process(_delta: float) -> void:
 
 						if armor_part.type == ArmorPart.Type.CASEMATE or armor_part.type == ArmorPart.Type.CITADEL:
 							damage *= (1.0 - hp.params.p().torpedo_protection)
-							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.HEAVY, p.owner, 1.0)
+							var target_part: ArmorPart = ship.citadel if ship.citadel != null else armor_part
+							dmg_sunk = hp.apply_damage(damage, p.params.damage, target_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.HEAVY, p.owner, 1.0)
 						else:
 							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.MEDIUM, p.owner, 1.0)
 
@@ -363,6 +366,11 @@ func _physics_process(_delta: float) -> void:
 					ship.stats.torpedo_taken += dmg_sunk[0]
 					# Apply flooding damage
 					apply_flood_damage(p, ship, collision.position)
+			elif is_instance_valid(p.owner):
+				if p.start_position.distance_to(collision.position) < p.aim_d:
+					p.owner.stats.torpedoes_grounded += 1
+				else:
+					p.owner.stats.torpedoes_grounded_late += 1
 			self.destroyTorpedo(id, collision.position)
 		id += 1
 

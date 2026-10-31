@@ -87,6 +87,17 @@ func fire() -> void:
 				var t = ProjectileManager.get_current_time()
 				var velocity = -m.global_basis.z + offset
 				var _id = (TorpedoManager as _TorpedoManager).fireTorpedo(velocity, m.global_position, get_torp(), t, _ship, get_params()._range, self)
+				var bc := _ship.get_node_or_null("Modules/BotController")
+				if bc != null and bc.behavior != null and bc.behavior.torpedo_target_position.is_finite():
+					TorpedoManager.torpedos[_id].aim_d = m.global_position.distance_to(bc.behavior.torpedo_target_position)
 				(TorpedoManager as _TorpedoManager).notify_fired(_id, m.global_position, velocity, t, get_torp(), _ship, false)
 				offset += muzzles[0].global_basis.x * 0.012
+			_ship.stats.torpedoes_fired += muzzles.size()
+			if SkillStance.duel_trace.has(_ship.ship_name):
+				var bc := _ship.get_node_or_null("Modules/BotController")
+				var aim: Vector3 = bc.behavior.torpedo_target_position if bc != null and bc.behavior != null else Vector3.INF
+				print("TORP ", JSON.stringify({"t": SimClock.now(), "pos": [muzzles[0].global_position.x, muzzles[0].global_position.z],
+					"dirs": muzzles.map(func(m): return [-m.global_basis.z.x, -m.global_basis.z.z]),
+					"spread": muzzles[0].global_basis.x.x * 0.012, "speed": get_torp().speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER,
+					"aim": [aim.x, aim.z], "lead_target": [_aim_point.x, _aim_point.z]}))
 			reload = 0

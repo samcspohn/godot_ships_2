@@ -34,6 +34,10 @@ var ships_damaged: Dictionary[String, float] = {}
 var _ships_damaged: Dictionary[Ship, float] = {}
 
 var torpedo_count: int = 0
+var torpedoes_fired: int = 0
+var torpedoes_grounded: int = 0
+## Grounded past the bot's intercept: a miss that ran on into land.
+var torpedoes_grounded_late: int = 0
 var torpedo_damage: float = 0
 var torpedo_hits_taken: int = 0
 var torpedo_taken: float = 0

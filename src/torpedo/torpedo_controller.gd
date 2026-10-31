@@ -159,6 +159,9 @@ func _physics_process(delta: float) -> void:
 		while sequential_fire_timer >= adjusted_sequential_fire_delay:
 			sequential_fire_timer -= adjusted_sequential_fire_delay
 			fire_next_ready()
+	else:
+		# A press already fires once; time left from the last hold must not fire a second launcher with it.
+		sequential_fire_timer = 0.0
 
 @rpc("any_peer", "call_remote")
 func fire_all() -> void:

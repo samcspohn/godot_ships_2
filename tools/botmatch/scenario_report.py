@@ -26,5 +26,11 @@ for f in sorted(glob.glob(f"{sc_dir}/*.json")):
             if key != prev:
                 print("    " + s)
                 prev = key
+    met = f"{out_dir}/{name}.json"
+    if os.path.exists(met):
+        for row in json.load(open(met)).get("ships", []):
+            if row.get("torpedoes_fired", 0):
+                print(f"  torpedoes {row.get('ship_name', row.get('ship', '?'))}: fired {row['torpedoes_fired']} hit {row.get('torpedo_count', 0)}"
+                      f" grounded {row.get('torpedoes_grounded', 0)} dmg {row.get('torpedo_damage', 0):.0f}")
     end = [l for l in lines if "Match ended" in l or "SCRIPT ERROR" in l]
     print("  end: " + (end[0] if end else "duration"))

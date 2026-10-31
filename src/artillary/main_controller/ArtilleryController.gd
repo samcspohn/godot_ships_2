@@ -409,6 +409,9 @@ func _physics_process(delta: float) -> void:
 		while sequential_fire_timer >= adjusted_sequential_fire_delay:
 			sequential_fire_timer -= adjusted_sequential_fire_delay
 			fire_next_ready()
+	else:
+		# The host sets fire_held directly, never through set_fire_held's reset.
+		sequential_fire_timer = 0.0
 
 @rpc("any_peer", "call_remote")
 func fire_all() -> void:

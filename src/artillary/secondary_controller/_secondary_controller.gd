@@ -380,6 +380,8 @@ func _update_manual_targeting(delta: float, max_range: float) -> bool:
 		while sequential_fire_timer >= adjusted_sequential_fire_delay:
 			sequential_fire_timer -= adjusted_sequential_fire_delay
 			fire_next_ready()
+	else:
+		sequential_fire_timer = 0.0
 	return manual_active
 
 func _update_auto_target_cache(server: GameServer, max_range: float, manual_active: bool) -> void:

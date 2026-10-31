@@ -161,6 +161,7 @@ func _ready():
 	# ships from that match, and the first contact of this one would walk into
 	# a freed instance.
 	BotGunnery.clear_all()
+	_clear_match_metrics()
 
 	if bot_match and _Utils.authority():
 		_start_bot_match.call_deferred()
@@ -1317,6 +1318,9 @@ func _build_leaderboard() -> Array[Dictionary]:
 			"secondary_count": stats.secondary_count,
 			"sec_damage": stats.sec_damage,
 			"torpedo_count": stats.torpedo_count,
+			"torpedoes_fired": stats.torpedoes_fired,
+			"torpedoes_grounded": stats.torpedoes_grounded,
+			"torpedoes_grounded_late": stats.torpedoes_grounded_late,
 			"torpedo_damage": stats.torpedo_damage,
 			"fire_count": stats.fire_count,
 			"fire_damage": stats.fire_damage,
@@ -1382,6 +1386,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"churn": DestChurn.summary(),
 		"dials": BotDials.summary(),
 		"duels": SkillStance.duel_stats,
+		"duel_cal": SkillStance.duel_cal,
+		"jink": SkillStance.jink_stats,
 		"disengage_why": DestChurn.dis_summary(),
 		"calibration": GunneryCalibration.summary(),
 		"manoeuvres": GunneryCalibration.probe_summary(),
@@ -1410,6 +1416,18 @@ func _notify_matchmaker_available():
 	}
 	udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
 	print("Notified matchmaker that port ", port, " is available")
+
+## Per-match metric stores that are static, so a server running match after match would grow them for ever.
+static func _clear_match_metrics() -> void:
+	BotDials.stats.clear()
+	DestChurn.stats.clear()
+	DestChurn.dis.clear()
+	DestChurn.nav.clear()
+	DestChurn.handoffs.clear()
+	SkillStance.duel_stats.clear()
+	SkillStance.duel_cal.clear()
+	SkillStance._probes.clear()
+	SkillStance.jink_stats.clear()
 
 func _reset_server():
 	"""Reset the server by reloading the scene. The new instance's _ready()

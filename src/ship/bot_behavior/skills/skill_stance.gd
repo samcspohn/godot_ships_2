@@ -109,6 +109,7 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	if threatened:
 		_lie_on_axis(ctx, intent, route, hdg)
 		_duel(ctx, hdg)
+		_jink(ctx, hdg)
 	else:
 		_duel_h = INF
 	var fire_h: float = INF if is_finite(_duel_h) else _fire_heading(ctx, _heading if threatened else hdg, route, hdg)
@@ -163,7 +164,7 @@ func debug_text() -> String:
 	var gear: String = "astern" if _throttle < 0.0 else "%d/4" % throttle_cap()
 	var lie: String = "route" if _on_route else ("stern-in" if _stern_in != _turning else "bow-in")
 	if is_finite(_duel_h):
-		lie = "DUEL " + _duel_name
+		lie = "DUEL " + _duel_name + (" JINK" if _jinking else "")
 	return "Stance %s %.0f° %s%s%s%s | turn %.0f astern %.0f | %d guns on us" % [lie, rad_to_deg(_heading), gear,
 		" TURNING" if _turning else "", " " + _fire if _fire != &"" else "", " JUKE" if _juke else "",
 		_turn_cost, _astern_cost, _shooters.size()]
@@ -877,6 +878,10 @@ var _duel_name: String = ""
 var _last_dealt := 0.0
 var _last_taken := 0.0
 var _last_kill_s := INF
+## The last scored option's uncalibrated damage over the window: dealt (to its HP) and taken.
+var _last_pred_d := 0.0
+var _last_pred_t := 0.0
+var _pred := {}
 ## Hull names whose duel options print each reprice (BotScenario's trace).
 static var duel_trace: Dictionary = {}
 ## "<our class>><target class>" -> option -> choices, for match metrics.
@@ -935,10 +940,13 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 			lethal[name] = _lethal(ctx, t, track)
 	# A salvo that can sink us rules an option out, unless every option shows one.
 	var safe: bool = lethal.values().has(false)
+	_pred.clear()
 	var best := "lie"
 	var best_score := -INF
 	for name in tracks:
 		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name], bool(options[name][1]))
+		if is_finite(sc):
+			_pred[name] = Vector2(_last_pred_d, _last_pred_t)
 		if duel_trace.has(ctx.ship.ship_name):
 			print("DUEL %s>%s %s d=%.0f hdg=%.0f h=%.0f dealt=%.3f taken=%.3f kill=%.0fs lethal=%s score=%.3f" % [ctx.ship.ship_name,
 				t.ship_name, name, d, rad_to_deg(hdg), rad_to_deg(float(options[name][0])), _last_dealt, _last_taken, _last_kill_s,
@@ -947,6 +955,8 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 			best_score = sc
 			best = name
 	_duel_name = best
+	if _pred.has(best):
+		_probe(ctx, t, _pred[best])
 	var key := "%s>%s" % [Ship.ShipClass.keys()[ctx.ship.ship_class], Ship.ShipClass.keys()[t.ship_class]]
 	var row: Dictionary = duel_stats.get_or_add(key, {})
 	row[best] = int(row.get(best, 0)) + 1
@@ -1080,6 +1090,12 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array, _astern: bool) -> flo
 	# Unlearned, as dealt is: the learned turn-out prices only one side of the trade.
 	var taken := _track_incoming(track, maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, {t.get_instance_id(): kill_t}, ship.ship_class)
 	var hp: float = maxf(ctx.behavior.trade_hp(), 1.0)
+	_last_pred_d = minf(Array(dealt).reduce(func(a, x): return a + x, 0.0), hp_t)
+	_last_pred_t = Array(taken).reduce(func(a, x): return a + x, 0.0)
+	var cal := calibration(ship, t)
+	for k in n:
+		dealt[k] *= cal.x
+		taken[k] *= cal.y
 	var out := 0.0
 	var inn := 0.0
 	var die_k := -1
@@ -1154,3 +1170,116 @@ func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary,
 				out[k] += float(sh.reload) * w * reach * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 			t += float(sh.reload)
 	return out
+
+
+## Real over predicted damage per "<our class>><target class>", fitted by tools/botmatch/duel_cal.py from
+## duel_cal probes: x scales what we deal, y what we take. Shrunk toward the all-pairs fit by CAL_PRIOR_N probes.
+const CAL_PATH := "res://assets/duel_calibration.json"
+const CAL_PRIOR_N := 20.0
+static var _cal: Dictionary = {}
+static var _cal_loaded := false
+
+static func calibration(ship: Ship, t: Ship) -> Vector2:
+	if not _cal_loaded:
+		_cal_loaded = true
+		var f := FileAccess.open(CAL_PATH, FileAccess.READ)
+		if f != null:
+			_cal = JSON.parse_string(f.get_as_text())
+	if _cal.is_empty():
+		return Vector2.ONE
+	var all: Dictionary = _cal.get("all", {})
+	var base := Vector2(float(all.get("out", 1.0)), float(all.get("in", 1.0)))
+	var c: Dictionary = (_cal.get("pairs", {}) as Dictionary).get("%s>%s" % [Ship.ShipClass.keys()[ship.ship_class], Ship.ShipClass.keys()[t.ship_class]], {})
+	var n: float = float(c.get("n", 0.0))
+	if n <= 0.0:
+		return base
+	return (Vector2(float(c.out), float(c["in"])) * n + base * CAL_PRIOR_N) / (n + CAL_PRIOR_N)
+
+## Open duel predictions, resolved DUEL_WINDOW_S on against what landed: {at, ship, target, pred, dealt0, taken0, enemies}.
+static var _probes: Array = []
+## "<our class>><target class>" -> [pred dealt, real dealt, pred taken, real taken, probes], for match metrics.
+static var duel_cal: Dictionary = {}
+
+func _probe(ctx: SkillContext, t: Ship, pred: Vector2) -> void:
+	var now: float = SimClock.now()
+	var enemies: Array = ctx.server.get_team_ships(1 - ctx.ship.team.team_id)
+	_probes.append({"at": now, "ship": ctx.ship, "target": t, "pred": pred, "hp_t": t.health_controller.current_hp,
+		"dealt0": float(ctx.ship.stats._ships_damaged.get(t, 0.0)), "taken0": _taken_from(ctx.ship, enemies), "enemies": enemies})
+	var keep: Array = []
+	for p in _probes:
+		# Probes outlive a match on a server that starts the next one in-process: its ships are freed.
+		if not is_instance_valid(p.ship) or not is_instance_valid(p.target) or float(p.at) > now:
+			continue
+		if now - float(p.at) < DUEL_WINDOW_S:
+			keep.append(p)
+			continue
+		var ship: Ship = p.ship
+		var tgt: Ship = p.target
+		var real_d: float = minf(float(ship.stats._ships_damaged.get(tgt, 0.0)) - float(p.dealt0), float(p.hp_t))
+		var real_t: float = _taken_from(ship, p.enemies) - float(p.taken0)
+		var row: Array = duel_cal.get_or_add("%s>%s" % [Ship.ShipClass.keys()[ship.ship_class], Ship.ShipClass.keys()[tgt.ship_class]],
+			[0.0, 0.0, 0.0, 0.0, 0])
+		row[0] += (p.pred as Vector2).x
+		row[1] += real_d
+		row[2] += (p.pred as Vector2).y
+		row[3] += real_t
+		row[4] += 1
+	_probes = keep
+
+static func _taken_from(ship: Ship, enemies: Array) -> float:
+	var sum := 0.0
+	for e in enemies:
+		if is_instance_valid(e) and e.stats != null:
+			sum += float(e.stats._ships_damaged.get(ship, 0.0))
+	return sum
+
+
+## Off a broadside, away or torp-out duel heading: weave JINK_ANGLE_MIN..MAX either side, changing side every
+## JINK_HOLD swings (at least JINK_MIN_S..JINK_MAX_S) at random and at once when a salvo of the dominant shooter's is
+## seen in the air, so a lead taken from our velocity when they fire is wrong when it lands. Only for a hull whose swing
+## (rudder lag and JINK_ANGLE_MAX) takes at most JINK_SWING_MAX_S.
+const JINK_ANGLE_MIN: float = deg_to_rad(15.0)
+const JINK_ANGLE_MAX: float = deg_to_rad(30.0)
+const JINK_MIN_S: float = 4.0
+const JINK_MAX_S: float = 8.0
+const JINK_HOLD := Vector2(1.5, 3.0)
+const JINK_SWING_MAX_S: float = 8.0
+const JINK_OPTIONS := ["broadside", "away", "torp-out"]
+var _jink_side: float = 0.0
+var _jink_angle: float = 0.0
+var _jink_until: float = -INF
+var _jink_salvo: float = -INF
+var _jinking: bool = false
+## "<class>" -> why the jink did not run (or "jink"), per stance tick, for match metrics.
+static var jink_stats: Dictionary = {}
+
+func _jink_why(ctx: SkillContext, why: String) -> void:
+	var row: Dictionary = jink_stats.get_or_add(Ship.ShipClass.keys()[ctx.ship.ship_class], {})
+	row[why] = int(row.get(why, 0)) + 1
+
+func _jink(ctx: SkillContext, hdg: float) -> void:
+	_jinking = false
+	if not is_finite(_duel_h) or _duel_name not in JINK_OPTIONS or OS.has_environment("STANCE_NO_JINK"):
+		_jink_why(ctx, "no_duel" if not is_finite(_duel_h) else "option_" + _duel_name)
+		return
+	var mv = ctx.ship.movement_controller
+	var p: MovementParams = mv._p()
+	var w: float = maxf(ctx.ship.linear_velocity.length(), 1.0) / maxf(p.turning_circle_radius, 1.0)
+	var swing: float = p.rudder_response_time + JINK_ANGLE_MAX / w
+	if swing > JINK_SWING_MAX_S:
+		_jink_why(ctx, "sluggish")
+		return
+	var now: float = SimClock.now()
+	var sc: SalvoClock = ctx.behavior.salvo_clock
+	var s: Ship = sc.dominant
+	var land: float = sc.next_landing(s, now) if s != null and is_instance_valid(s) else INF
+	var new_salvo: bool = is_finite(land) and land > 0.0 and land <= sc.dominant_tof and absf(now + land - _jink_salvo) > 1.0
+	if new_salvo:
+		_jink_salvo = now + land
+	if now >= _jink_until or new_salvo:
+		_jink_side = -_jink_side if _jink_side != 0.0 else (1.0 if angle_difference(hdg, _duel_h) <= 0.0 else -1.0)
+		_jink_angle = randf_range(JINK_ANGLE_MIN, JINK_ANGLE_MAX)
+		_jink_until = now + randf_range(maxf(JINK_MIN_S, swing * JINK_HOLD.x), maxf(JINK_MAX_S, swing * JINK_HOLD.y))
+	_heading = wrapf(_duel_h + _jink_side * _jink_angle, -PI, PI)
+	_jinking = true
+	_jink_why(ctx, "jink")

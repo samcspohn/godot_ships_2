@@ -4,7 +4,8 @@ extends RefCounted
 ## A botmatch lineup with a top-level "scenario" block and per-ship state, set once every ship has spawned:
 ##   "scenario": {"duration_s": 60, "elapsed_s": 568, "trace": ["Yamato"], "log_dt": 1.0}
 ##   per ship: "pos": [x, z], "heading_deg" (0 = +Z, 90 = +X), "speed" (m/s, ahead), "hp" (absolute),
-##   "reload": [main guns 0..1] (default all loaded, tubes too), "bloom_m": seen out to this, as if just fired, all scenario
+##   "reload": [main guns 0..1] (default all loaded, tubes too), "bloom_m": seen out to this, as if just fired, all scenario,
+##   "fixed": {"throttle": -1..4, "rudder": -1..1}: no bot, this helm the whole scenario
 ## Ends the match after duration_s; traced hulls print SCN lines every log_dt and their stance duel options.
 
 var duration_s: float = 60.0
@@ -14,6 +15,7 @@ var trace: Dictionary = {}
 var _started: float = -1.0
 var _next_log: float = 0.0
 var _bloom: Dictionary = {}
+var _fixed: Dictionary = {}
 
 func _init(cfg: Dictionary) -> void:
 	duration_s = float(cfg.get("duration_s", duration_s))
@@ -33,6 +35,11 @@ func start(server: GameServer) -> void:
 			ship.rotation.y = deg_to_rad(float(e.heading_deg)) + PI
 		if e.has("speed"):
 			ship.linear_velocity = -ship.global_transform.basis.z * float(e.speed)
+			# Under way, not just moving: the engine at the throttle that holds this speed.
+			var mc = ship.movement_controller
+			var share: float = clampf(float(e.speed) / maxf(mc.max_speed, 1.0), 0.0, 1.0)
+			mc.throttle_level = clampi(ceili(share * 4.0), 0, 4)
+			mc.engine_power = share
 		if e.has("hp"):
 			var hc = ship.health_controller
 			hc._current_hp = minf(float(e.hp), hc.max_hp) / hc.params.p().mult
@@ -45,10 +52,15 @@ func start(server: GameServer) -> void:
 				l.reload = 1.0
 		if e.has("bloom_m"):
 			_bloom[ship] = float(e.bloom_m)
+		if e.has("fixed"):
+			var bc := ship.get_node_or_null("Modules/BotController")
+			if bc != null:
+				bc.process_mode = Node.PROCESS_MODE_DISABLED
+			_fixed[ship] = [int(e.fixed.get("throttle", 4)), float(e.fixed.get("rudder", 0.0))]
 	SkillStance.duel_trace = trace
 	server.match_elapsed = elapsed_s
 	_started = SimClock.now()
-	print("SCN start: %d ships, %.0f s from match time %.0f s" % [server.players.size(), duration_s, elapsed_s])
+	print("SCN start: %d ships, %.0f s from match time %.0f s, clock %.3f" % [server.players.size(), duration_s, elapsed_s, _started])
 
 ## True once the scenario has run its duration.
 func tick(server: GameServer) -> bool:
@@ -58,6 +70,9 @@ func tick(server: GameServer) -> bool:
 	for ship in _bloom:
 		if is_instance_valid(ship) and ship.concealment != null:
 			ship.concealment.bloom(_bloom[ship])
+	for ship in _fixed:
+		if is_instance_valid(ship):
+			ship.movement_controller.set_movement_input(_fixed[ship])
 	if t >= _next_log:
 		_next_log = t + log_dt
 		for p_name in server.players:
@@ -71,7 +86,7 @@ func _log(ship: Ship, t: float) -> void:
 	var line := "SCN t=%5.1f %s hp=%.0f at=(%.0f,%.0f) hdg=%.0f spd=%.1f" % [t, ship.ship_name, ship.health_controller.current_hp,
 		ship.global_position.x, ship.global_position.z, rad_to_deg(atan2(fwd.x, fwd.z)), ship.linear_velocity.length()]
 	var bc := ship.get_node_or_null("Modules/BotController")
-	if bc != null and bc.behavior != null:
+	if bc != null and bc.behavior != null and bc.process_mode != Node.PROCESS_MODE_DISABLED:
 		var b: BotBehavior = bc.behavior
 		var tgt: Ship = bc.target
 		line += " skill=%s tgt=%s" % [b._active_skill_name, tgt.ship_name if is_instance_valid(tgt) else "-"]

@@ -1,0 +1,47 @@
+{
+ "scenario": {
+  "duration_s": 120,
+  "elapsed_s": 300,
+  "trace": [
+   "Shimakaze",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Yamato in a steady turn: the lead follows the arc."
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    3644,
+    -14000
+   ],
+   "heading_deg": 0,
+   "speed": 41.7,
+   "bloom_m": 20000,
+   "fixed": {
+    "throttle": 4,
+    "rudder": 0.4
+   }
+  },
+  "shima": {
+   "team": "1",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    9644,
+    -11000
+   ],
+   "heading_deg": 270,
+   "speed": 15
+  }
+ }
+}

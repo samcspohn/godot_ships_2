@@ -20,14 +20,25 @@ var has_valid_torpedo_solution: bool = false
 var current_torpedo_range: float = 0.0
 
 # Long-term velocity average for torpedo prediction, recent frames weighted more.
-var _torp_avg_target: Ship = null
-var _torp_vel_ema: Vector3 = Vector3.ZERO
-const TORP_VEL_EMA_SECONDS: float = 100.0   # long-average time constant
-const TORP_BLEND_REFERENCE_TIME: float = 50.0 # flight time (s) at which the long average reaches full weight
+var _torp_aim_index: int = -1
+var _torp_aim_frame: int = 0
+const TORP_REAIM_FRAMES: int = 2
+## The torpedo target's motion, smoothed: speed and turn rate apart, so weaving does not shrink the speed.
+var _torp_track: Ship = null
+var _torp_speed: float = 0.0
+var _torp_yaw_rate: float = 0.0
+var _torp_heading: float = 0.0
+var _torp_at: float = -INF
+const TORP_SPEED_TAU_S: float = 5.0
+const TORP_YAW_TAU_S: float = 3.0
+## A turn is predicted to fade by e per this long: a long run does not assume a full circle.
+const TORP_TURN_FADE_S: float = 30.0
+const TORP_PREDICT_DT: float = 0.5
 
 # Torpedo spread parameters
-const SPREAD_ANGLE_BASE: float = 0.05
-const SPREAD_ANGLE_PER_KM: float = 0.01
+## Aim-point step cap; and the share of its speed a target may gain or shed over a run.
+const TORP_SPREAD_MAX: float = 0.06
+const TORP_SPEED_DOUBT: float = 0.15
 const MIN_TORPEDO_INTERVAL: float = 0.5
 const MAX_TORPEDO_INTERVAL: float = 15.0
 const RANGE_FOR_MAX_INTERVAL: float = 10000.0
@@ -1353,48 +1364,29 @@ func update_torpedo_aim(target_ship: Ship):
 
 	var torpedo_speed = torpedo_controller.get_torp_params().speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER
 
-	# Reset EMA when target changes so we don't carry over a different ship's history.
-	if _torp_avg_target != target_ship:
-		_torp_avg_target = target_ship
-		_torp_vel_ema = target_ship.linear_velocity
+	_track_torpedo_target(target_ship)
+	var launch_from: Vector3 = _launchers_centre(torpedo_controller)
+	torpedo_target_position = _torpedo_intercept(target_ship, launch_from, torpedo_speed, torpedo_range / torpedo_speed)
+	if not torpedo_target_position.is_finite():
+		return
 
-	# EMA alpha nudges the average toward current velocity each frame (100s time constant).
-	var dt: float = 1.0 / Engine.physics_ticks_per_second
-	var ema_alpha: float = clamp(dt / TORP_VEL_EMA_SECONDS, 0.0, 1.0)
-	_torp_vel_ema = lerp(_torp_vel_ema, target_ship.linear_velocity, ema_alpha)
-
-	# Short flight time: trust current velocity (target's exact heading matters).
-	# Long flight time: trust the long average (best predictor of where they'll actually be).
-	var rough_flight_time: float = distance_to_target / torpedo_speed
-	var blend: float = clamp(rough_flight_time / TORP_BLEND_REFERENCE_TIME, 0.0, 1.0)
-	var predicted_vel: Vector3 = lerp(target_ship.linear_velocity, _torp_vel_ema, blend)
-
-	torpedo_target_position = calculate_interception_point(
-		_ship.global_position,
-		target_ship.global_position,
-		predicted_vel,
-		torpedo_speed
-	)
-
-	var interception_distance = _ship.global_position.distance_to(torpedo_target_position)
+	var interception_distance = launch_from.distance_to(torpedo_target_position)
 	if interception_distance > torpedo_range * 0.95:
 		return
 
-	var to_lead := torpedo_target_position - _ship.global_position
+	var to_lead := torpedo_target_position - launch_from
 	var base_angle := atan2(to_lead.x, to_lead.z)
+	# The five aim points span the target's envelope at the intercept, the first on the prediction.
+	var spread_angle: float = minf(atan2(_torp_envelope(target_ship, interception_distance / torpedo_speed, torpedo_controller) * 0.5,
+		interception_distance), TORP_SPREAD_MAX)
 
-	var range_km = distance_to_target / 1000.0
-	var spread_angle = SPREAD_ANGLE_BASE + SPREAD_ANGLE_PER_KM * range_km
-
-	var spread_offsets = [-2, -1, 0, 1, 2]
-
-	for offset in spread_offsets:
+	for offset in [0, -1, 1, -2, 2]:
 		var torpedo_angle = base_angle + (offset * spread_angle)
 		var torpedo_direction = Vector3(sin(torpedo_angle), 0, cos(torpedo_angle))
-		var torpedo_aim_point = _ship.global_position + torpedo_direction * interception_distance
+		var torpedo_aim_point = launch_from + torpedo_direction * interception_distance
 		torpedo_aim_point.y = 0
 
-		if is_land_blocking_torpedo_path(_ship.global_position, torpedo_aim_point):
+		if _fan_blocked(launch_from, torpedo_angle, interception_distance * TORP_PATH_PAST, torpedo_controller):
 			continue
 		if would_hit_friendly_ship(_ship.global_position, torpedo_aim_point, torpedo_speed):
 			continue
@@ -1428,6 +1420,13 @@ func try_fire_torpedoes(_target_ship: Ship):
 	var aim_position = current_salvo_positions[aim_index]
 
 	torpedo_controller.set_aim_input(aim_position)
+	# A launcher's can_fire is from the last aim point until it re-aims next physics frame: a new spread
+	# position waits for that, or the next launcher fires on the last one's point.
+	if aim_index != _torp_aim_index:
+		_torp_aim_index = aim_index
+		_torp_aim_frame = Engine.get_physics_frames()
+	if Engine.get_physics_frames() - _torp_aim_frame < TORP_REAIM_FRAMES:
+		return
 
 	for launcher in torpedo_controller.launchers:
 		if launcher.reload >= 1.0 and launcher.can_fire and !launcher.disabled:
@@ -1452,18 +1451,6 @@ func _get_max_torp_reload() -> float:
 		if launcher.reload > best:
 			best = launcher.reload
 	return best
-
-func is_land_blocking_torpedo_path(from_pos: Vector3, to_pos: Vector3) -> bool:
-	"""Check if land blocks the torpedo path."""
-	var space_state = _ship.get_world_3d().direct_space_state
-	var ray = PhysicsRayQueryParameters3D.new()
-	ray.from = from_pos + (to_pos - from_pos).normalized() * 30.0
-	ray.from.y = 1
-	ray.to = to_pos
-	ray.to.y = 1
-
-	var collision = space_state.intersect_ray(ray)
-	return !collision.is_empty()
 
 func would_hit_friendly_ship(from_pos: Vector3, to_pos: Vector3, torpedo_speed: float) -> bool:
 	"""Check if torpedo would hit a friendly ship."""
@@ -1507,42 +1494,99 @@ func would_hit_friendly_ship(from_pos: Vector3, to_pos: Vector3, torpedo_speed: 
 
 	return false
 
-func calculate_interception_point(shooter_pos: Vector3, target_pos: Vector3, target_vel: Vector3, projectile_speed: float) -> Vector3:
-	"""Calculate interception point for a projectile to hit a moving target."""
-	var to_target = target_pos - shooter_pos
-
-	var a = target_vel.dot(target_vel) - projectile_speed * projectile_speed
-	var b = 2.0 * to_target.dot(target_vel)
-	var c = to_target.dot(to_target)
-
-	if abs(a) < 0.0001:
-		if abs(b) < 0.0001:
-			return target_pos
-		var t_linear = -c / b
-		if t_linear > 0:
-			return target_pos + target_vel * t_linear
-		return target_pos
-
-	var discriminant = b * b - 4.0 * a * c
-
-	if discriminant < 0:
-		return target_pos
-
-	var sqrt_disc = sqrt(discriminant)
-	var t1 = (-b - sqrt_disc) / (2.0 * a)
-	var t2 = (-b + sqrt_disc) / (2.0 * a)
-
-	var t = -1.0
-	if t1 > 0 and t2 > 0:
-		t = min(t1, t2)
-	elif t1 > 0:
-		t = t1
-	elif t2 > 0:
-		t = t2
+## Smoothed speed and turn rate of `t`, from its motion each call.
+func _track_torpedo_target(t: Ship) -> void:
+	var now: float = SimClock.now()
+	# Course over the ground, not the bow: a ship backing astern runs the other way from its heading.
+	var vel := Vector2(t.linear_velocity.x, t.linear_velocity.z)
+	var v: float = vel.length()
+	var fwd: Vector3 = -t.global_transform.basis.z
+	var h: float = atan2(vel.x, vel.y) if v > 1.0 else atan2(fwd.x, fwd.z)
+	if _torp_track != t or now - _torp_at > 2.0:
+		_torp_track = t
+		_torp_speed = v
+		_torp_yaw_rate = 0.0
 	else:
-		return target_pos
+		var dt: float = now - _torp_at
+		if dt > 0.0:
+			_torp_speed = lerpf(_torp_speed, v, 1.0 - exp(-dt / TORP_SPEED_TAU_S))
+			_torp_yaw_rate = lerpf(_torp_yaw_rate, angle_difference(_torp_heading, h) / dt, 1.0 - exp(-dt / TORP_YAW_TAU_S))
+	_torp_heading = h
+	_torp_at = now
 
-	return target_pos + target_vel * t
+## Where `t` will be `s` seconds on: holding its smoothed speed, its turn rate fading by TORP_TURN_FADE_S.
+func _torpedo_target_at(t: Ship, s: float) -> Vector3:
+	var p := Vector2(t.global_position.x, t.global_position.z)
+	var h: float = _torp_heading
+	var step: float = 0.0
+	while step < s:
+		var dt: float = minf(TORP_PREDICT_DT, s - step)
+		h += _torp_yaw_rate * exp(-step / TORP_TURN_FADE_S) * dt
+		p += Vector2(sin(h), cos(h)) * _torp_speed * dt
+		step += dt
+	return Vector3(p.x, 0.0, p.y)
+
+## The first point on `t`'s predicted track a torpedo from `from` at `speed` reaches in time, within `max_s`; INF none.
+func _torpedo_intercept(t: Ship, from: Vector3, speed: float, max_s: float) -> Vector3:
+	var gap := func(s: float) -> float:
+		var p := _torpedo_target_at(t, s)
+		return Vector2(p.x - from.x, p.z - from.z).length() - speed * s
+	var lo := 0.0
+	var hi := TORP_PREDICT_DT
+	while gap.call(hi) > 0.0:
+		lo = hi
+		hi *= 2.0
+		if hi > max_s:
+			return Vector3.INF
+	for _i in 20:
+		var mid := (lo + hi) * 0.5
+		if gap.call(mid) > 0.0:
+			lo = mid
+		else:
+			hi = mid
+	return _torpedo_target_at(t, hi)
+
+func _launchers_centre(tc: TorpedoController) -> Vector3:
+	var c := Vector3.ZERO
+	var n := 0
+	for l in tc.launchers:
+		if not l.disabled:
+			c += l.global_position
+			n += 1
+	var out: Vector3 = c / n if n > 0 else _ship.global_position
+	out.y = 0.0
+	return out
+
+## How far `t` can be from our prediction when a spread arrives `run_s` on: a full-rudder turn from when it
+## can see the torpedoes, and a throttle change over the whole run; at least a hull length.
+func _torp_envelope(t: Ship, run_s: float, tc: TorpedoController) -> float:
+	var mc = t.movement_controller
+	var r: float = maxf(mc._p().turning_circle_radius, 1.0)
+	var v: float = maxf(_torp_speed, 1.0)
+	var tp: TorpedoParams = tc.get_torp_params()
+	var seen_m: float = tp.detection_range
+	if t.concealment != null and t.concealment.params != null:
+		var cp: ConcealmentParams = t.concealment.params.p()
+		seen_m = maxf(seen_m * cp.torpedo_detection_multiplier, cp.torpedo_detection_range_override)
+	var dodge_s: float = minf(run_s, seen_m / maxf(tp.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0))
+	var turn: float = r * (1.0 - cos(minf(v * dodge_s / r, PI / 2.0)))
+	var throttle: float = TORP_SPEED_DOUBT * v * run_s
+	return maxf(mc.ship_length, sqrt(turn * turn + throttle * throttle))
+
+## Torpedoes run on past the intercept; a fan is checked this far times its distance.
+const TORP_PATH_PAST: float = 1.25
+
+## Whether land stops either edge of a launcher's fan (its tubes ±TorpedoLauncher's 0.012 rad steps) laid on `angle`.
+func _fan_blocked(from: Vector3, angle: float, dist: float, tc: TorpedoController) -> bool:
+	var tubes := 0
+	for l in tc.launchers:
+		tubes = maxi(tubes, l.muzzles.size())
+	var half: float = 0.012 * (tubes - 1) / 2.0
+	for a in [angle - half, angle, angle + half]:
+		var to := from + Vector3(sin(a), 0.0, cos(a)) * dist
+		if NavigationMapManager.is_los_blocked(from, to):
+			return true
+	return false
 
 # ISLAND COVER SYSTEM — SDF-based cover position search
 
