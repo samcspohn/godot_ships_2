@@ -1,0 +1,43 @@
+{
+ "scenario": {
+  "duration_s": 60,
+  "elapsed_s": 300,
+  "trace": [
+   "SP1",
+   "Yamato"
+  ],
+  "log_dt": 1.0,
+  "expect": "SP1 holds its angle until Yamato's salvo lands, then turns out and launches."
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    3644,
+    -11000
+   ],
+   "heading_deg": 90,
+   "speed": 15
+  },
+  "sp1": {
+   "team": "1",
+   "player_id": "sp1",
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    10644,
+    -11000
+   ],
+   "heading_deg": 240,
+   "speed": 20,
+   "bloom_m": 12000
+  }
+ }
+}

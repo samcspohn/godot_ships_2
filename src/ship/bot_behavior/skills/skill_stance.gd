@@ -35,6 +35,7 @@ const SIDE_TIE: float = deg_to_rad(10.0)
 ## A request not fired by its turn plus this is dropped for a reload.
 const FIRE_GRACE_S: float = 10.0
 const TORP_RETRY_S: float = 10.0
+const FIRE_RETRY_S: float = 5.0
 ## Land this close along a heading, in turning circles, leaves the helm to the navigator.
 const CLEAR_AHEAD_TURNS: float = 1.5
 const CLEAR_AHEAD_MIN_M: float = 800.0
@@ -107,7 +108,10 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	_axis = INF
 	if threatened:
 		_lie_on_axis(ctx, intent, route, hdg)
-	var fire_h: float = _fire_heading(ctx, _heading if threatened else hdg, route, hdg)
+		_duel(ctx, hdg)
+	else:
+		_duel_h = INF
+	var fire_h: float = INF if is_finite(_duel_h) else _fire_heading(ctx, _heading if threatened else hdg, route, hdg)
 	if is_finite(fire_h) and _clear_ahead(ctx, fire_h, _throttle < 0.0):
 		_heading = fire_h
 		_on_route = false
@@ -120,6 +124,9 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		return intent
 	intent.target_heading = _heading
 	intent.heading_weight = 1.0
+	# A duel is fought under way: the navigator would brake for a destination stance is not sailing to.
+	if is_finite(_duel_h):
+		intent.throttle_override = 4
 	intent.force_reverse = _throttle < 0.0
 	intent.forbid_reverse = _throttle >= 0.0
 	return intent
@@ -155,12 +162,17 @@ func debug_text() -> String:
 		return "Stance: off"
 	var gear: String = "astern" if _throttle < 0.0 else "%d/4" % throttle_cap()
 	var lie: String = "route" if _on_route else ("stern-in" if _stern_in != _turning else "bow-in")
+	if is_finite(_duel_h):
+		lie = "DUEL " + _duel_name
 	return "Stance %s %.0f° %s%s%s%s | turn %.0f astern %.0f | %d guns on us" % [lie, rad_to_deg(_heading), gear,
 		" TURNING" if _turning else "", " " + _fire if _fire != &"" else "", " JUKE" if _juke else "",
 		_turn_cost, _astern_cost, _shooters.size()]
 
 
 func reset() -> void:
+	_duel_h = INF
+	_duel_then = INF
+	_duel_until = -INF
 	_axis = INF
 	_active = false
 	_on_route = false
@@ -346,14 +358,15 @@ func _track_split(track: Array, vmax: float, team_id: int, window_s: float, earl
 
 
 ## `kind`'s salvos along `track` in `window_s`, sliced and priced by DamageExpectation (learned turn-outs).
-func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, rows: StringName, window_s: float) -> float:
-	var s := _track_slices(track, vmax, team_id, rows, window_s)
+func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, rows: StringName, window_s: float,
+		stops: Dictionary = {}) -> float:
+	var s := _track_slices(track, vmax, team_id, rows, window_s, stops)
 	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT))
 
 
 ## [on, by, dark]: `rows` salvos along `track` (as _track_split) per DamageExpectation.TURNOUT_SLICES_S slice, from
 ## shooters on us, bystanders and unspotted enemies.
-func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float) -> Array:
+func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary = {}) -> Array:
 	var slices: Array = DamageExpectation.TURNOUT_SLICES_S
 	var out := {"on": [], "by": [], "dark": []}
 	for g in out:
@@ -366,7 +379,8 @@ func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, wi
 		var reload: float = sh.reload
 		var t: float = float(sh.next)
 		var into: Array = out[sh.group]
-		while t < end:
+		var stop: float = minf(end, float(stops.get(sh.id, INF)))
+		while t < stop:
 			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
 			var at: Vector2 = track[k][0]
 			var to: Vector2 = sh.pos - at
@@ -417,8 +431,7 @@ func _fire_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> 
 		_fire = want
 		_fire_deadline = now + _turn_s(ctx, absf(angle_difference(hdg, h))) + FIRE_GRACE_S
 	elif now > _fire_deadline:
-		var arty = ctx.ship.artillery_controller
-		_fire_cooldown = now + (arty.get_params().reload_time if want == &"guns" else TORP_RETRY_S)
+		_fire_cooldown = now + (FIRE_RETRY_S if want == &"guns" else TORP_RETRY_S)
 		_fire = &""
 		return INF
 	return h
@@ -845,3 +858,299 @@ static func _route_bearing(intent: NavIntent, ctx: SkillContext) -> float:
 		to = intent.target_position - ctx.ship.global_position
 		to.y = 0.0
 	return atan2(to.x, to.z) if to.length_squared() >= 1.0 else INF
+
+
+## Fight or flight with the target in our guns: over DUEL_WINDOW_S, our damage on it (each turret firing
+## once loaded and trained, slewing at its traverse rate within its limits) as a share of its HP, less
+## the fire on us as a share of ours, its own stopping once it would sink. Of the lie stance chose, the bow
+## angled DUEL_ANGLE off the target and the nearest full broadside, the best is held until our next gun loads.
+const DUEL_WINDOW_S: float = 60.0
+const DUEL_ANGLE: float = deg_to_rad(20.0)
+const DUEL_HOLD_MIN_S: float = 3.0
+## A target salvo whose expected damage times this reaches our HP can sink us.
+const LETHAL_SPREAD: float = 2.0
+var _duel_then: float = INF
+var _duel_turn_at: float = INF
+var _duel_h: float = INF
+var _duel_until: float = -INF
+var _duel_name: String = ""
+var _last_dealt := 0.0
+var _last_taken := 0.0
+var _last_kill_s := INF
+## Hull names whose duel options print each reprice (BotScenario's trace).
+static var duel_trace: Dictionary = {}
+## "<our class>><target class>" -> option -> choices, for match metrics.
+static var duel_stats: Dictionary = {}
+
+func dueling() -> bool:
+	return _active and is_finite(_duel_h)
+
+func _duel(ctx: SkillContext, hdg: float) -> void:
+	var t: Ship = ctx.target
+	var arty = ctx.ship.artillery_controller
+	if t == null or not is_instance_valid(t) or not t.is_alive() or arty == null or not ctx.behavior._aimable(t):
+		_duel_h = INF
+		return
+	var d: float = ctx.ship.global_position.distance_to(t.global_position)
+	var tc: TorpedoController = _tubes(ctx)
+	if not (_guns_free(ctx) and d <= arty.get_params()._range) and not (tc != null and d <= tc.get_max_range()):
+		_duel_h = INF
+		return
+	var now: float = SimClock.now()
+	if now < _duel_until:
+		if is_finite(_duel_h):
+			_take_duel()
+		return
+	var at := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	var tp := Vector2(t.global_position.x, t.global_position.z)
+	var to_t: float = atan2(tp.x - at.x, tp.y - at.y)
+	var away: float = wrapf(to_t + PI, -PI, PI)
+	# [heading, astern, then heading, after s]. Ties go to the first: bow-in shows the least.
+	var options := {}
+	var side: float = signf(angle_difference(to_t, hdg)) if angle_difference(to_t, hdg) != 0.0 else 1.0
+	var bow_in: float = wrapf(to_t + side * DUEL_ANGLE, -PI, PI)
+	options["bow-in"] = [bow_in, false, INF, 0.0]
+	var bs := _nearer(StanceSim.nearest_bearing(arty.guns, tp, hdg, hdg, true), hdg)
+	if is_finite(bs):
+		options["broadside"] = [bs, false, INF, 0.0]
+	options["away"] = [away, false, INF, 0.0]
+	var out := INF
+	if tc != null:
+		out = _nearer(StanceSim.nearest_bearing(tc.launchers, tp, hdg, away, false), away)
+		if is_finite(out):
+			options["torp-out"] = [out, false, INF, 0.0]
+	# Its next salvo: show the bow until it lands, then turn to launch (or bear the guns).
+	var due: float = ctx.behavior.salvo_clock.next_landing(t, now)
+	var then: float = out if is_finite(out) else bs
+	if is_finite(due) and due > 0.0 and due < DUEL_WINDOW_S and is_finite(then):
+		options["angle-then-turn"] = [bow_in, false, then, due]
+	options["lie"] = [_heading, _throttle < 0.0, INF, 0.0]
+	var tracks := {}
+	var lethal := {}
+	for name in options:
+		var o: Array = options[name]
+		var track := _option_track(ctx, hdg, float(o[0]), bool(o[1]), float(o[2]), float(o[3]))
+		if not track.is_empty():
+			tracks[name] = track
+			lethal[name] = _lethal(ctx, t, track)
+	# A salvo that can sink us rules an option out, unless every option shows one.
+	var safe: bool = lethal.values().has(false)
+	var best := "lie"
+	var best_score := -INF
+	for name in tracks:
+		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name], bool(options[name][1]))
+		if duel_trace.has(ctx.ship.ship_name):
+			print("DUEL %s>%s %s d=%.0f hdg=%.0f h=%.0f dealt=%.3f taken=%.3f kill=%.0fs lethal=%s score=%.3f" % [ctx.ship.ship_name,
+				t.ship_name, name, d, rad_to_deg(hdg), rad_to_deg(float(options[name][0])), _last_dealt, _last_taken, _last_kill_s,
+				lethal[name], sc])
+		if sc > best_score:
+			best_score = sc
+			best = name
+	_duel_name = best
+	var key := "%s>%s" % [Ship.ShipClass.keys()[ctx.ship.ship_class], Ship.ShipClass.keys()[t.ship_class]]
+	var row: Dictionary = duel_stats.get_or_add(key, {})
+	row[best] = int(row.get(best, 0)) + 1
+	_duel_h = INF if best == "lie" else float(options[best][0])
+	_duel_then = float(options[best][2]) if best != "lie" else INF
+	_duel_turn_at = now + float(options[best][3])
+	_duel_until = now + maxf(minf(_next_gun_s(arty), float(options[best][3]) if float(options[best][3]) > 0.0 else INF), DUEL_HOLD_MIN_S)
+	if is_finite(_duel_h):
+		_take_duel()
+
+## Of a nearest_bearing pair, the one nearer `ref`; INF with none.
+static func _nearer(hs: PackedFloat32Array, ref: float) -> float:
+	if hs.is_empty():
+		return INF
+	return hs[0] if absf(angle_difference(ref, hs[0])) <= absf(angle_difference(ref, hs[1])) else hs[1]
+
+## Our torpedo controller when we would launch, else null.
+static func _tubes(ctx: SkillContext) -> TorpedoController:
+	var tc: TorpedoController = ctx.ship.torpedo_controller if is_instance_valid(ctx.ship.torpedo_controller) else null
+	return tc if tc != null and not tc.launchers.is_empty() and ctx.behavior.would_fire_torpedoes() else null
+
+## Whether a salvo of the target's, landing on its clock along `track`, at the aspect we show it then,
+## could sink us: its expected damage LETHAL_SPREAD times over our HP.
+func _lethal(ctx: SkillContext, t: Ship, track: Array) -> bool:
+	var hp: float = ctx.ship.health_controller.current_hp
+	for sh in _shooters:
+		if int(sh.id) != t.get_instance_id():
+			continue
+		var land: float = float(sh.next)
+		while land < track.size() * ESCAPE_DT:
+			var k: int = clampi(int(land / ESCAPE_DT), 0, track.size() - 1)
+			var to: Vector2 = sh.pos - (track[k][0] as Vector2)
+			var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
+			if float(sh.reload) * float(sh.raw[a]) * LETHAL_SPREAD >= hp:
+				return true
+			land += float(sh.reload)
+	return false
+
+func _take_duel() -> void:
+	if is_finite(_duel_then) and SimClock.now() >= _duel_turn_at:
+		_duel_h = _duel_then
+		_duel_then = INF
+	_heading = _duel_h
+	_throttle = 1.0
+	_turning = false
+
+## Seconds until our first gun loads.
+static func _next_gun_s(arty) -> float:
+	var reload: float = arty.get_params().reload_time
+	var s := INF
+	for g in arty.guns:
+		if not g.disabled:
+			s = minf(s, (1.0 - clampf(g.reload, 0.0, 1.0)) * reload)
+	return s if is_finite(s) else reload
+
+## DUEL_WINDOW_S of sailing `h` (backing on it when `astern`), turning onto it first; with `then`, turning
+## onto that after `after_s`.
+func _option_track(ctx: SkillContext, hdg: float, h: float, astern: bool, then: float = INF, after_s: float = 0.0) -> Array:
+	var mv = ctx.ship.movement_controller
+	var p: MovementParams = mv._p()
+	var vmax: float = maxf(mv.max_speed, 1.0)
+	var v: float = vmax * TURN_SPEED_FRAC
+	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
+	var start := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
+	var swing: float = absf(angle_difference(hdg, h))
+	var way: float = signf(angle_difference(hdg, h)) if swing > 0.0 else 1.0
+	var run: float = vmax * p.reverse_speed_ratio if astern else vmax
+	var goal: float = wrapf(h + PI, -PI, PI) if astern else h
+	var track := _escape_track(start, hdg, goal, DUEL_WINDOW_S * vmax * 2.0, vmax, run, w * way,
+		p.rudder_response_time, swing, astern, ctx.behavior._get_ship_clearance(), reach)
+	if is_finite(then) and not track.is_empty():
+		var k: int = clampi(int(after_s / ESCAPE_DT), 0, track.size() - 1)
+		var last: Array = track[k]
+		var turn: float = absf(angle_difference(float(last[1]), then))
+		var w2: float = signf(angle_difference(float(last[1]), then)) if turn > 0.0 else 1.0
+		var rest := _escape_track(last[0], float(last[1]), then, DUEL_WINDOW_S * vmax * 2.0, vmax, vmax, w * w2,
+			p.rudder_response_time, turn, false, ctx.behavior._get_ship_clearance(), reach)
+		if rest.is_empty():
+			return []
+		track = track.slice(0, k + 1) + rest
+	return track.slice(0, int(DUEL_WINDOW_S / ESCAPE_DT))
+
+func _duel_score(ctx: SkillContext, t: Ship, track: Array, _astern: bool) -> float:
+	var ship: Ship = ctx.ship
+	var arty = ship.artillery_controller
+	var gp: GunParams = arty.get_params()
+	var n: int = track.size()
+	var pos := PackedVector2Array()
+	var hdgs := PackedFloat32Array()
+	var tpos := PackedVector2Array()
+	var t0 := Vector2(t.global_position.x, t.global_position.z)
+	var tv := Vector2(t.linear_velocity.x, t.linear_velocity.z)
+	for k in n:
+		pos.append(track[k][0])
+		hdgs.append(float(track[k][1]))
+		tpos.append(t0 + tv * (k + 1) * ESCAPE_DT)
+	var at0 := Vector2(ship.global_position.x, ship.global_position.z)
+	var hdg0: float = ctx.behavior._get_ship_heading()
+	var masks: PackedInt64Array = StanceSim.track_bearing(arty.guns, at0, hdg0, pos, hdgs, tpos, gp.traverse_speed, ESCAPE_DT) \
+		if _guns_free(ctx) else PackedInt64Array()
+	var live := 0
+	var ready := PackedFloat32Array()
+	for g in arty.guns:
+		ready.append(INF if g.disabled else (1.0 - clampf(g.reload, 0.0, 1.0)) * gp.reload_time)
+		live += 0 if g.disabled else 1
+	var hp_t: float = maxf(t.health_controller.current_hp, 1.0)
+	var dealt := PackedFloat32Array()
+	dealt.resize(n)
+	for k in mini(n, masks.size()):
+		var time: float = (k + 1) * ESCAPE_DT
+		var d: float = pos[k].distance_to(tpos[k])
+		if d > gp._range or masks[k] == 0:
+			continue
+		# As dps_curve and the trade price it: the target angled to bear its guns, not as it lies now.
+		var asp: float = BotBehavior.guns_bear_aspect(t)
+		var per_gun: float = maxf(_expected(t, ship, d, asp).x, 0.0) * DamageExpectation.salvo_factor(ship, t, d, asp) \
+			* gp.reload_time / maxf(live, 1)
+		for i in ready.size():
+			if ready[i] <= time and masks[k] & (1 << i) != 0:
+				dealt[k] += per_gun
+				ready[i] = time + gp.reload_time
+	_add_torpedoes(ctx, t, at0, hdg0, pos, hdgs, tpos, dealt)
+	var sum := 0.0
+	var kill_t := INF
+	for k in n:
+		sum += dealt[k]
+		if sum >= hp_t:
+			kill_t = (k + 1) * ESCAPE_DT
+			break
+	# Unlearned, as dealt is: the learned turn-out prices only one side of the trade.
+	var taken := _track_incoming(track, maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, {t.get_instance_id(): kill_t}, ship.ship_class)
+	var hp: float = maxf(ctx.behavior.trade_hp(), 1.0)
+	var out := 0.0
+	var inn := 0.0
+	var die_k := -1
+	var kill_k := -1
+	for k in n:
+		out += dealt[k]
+		inn += taken[k]
+		if out >= hp_t:
+			kill_k = k
+			break
+		if inn >= hp:
+			die_k = k
+			break
+	_last_dealt = minf(out / hp_t, 1.0)
+	_last_taken = minf(inn / hp, 1.0)
+	# Sunk inside the window: the sooner, the worse; past it, escapes and heals still count.
+	var lost: float = (DUEL_WINDOW_S - (die_k + 1) * ESCAPE_DT) / DUEL_WINDOW_S if die_k >= 0 else 0.0
+	# Sinking it inside the window: the sooner, the better; its guns and its friends' spotting stop with it.
+	var won: float = (DUEL_WINDOW_S - (kill_k + 1) * ESCAPE_DT) / DUEL_WINDOW_S if kill_k >= 0 else 0.0
+	_last_kill_s = (kill_k + 1) * ESCAPE_DT if kill_k >= 0 else INF
+	return _last_dealt - _last_taken - lost + won
+
+## Our spreads into `dealt`: each launcher once loaded and trained, its share of torpedo_curve (the
+## target's dodge priced in) landing a run's time after launch.
+func _add_torpedoes(ctx: SkillContext, t: Ship, at0: Vector2, hdg0: float, pos: PackedVector2Array, hdgs: PackedFloat32Array,
+		tpos: PackedVector2Array, dealt: PackedFloat32Array) -> void:
+	var tc: TorpedoController = _tubes(ctx)
+	if tc == null:
+		return
+	var lp: TorpedoLauncherParams = tc.get_params()
+	var masks: PackedInt64Array = StanceSim.track_bearing(tc.launchers, at0, hdg0, pos, hdgs, tpos, lp.traverse_speed, ESCAPE_DT)
+	var speed: float = maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
+	var curve := BotBehavior.torpedo_curve(ctx.ship, t)
+	var ready := PackedFloat32Array()
+	for l in tc.launchers:
+		ready.append(INF if l.disabled else (1.0 - clampf(l.reload, 0.0, 1.0)) * lp.reload_time)
+	for k in mini(dealt.size(), masks.size()):
+		var time: float = (k + 1) * ESCAPE_DT
+		var d: float = pos[k].distance_to(tpos[k])
+		if d > tc.get_max_range() or masks[k] == 0:
+			continue
+		var land: int = k + int(d / speed / ESCAPE_DT)
+		var per: float = BotBehavior._curve_at(curve, d) / tc.launchers.size()
+		for i in ready.size():
+			if ready[i] <= time and masks[k] & (1 << i) != 0:
+				ready[i] = time + lp.reload_time
+				if land < dealt.size():
+					dealt[land] += per
+
+## Raw HP landing on us at each step of `track`, as _track_slices books it (unspotted shooters at DARK_TAKEN).
+func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary, ship_class: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(track.size())
+	var end: float = track.size() * ESCAPE_DT
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var masks := {}
+	for sh in _shooters:
+		var t: float = float(sh.next)
+		var stop: float = minf(end, float(stops.get(sh.id, INF)))
+		var w: float = float(sh.weight) * (DamageExpectation.DARK_TAKEN[mini(ship_class, 2)] if sh.group == &"dark" else 1.0)
+		while t < stop:
+			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
+			var at: Vector2 = track[k][0]
+			var to: Vector2 = sh.pos - at
+			var bit: int = int(sh.bit)
+			if bit >= 0 and field != null and not masks.has(k):
+				masks[k] = field.exposure_mask(team_id, at)
+			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
+			var reach: float = _reach_share(sh, to.length())
+			if reach > 0.0 and not shadowed:
+				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
+				out[k] += float(sh.reload) * w * reach * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+			t += float(sh.reload)
+	return out

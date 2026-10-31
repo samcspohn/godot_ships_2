@@ -1,0 +1,10 @@
+{
+ "scenario": {"duration_s": 70, "elapsed_s": 570, "trace": ["Yamato", "Des Moines"], "log_dt": 1.0,
+  "source": "replay 1793393546_0 at 9:30.5: Yamato just citadelled the player's Des Moines (20% hp) at 4.2 km, forward turrets 14% reloaded"},
+ "team": {
+  "yamato": {"team": "0", "player_id": "yamato", "ship": "res://assets/Ships/Yamato/Yamato.tscn", "is_bot": true, "aptitude": 1,
+   "spawn_position": 0, "pos": [9643.9, -2373.9], "heading_deg": 32.9, "speed": 32.6, "hp": 71271, "reload": [0.14, 0.14, 1.0]},
+  "desmoines": {"team": "1", "player_id": "desmoines", "ship": "res://assets/Ships/DesMoines/DesMoines.tscn", "is_bot": true, "aptitude": 1,
+   "spawn_position": 0, "pos": [9946.2, 1800.6], "heading_deg": 171.5, "speed": 44.7, "hp": 9499, "reload": [0.9, 0.88, 1.0]}
+ }
+}

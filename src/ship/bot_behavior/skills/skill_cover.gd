@@ -42,6 +42,10 @@ const VERIFY_TRIES := 3
 const CLIP_HALF := deg_to_rad(35.0)
 ## Our speed to a station, as a share of full, when slower now: we will be under way.
 const LEAD_SPEED_FRAC := 0.75
+## OFFENSE takes seen-but-shielded cells only at this cover_kind or approach_stealth dial; at cover_kind 1
+## a gun must sink us within this share of HEAVY_GUNS_TTK_S to break a shield.
+const SHIELD_KIND := 0.5
+const SHIELD_TTK_SHARE := 0.25
 
 var mode: int = Mode.OFFENSE
 var _dark: bool = false
@@ -246,6 +250,9 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shells": PackedByteArray(), "shootable": PackedByteArray(),
 		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array(), "lead": PackedVector2Array()}
 	var lit: bool = ship.is_detected()
+	# The cover_kind dial: a ship that can afford being seen ignores guns that would take longer to sink it.
+	var kind: float = float(ctx.behavior.dials.eased.get("cover_kind", 0.0))
+	var ttk: float = BotBehavior.HEAVY_GUNS_TTK_S * lerpf(1.0, SHIELD_TTK_SHARE, kind)
 	for b in belief:
 		var e: Ship = b.ship
 		var spread: float = b.spread
@@ -256,7 +263,7 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.los_r.append(maxf(force - spread, 0.0) if force > 0.0 else 0.0)
 		opts.spot_r.append(0.0)
 		opts.heavy.append(1)
-		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship) else 0)
+		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship, ttk) else 0)
 		opts.shootable.append(1 if all_targets or ctx.behavior._aimable(e) else 0)
 		opts.ids.append(e.get_instance_id())
 		opts.lead.append(Vector2(e.linear_velocity.x, e.linear_velocity.z) if int(b.source) == 0 else Vector2.ZERO)
@@ -276,6 +283,8 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
+		"shield_ok": mode == Mode.DEFENSE or kind >= SHIELD_KIND \
+			or float(ctx.behavior.dials.eased.get("approach_stealth", 0.0)) >= SHIELD_KIND,
 		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false))),
 		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF)),
 		"clip_half": CLIP_HALF, "from": here,

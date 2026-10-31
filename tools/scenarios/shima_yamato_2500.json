@@ -1,0 +1,42 @@
+{
+ "scenario": {
+  "duration_s": 45,
+  "elapsed_s": 300,
+  "trace": [
+   "Shimakaze",
+   "Yamato"
+  ],
+  "log_dt": 1.0,
+  "expect": "Shimakaze stays angled (no broadside: a Yamato salvo can sink it), waits for the salvo, then turns to launch."
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    3644,
+    -11000
+   ],
+   "heading_deg": 90,
+   "speed": 15
+  },
+  "shima": {
+   "team": "1",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    6144,
+    -11000
+   ],
+   "heading_deg": 250,
+   "speed": 20
+  }
+ }
+}

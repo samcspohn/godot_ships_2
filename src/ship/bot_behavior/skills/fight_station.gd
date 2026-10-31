@@ -40,6 +40,12 @@ const MARCH_OTHER_VALUE := 0.3
 ## each metre weighted by ROUTE_W: (seen by a free enemy, hidden, hidden with a target in reach).
 const MOVE_COST_PER_KM := 0.1
 const ROUTE_W := Vector3(3.0, 0.4, 0.2)
+## The approach_stealth dial raises the seen weight by up to this share; the conceal_edge dial costs a seen station up to SEEN_SHARE of its value.
+const APPROACH_W := 1.0
+const SEEN_SHARE := 0.3
+
+static func _dial(ctx: SkillContext, k: String, default: float = 0.0) -> float:
+	return float(ctx.behavior.dials.eased.get(k, default))
 const MOVE_COST_FLOOR := 0.002
 ## A chase cell counts this many metres nearer its target per metre from the last station.
 const CHASE_ANCHOR_W := 0.5
@@ -274,6 +280,13 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	_adopt(Vector3(p.x, 0.0, p.y), float(r.score), {})
 	_mark(float(r.score), float(r.value), float(r.harm), int(r.mask), prio, belief)
 
+## The held station's fire on us, share of our trade HP per second; 0 without one.
+func harm_share() -> float:
+	return _march_harm / maxf(_harm_price, 0.01) if _has_station and not _chasing else 0.0
+
+func chasing() -> bool:
+	return _has_station and _chasing
+
 ## The threat score the held station's exposure alone would give; 1 while chasing in the open.
 func station_threat() -> float:
 	if not _has_station or _chasing:
@@ -380,11 +393,13 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		"front": front, "front_hp": front_hp, "focus": MARCH_FOCUS, "crossfire": MARCH_CROSSFIRE, "ring": rings, "walk_r": walk_r,
 		"chase_ring": chase_ring, "window_m": WINDOW_M, "speed": ship.movement_controller.max_speed,
 		"dark": not ship.visible_to_enemy, "anchor": _anchor_for(ship), "chase_anchor_w": CHASE_ANCHOR_W,
-		"move_cost": MOVE_COST_PER_KM / 1000.0 * maxf(_march_score, MOVE_COST_FLOOR), "route_w": ROUTE_W,
+		"move_cost": MOVE_COST_PER_KM / 1000.0 * maxf(_march_score, MOVE_COST_FLOOR),
+		"route_w": Vector3(ROUTE_W.x * (1.0 + APPROACH_W * _dial(ctx, "approach_stealth")), ROUTE_W.y, ROUTE_W.z),
+		"seen_cost": SEEN_SHARE * _dial(ctx, "conceal_edge"),
 		"walk_slack": WALK_SLACK_M,
 		"claims": _other_claims(ship.team.team_id, ship.get_instance_id(), SimClock.now_ms()), "claim_r": SPACING_M,
 		"claim_cost": SPACING_COST * maxf(_march_score, MOVE_COST_FLOOR),
-		"busy": _busy, "checkpoint": CHECKPOINT_SHARE if brawl else 0.0, "goal": _goal(ctx, ship, float(g.range), belief)})
+		"busy": _busy, "checkpoint": CHECKPOINT_SHARE * clampf(2.0 * _dial(ctx, "advance", 0.5), 0.0, 2.0) if brawl else 0.0, "goal": _goal(ctx, ship, float(g.range), belief)})
 
 ## Where a brawler's checkpoints lead: the lit enemy within reach of the window that is
 ## most worn and most busy with our ships (a falling flank), else its priority, else the local enemy centre.

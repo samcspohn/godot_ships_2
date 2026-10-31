@@ -15,7 +15,7 @@ dest_files=["res://.godot/imported/AMER_127mm_2b.glb-c1cf5da27f773f67056393b8edd
 
 nodes/root_type="Gun"
 nodes/root_name=""
-nodes/root_script=null
+nodes/root_script=Resource("uid://xc16x5l6kqxq", "res://src/artillary/Guns/Gun.gd")
 mesh_library/use_node_names_as_mesh_names=false
 array_mesh/deduplicate_surfaces=true
 nodes/apply_root_scale=true

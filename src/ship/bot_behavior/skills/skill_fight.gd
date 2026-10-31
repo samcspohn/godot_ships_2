@@ -126,8 +126,7 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var threat: float = b.get_threat_score(ctx)
 	if not station.resting() and (SimClock.now() >= _shelter_until or threat < BotBehavior.REENGAGE_THREAT):
 		var intent := _run(ctx, Mode.STATION, params)
-		if intent != null and not station.doomed() \
-				and (threat < BotBehavior.DISENGAGE_THREAT or station.station_threat() < BotBehavior.DISENGAGE_THREAT):
+		if intent != null and _station_ok(ctx, threat):
 			_shelter_until = -INF
 			return intent
 		if intent != null:
@@ -138,6 +137,8 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if closing != null:
 			return closing
 	var order: Array = [Mode.SPOT, Mode.COVER] if b.conceals_well(ctx) else [Mode.COVER, Mode.SPOT]
+	if float(b.dials.eased.get("spot", 1.0)) < SPOT_DIAL_MIN:
+		order.erase(Mode.SPOT)
 	for m in order:
 		var intent := _run(ctx, m, advance_cover_params(ctx) if m == Mode.COVER else {})
 		if intent != null:
@@ -147,6 +148,19 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if held != null:
 			return held
 	return _close_in(ctx, params)
+
+## Below this spot dial, SPOT is not tried as a fallback (a hull that cannot live where it would spot).
+const SPOT_DIAL_MIN := 0.3
+
+## Open water: not doomed, and its fire on us within the exposure_tol dial; a chase while calm.
+func _station_ok(ctx: SkillContext, threat: float) -> bool:
+	if station.doomed():
+		return false
+	if station.chasing():
+		return threat < BotBehavior.DISENGAGE_THREAT
+	var b: BotBehavior = ctx.behavior
+	var hp_eff: float = b.trade_hp() / maxf(ctx.ship.health_controller.max_hp, 1.0)
+	return station.harm_share() * hp_eff <= float(b.dials.eased.get("exposure_tol", INF))
 
 ## SPOT, a fallback, is held at least this long once taken.
 const SPOT_MIN_S := 10.0
@@ -163,8 +177,7 @@ func _keep_mode(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			if station.resting() or bool(params.get("presumed", false)):
 				return null
 			var intent := _run(ctx, Mode.STATION, params)
-			if intent != null and not station.doomed() \
-					and (threat < BotBehavior.DISENGAGE_THREAT or station.station_threat() < BotBehavior.DISENGAGE_THREAT):
+			if intent != null and _station_ok(ctx, threat):
 				return intent
 		Mode.COVER:
 			var p := advance_cover_params(ctx)
@@ -236,7 +249,9 @@ func _checkpoint(ctx: SkillContext, p: Dictionary) -> Dictionary:
 		var stv := Vector2(st.x, st.z)
 		if stv.distance_to(Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)) <= CHECKPOINT_STEP_M:
 			_idle_since = minf(_idle_since, now)
-			if now - _idle_since >= COVER_IDLE_S:
+			# The advance dial: 0.5 waits COVER_IDLE_S, ahead less, outnumbered longer.
+			var wait: float = COVER_IDLE_S * 0.5 / maxf(float(ctx.behavior.dials.eased.get("advance", 0.5)), 0.05)
+			if now - _idle_since >= wait:
 				_idle_since = INF
 				_checkpoint_d = minf(_checkpoint_d, stv.distance_to(to) - CHECKPOINT_STEP_M)
 				cover.reset()

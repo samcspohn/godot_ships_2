@@ -114,6 +114,7 @@ var _spectator_params_next_ms: int = 0
 var _sync_queue: Dictionary[String, Array] = {}
 var _sync_per_frame: int = 1
 var bot_match: bool = CmdArgs.has("--botmatch")
+var scenario: BotScenario = null
 var _sunk_at: Dictionary[Ship, float] = {}
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
 var matchmaker_heartbeat_timer: float = 0.0
@@ -211,6 +212,9 @@ func _start_bot_match() -> void:
 		spawn_player(ship_id, p_name)
 	players_spawned_bots = true
 	_begin_replay()
+	if team_info.has("scenario"):
+		scenario = BotScenario.new(team_info["scenario"])
+		scenario.start(self)
 	print("botmatch: %d bots from %s" % [players.size(), path])
 	for p_name in players:
 		var p: Ship = players[p_name][0]
@@ -1377,6 +1381,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"fight": FightStation.stats_summary(),
 		"churn": DestChurn.summary(),
 		"dials": BotDials.summary(),
+		"duels": SkillStance.duel_stats,
 		"disengage_why": DestChurn.dis_summary(),
 		"calibration": GunneryCalibration.summary(),
 		"manoeuvres": GunneryCalibration.probe_summary(),
@@ -1533,6 +1538,10 @@ func _physics_process(_delta: float) -> void:
 			match_ended = true
 			match_end_timer = MATCH_END_DELAY
 			print("Match ended! Time limit reached — points ", teams[0].points, ":", teams[1].points)
+
+	if scenario != null and match_active and not match_ended and scenario.tick(self):
+		match_ended = true
+		match_end_timer = 0.01
 
 	# Match end detection (server-side)
 	if _Utils.authority() and match_active and not match_ended:

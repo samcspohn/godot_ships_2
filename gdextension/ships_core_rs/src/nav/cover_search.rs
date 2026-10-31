@@ -15,6 +15,8 @@ pub(crate) struct CoverArgs {
     pub allow_dark: bool,
     /// Dark water only when no cell within reach is hidden or shielded.
     pub dark_last: bool,
+    /// A cell seen but out of every heavy enemy's shells counts; false: only hidden or dark ones.
+    pub shield_ok: bool,
     pub need: u32,
     /// Only cells nearer than near_d to near_pos; near_d INF, any.
     pub near_pos: Vector2,
@@ -42,6 +44,7 @@ impl CoverArgs {
             cone_half: f("cone_half", std::f32::consts::PI),
             allow_dark: o.get("allow_dark").is_none_or(|v| v.to::<bool>()),
             dark_last: o.get("dark_last").is_some_and(|v| v.to::<bool>()),
+            shield_ok: o.get("shield_ok").is_none_or(|v| v.to::<bool>()),
             need: o.get("need").map_or(0, |v| v.to::<i32>().max(0) as u32),
             near_pos: o.get("near_pos").map_or(Vector2::ZERO, |v| v.to::<Vector2>()),
             near_d: f("near_d", f32::INFINITY),
@@ -182,6 +185,9 @@ impl VisibilityGrid {
             return None;
         }
         let why = safety(self, k, inp, a.allow_dark)?;
+        if why.1 && !a.shield_ok {
+            return None;
+        }
         if lead_exposed(self, k, inp, a) {
             return None;
         }

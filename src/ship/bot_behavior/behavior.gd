@@ -798,16 +798,18 @@ static func priority_at(scorer: Ship, target: Ship, ranges: PackedFloat64Array, 
 	var reach: float = reach_m(scorer)
 	var speed := 1.0
 	var reload := 0.0
+	var bear := 0.0
 	if not torp.is_empty():
 		speed = maxf(scorer.torpedo_controller.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
 		reload = scorer.torpedo_controller.get_params().reload_time
+		bear = torp_bear_s(scorer)
 	var out := PackedFloat64Array()
 	for r in ranges:
 		var threat: float = _curve_at(danger, r) / shp + _curve_at(tdanger, r)
 		var at: float = minf(r, reach)
 		var salvo: float = _curve_at(torp, at)
 		var ours: float = (c[clampi(roundi((at - POINT_BLANK_M) / DESIRED_STEP_M), 0, c.size() - 1)] if not c.is_empty() else 0.0) / hp \
-			+ (1.0 / (at / speed + reload * maxf(hp / salvo - 1.0, 0.0)) if salvo > 0.0 else 0.0)
+			+ (1.0 / (bear + at / speed + reload * maxf(hp / salvo - 1.0, 0.0)) if salvo > 0.0 else 0.0)
 		var v: float = priority_value(Vector4(100.0 * threat, 100.0 * ours, 1.0, minf(threat / maxf(ours, 1e-6), PRIORITY_HARM_CAP)))
 		out.append(v)
 		if v > stop_above:
@@ -2827,12 +2829,12 @@ var _trade_now := Vector2(INF, -1.0)
 
 ## Whether a Disengage may start now: threat over DISENGAGE_THREAT, and out of cooldown or at DISENGAGE_FORCE_THREAT.
 func _may_disengage(threat: float) -> bool:
-	return threat >= DISENGAGE_THREAT \
+	return threat >= DISENGAGE_THREAT and not _skill_stance.dueling() \
 		and (SimClock.now() - _dis_left >= DISENGAGE_COOLDOWN_S or threat >= DISENGAGE_FORCE_THREAT)
 
 ## Lit inside DISENGAGE_MIN_S of starting a disengage: keep it.
 func _held_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if _active_skill_name != &"Disengage" or not ctx.ship.is_detected() \
+	if _active_skill_name != &"Disengage" or not ctx.ship.is_detected() or _skill_stance.dueling() \
 			or SimClock.now() - _dis_since >= DISENGAGE_MIN_S:
 		return null
 	churn.dis_why = "held"
@@ -2868,7 +2870,7 @@ func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		return null
 	var trade := _trade_now
 	if leaving:
-		if sit.threat <= REENGAGE_THREAT:
+		if sit.threat <= REENGAGE_THREAT or _skill_stance.dueling():
 			return null
 	elif not _may_disengage(sit.threat):
 		return null
@@ -3718,16 +3720,27 @@ static func torpedo_rate(shooter: Ship, target: Ship, range_m: float) -> float:
 	var hp: float = maxf(target.health_controller.current_hp, 1.0)
 	var tc: TorpedoController = shooter.torpedo_controller
 	var run: float = range_m / maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
-	return 1.0 / (run + tc.get_params().reload_time * maxf(hp / salvo - 1.0, 0.0))
+	return 1.0 / (torp_bear_s(shooter) + run + tc.get_params().reload_time * maxf(hp / salvo - 1.0, 0.0))
+
+## A spread waits on the tubes coming to bear: rudder lag and a TORP_BEAR_RAD swing at TORP_BEAR_SPEED of full.
+const TORP_BEAR_RAD: float = PI / 4.0
+const TORP_BEAR_SPEED: float = 0.75
+
+static func torp_bear_s(shooter: Ship) -> float:
+	var mv = shooter.movement_controller
+	var p: MovementParams = mv._p()
+	var v: float = maxf(mv.max_speed, 1.0) * TORP_BEAR_SPEED
+	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TORP_BEAR_SPEED))
+	return p.rudder_response_time + TORP_BEAR_RAD / maxf(w, 1e-3)
 
 ## Guns that would sink `target` within this long at their best range can break a shielded cover cell.
 const HEAVY_GUNS_TTK_S: float = 600.0
 
-static func heavy_guns(shooter: Ship, target: Ship) -> bool:
+static func heavy_guns(shooter: Ship, target: Ship, ttk_s: float = HEAVY_GUNS_TTK_S) -> bool:
 	var best := 0.0
 	for v in dps_curve(shooter, target):
 		best = maxf(best, v)
-	return best * HEAVY_GUNS_TTK_S >= maxf(target.health_controller.max_hp, 1.0)
+	return best * ttk_s >= maxf(target.health_controller.max_hp, 1.0)
 
 ## torpedo_rate at every DESIRED_STEP_M from POINT_BLANK_M, n steps.
 static func _torp_rates(shooter: Ship, target: Ship, n: int) -> PackedFloat64Array:
@@ -3740,9 +3753,10 @@ static func _torp_rates(shooter: Ship, target: Ship, n: int) -> PackedFloat64Arr
 	var speed: float = maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
 	var reload: float = tc.get_params().reload_time
 	var hp: float = maxf(target.health_controller.current_hp, 1.0)
+	var bear: float = torp_bear_s(shooter)
 	for k in mini(n, c.size()):
 		if c[k] > 0.0:
-			out[k] = 1.0 / ((POINT_BLANK_M + k * DESIRED_STEP_M) / speed + reload * maxf(hp / c[k] - 1.0, 0.0))
+			out[k] = 1.0 / (bear + (POINT_BLANK_M + k * DESIRED_STEP_M) / speed + reload * maxf(hp / c[k] - 1.0, 0.0))
 	return out
 
 ## kill_rate at every DESIRED_STEP_M from POINT_BLANK_M, n steps.
@@ -3822,6 +3836,7 @@ func update_rings(ctx: SkillContext) -> void:
 		var id := e.get_instance_id()
 		var h: Array = _ring_held.get(id, [])
 		var want := desired(e)
+		want.x = BotDials.shifted_ring(want.x, float(_trade(e).push), float(dials.eased.get("ring_shift", 0.0)))
 		var r: float = want.x if h.is_empty() else float(h[0])
 		var dt: float = 0.0 if h.is_empty() else maxf(now - float(h[1]), 0.0)
 		var dist: float = here.distance_to(b.pos)

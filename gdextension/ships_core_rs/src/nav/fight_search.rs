@@ -40,6 +40,8 @@ pub(crate) struct FightArgs {
     pub move_cost: f32,
     /// Route weight per metre through cells some free heavy enemy sees, hidden ones, and hidden ones our guns reach a target from.
     pub route_w: Vector3,
+    /// A station a free heavy enemy sees keeps 1 - this of its value.
+    pub seen_cost: f32,
     pub chase_anchor_w: f32,
     /// A new station lies no more than `walk_slack` behind `walk_from` along
     /// `walk_axis` (zero: any way), and every station's offset from
@@ -89,6 +91,7 @@ impl FightArgs {
             anchor: o.get("anchor").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
             move_cost: f("move_cost", 0.0),
             route_w: o.get("route_w").and_then(|v| v.try_to::<Vector3>().ok()).unwrap_or(Vector3::ONE),
+            seen_cost: f("seen_cost", 0.0),
             chase_anchor_w: f("chase_anchor_w", 0.0),
             walk_axis: o.get("walk_axis").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
             walk_from: o.get("walk_from").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO),
@@ -237,9 +240,12 @@ impl VisibilityGrid {
         if mask == 0 {
             return None;
         }
-        let value = self.fight_value(k, mask, inp, a);
+        let mut value = self.fight_value(k, mask, inp, a);
         if value <= 0.0 {
             return None;
+        }
+        if a.seen_cost > 0.0 && !self.hidden_from_free(k, inp, a) {
+            value *= 1.0 - a.seen_cost;
         }
         Some(FightCell { mask, value, harm: exposure(self, k, inp, a).0 })
     }

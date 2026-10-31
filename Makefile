@@ -26,6 +26,23 @@ OUT ?= build/botmatch/$(shell date +%Y%m%d_%H%M%S)
 sim:
 	tools/botmatch/run.sh "$(GODOT)" "$(LINEUP)" $(N) $(JOBS) "$(OUT)"
 
+# One fixed situation (tools/scenarios/*.json): SCN lines for traced hulls, DUEL option scores, metrics.
+# make scenario S=tools/scenarios/yamato_dm_close.json
+S ?= tools/scenarios/yamato_dm_close.json
+scenario:
+	mkdir -p build/scenario
+	"$(GODOT)" --headless --path . --fixed-fps 16 --server --port 30480 --botmatch res://$(S) --no-replay --gun-matrix-cache \
+		--no-live-mods --metrics build/scenario/$(notdir $(basename $(S))).json 2>&1 | tee build/scenario/$(notdir $(basename $(S))).log \
+		| grep -E "^(SCN|DUEL)|SCRIPT ERROR"
+
+# Every scenario in tools/scenarios at once; per traced hull, the duel options it took.
+scenarios:
+	mkdir -p build/scenario
+	i=0; for f in tools/scenarios/*.json; do n=$$(basename $$f .json); i=$$((i+1)); \
+		"$(GODOT)" --headless --path . --fixed-fps 16 --server --port $$((30480+i)) --botmatch res://$$f --no-replay \
+		--gun-matrix-cache --no-live-mods --metrics build/scenario/$$n.json 2>&1 | cat > build/scenario/$$n.log & done; wait
+	python3 tools/botmatch/scenario_report.py build/scenario tools/scenarios
+
 # 3v3 behaviour check, not a performance metric.
 SMOKE_N ?= 4
 smoke:

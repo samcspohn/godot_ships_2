@@ -98,11 +98,13 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 	for b in belief:
 		var e: Ship = b.ship
 		out.pos.append(b.pos)
+		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
+		# Not out-concealing it, we are seen wherever we spot it from: only its radar, hydro and secondaries keep us off.
+		var sight: float = conceal if cp == null or conceal <= cp.radius else 0.0
 		# A spotter is no match for a battleship's secondaries: kept out of them as out of its sight.
-		out.det.append(maxf(maxf(maxf(conceal, float(b.force_spot)) * margin, BotBehavior.secondary_reach(e)) - float(b.spread), 0.0))
+		out.det.append(maxf(maxf(maxf(sight, float(b.force_spot)) * margin, BotBehavior.secondary_reach(e)) - float(b.spread), 0.0))
 		# Radar and hydro see through islands.
 		out.always.append(maxf(float(b.force_spot) * margin - float(b.spread), 0.0) if float(b.force_spot) > 0.0 else 0.0)
-		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
 		var sr: float = cp.radius if cp != null else 0.0
 		# It may be anywhere in its spread: only this near the guess is sure to see it.
 		if not e.visible_to_enemy:
