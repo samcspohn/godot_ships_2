@@ -39,7 +39,7 @@ const SECONDARY_REFERENCE_RANGE := 5000.0
 ## Ellipse width in metres at reference_range.
 @export var h_disp: float = 250.0
 ## Ellipse height in metres at reference_range.
-@export var v_disp: float = 100.0
+@export var v_disp: float = 110.0
 
 
 ## Curve value at range fraction `t` (dist / max_range), continuing the last

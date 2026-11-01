@@ -25,6 +25,8 @@
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="17_fp27h"]
 [ext_resource type="PackedScene" uid="uid://b1v7uh5a6feq1" path="res://assets/turrets/IJN_610mm_5t.tscn" id="23_omhjh"]
 [ext_resource type="Script" uid="uid://dkqfpprasyxmh" path="res://src/weapon/fire_arc.gd" id="24_skbp2"]
+[ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="26_3b3d2"]
+[ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="27_g8rmw"]
 
 [sub_resource type="Resource" id="Resource_ly65a"]
 script = ExtResource("3_ntw8q")
@@ -270,6 +272,22 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.519, 3.755, 7.063954)
 slew_limits_enabled = true
 slew_min_angle = 3.1462059654305445
 fire_arcs = Array[ExtResource("24_skbp2")]([SubResource("Resource_6y5x2")])
+
+[node name="TrailEmitter4" type="Node3D" parent="." index="19" unique_id=1311660685]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 15.216969, -6.7435827)
+script = ExtResource("26_3b3d2")
+template = ExtResource("27_g8rmw")
+emit_rate = 0.35
+size_multiplier = 5.0
+auto_start = true
+
+[node name="TrailEmitter5" type="Node3D" parent="." index="20" unique_id=1051354457]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.453209, 10.061377)
+script = ExtResource("26_3b3d2")
+template = ExtResource("27_g8rmw")
+emit_rate = 0.35
+size_multiplier = 5.0
+auto_start = true
 
 [editable path="Modules"]
 [editable path="Modules/FireManager"]

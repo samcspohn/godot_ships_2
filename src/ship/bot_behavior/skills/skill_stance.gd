@@ -878,6 +878,9 @@ var _duel_name: String = ""
 var _last_dealt := 0.0
 var _last_taken := 0.0
 var _last_kill_s := INF
+var _last_die_s := INF
+## The chosen option sinks the target before it would sink us, inside the window.
+var _duel_wins: bool = false
 ## The last scored option's uncalibrated damage over the window: dealt (to its HP) and taken.
 var _last_pred_d := 0.0
 var _last_pred_t := 0.0
@@ -887,8 +890,9 @@ static var duel_trace: Dictionary = {}
 ## "<our class>><target class>" -> option -> choices, for match metrics.
 static var duel_stats: Dictionary = {}
 
+## A duel we expect to win: it holds Disengage off. One we would lose leaves the helm to it.
 func dueling() -> bool:
-	return _active and is_finite(_duel_h)
+	return _active and is_finite(_duel_h) and _duel_wins
 
 func _duel(ctx: SkillContext, hdg: float) -> void:
 	var t: Ship = ctx.target
@@ -903,6 +907,8 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 		return
 	var now: float = SimClock.now()
 	if now < _duel_until:
+		if is_finite(_duel_h) and not _duel_wins and ctx.behavior._active_skill_name == &"Disengage":
+			_duel_h = INF
 		if is_finite(_duel_h):
 			_take_duel()
 		return
@@ -941,12 +947,14 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	# A salvo that can sink us rules an option out, unless every option shows one.
 	var safe: bool = lethal.values().has(false)
 	_pred.clear()
+	var wins := {}
 	var best := "lie"
 	var best_score := -INF
 	for name in tracks:
 		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name], bool(options[name][1]))
 		if is_finite(sc):
 			_pred[name] = Vector2(_last_pred_d, _last_pred_t)
+			wins[name] = _last_kill_s < _last_die_s
 		if duel_trace.has(ctx.ship.ship_name):
 			print("DUEL %s>%s %s d=%.0f hdg=%.0f h=%.0f dealt=%.3f taken=%.3f kill=%.0fs lethal=%s score=%.3f" % [ctx.ship.ship_name,
 				t.ship_name, name, d, rad_to_deg(hdg), rad_to_deg(float(options[name][0])), _last_dealt, _last_taken, _last_kill_s,
@@ -954,6 +962,10 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 		if sc > best_score:
 			best_score = sc
 			best = name
+	_duel_wins = bool(wins.get(best, false))
+	# Getting out, a duel we would lose is no reason to turn back: Disengage keeps its heading.
+	if ctx.behavior._active_skill_name == &"Disengage" and not _duel_wins:
+		best = "lie"
 	_duel_name = best
 	if _pred.has(best):
 		_probe(ctx, t, _pred[best])
@@ -1116,6 +1128,7 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array, _astern: bool) -> flo
 	# Sinking it inside the window: the sooner, the better; its guns and its friends' spotting stop with it.
 	var won: float = (DUEL_WINDOW_S - (kill_k + 1) * ESCAPE_DT) / DUEL_WINDOW_S if kill_k >= 0 else 0.0
 	_last_kill_s = (kill_k + 1) * ESCAPE_DT if kill_k >= 0 else INF
+	_last_die_s = (die_k + 1) * ESCAPE_DT if die_k >= 0 else INF
 	return _last_dealt - _last_taken - lost + won
 
 ## Our spreads into `dealt`: each launcher once loaded and trained, its share of torpedo_curve (the

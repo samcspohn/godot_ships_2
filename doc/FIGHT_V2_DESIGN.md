@@ -169,7 +169,68 @@ spots them) of the friends' dps on them, minus our exposure while spotting.
 `torp_value`: torpedo lanes from the cell into presumed enemy density; ties into the
 deferred torpedo-exposure work.
 
-## 5. Performance targets
+## 5. Learned routes
+
+Bots leave XP-scored paths through a 1 km cell graph. The graph biases positioning the
+way the previous path biases pathfinding. It never decides on its own. A bot that runs
+down the middle and dies early leaves a low-XP path; a bot that flanks leaves a high-XP one.
+
+### Grid
+- 1 km cells (the heatmap grid), in the team frame, mirrored.
+- Quad clusters (2×2 cells) are a backoff level: a cell with too few visits reads its cluster.
+
+### Recording
+- Per ship, per 1 Hz sample: cell, match time, and raw context (below). Each time the ship
+  changes cell, and every DWELL_S (30 s) while it stays, it closes a visit:
+  (cell, enter time, dwell, context at entry).
+- A path is the ship's ordered list of visits. Staying is a visit to the same cell, so
+  stalling and advancing are both edges.
+- Match end: each visit stores the ship's whole-game XP and the XP it had earned on entry
+  (`stats.xp_breakdown()`). Dying early cuts the whole-game XP of every visit on that path,
+  so there is no separate death or HP term.
+- Links are ranked by remaining XP = whole-game − on-entry. At spawn the two are equal, so the
+  opening sees the average of every path. Later, a cell shows a clear split between its
+  outgoing links. Taking off the entry XP stops a bad history from hurting a good exit: a bot
+  that lost 1k early and then took link A should not make link A look 1k worse.
+
+### Graph
+- Node = (class, cell, dwell, state). Edge = node → next visit's node, carrying n and the mean
+  and variance of remaining XP.
+- `dwell` = consecutive self-links, capped at DWELL_MAX (4 = 2 min). Time awareness comes from
+  the self-link chain: "hold here 90 s, then push" is the path cell(0)→cell(1)→cell(2)→cell(3)→next.
+  Match time is not in the key. Arriving at a cell at 2 min and at 10 min differs only through `state`.
+- Branching comes from `state`: the same cell under a different state is a different node,
+  so its outgoing edges differ.
+- Raw context is stored per visit. `state` is bucketed from it at merge time, so the state
+  key can change without re-recording.
+
+### State (open)
+Candidates, all from team belief:
+- local threat at the cell: belief enemy dps that reaches it, over our HP;
+- local force ratio within ~8 km: friendly vs enemy HP × class weight;
+- team strength ratio; a coarse match-time bucket, if dwell + state turn out not to be enough.
+Start with one coarse key (3 buckets of one term plus the time bucket) and widen it once the
+data supports it.
+
+### Use
+- At the current node, the outgoing edges rank next cells by mean return, shrunk toward
+  the node mean when n is small (cluster backoff below N_MIN).
+- Bias: Fight's station score gains ROUTE_W × the edge value of the station's cell (its next
+  cell, or the cell itself for a stay edge). A bias, never a hard target.
+- Switches: recording is always on. Reading is per bot or per team (`route_bias` on/off,
+  ROUTE_W), so learned and unlearned bots play the same match and the table does not train
+  only on its own output.
+
+### Generations
+- Gen N is frozen; bots read gen N and write gen N+1. Promote when gen N+1 beats N in `make ab`.
+- Later: mutation. Perturb ROUTE_W, the state buckets or edge values per bot; keep the
+  variants that earn more XP.
+- Bots only. The goal is a bot meta, not imitation.
+
+### Reward later
+- Winning raises XP earnings (a team multiplier on every visit's return).
+
+## 6. Performance targets
 
 | Piece | Where | Budget |
 |---|---|---|
@@ -177,6 +238,8 @@ deferred torpedo-exposure work.
 | Prior merge | load / match end | < 1 s |
 | Per-enemy ring | per bot, 5 s cache | < 0.3 ms |
 | Window search | per bot, 1 s | < 1 ms p50, < 5 ms max |
+| Route sample + context | server, 1 Hz, all ships | < 0.1 ms |
+| Route edge read | per bot, behaviour tick | < 0.05 ms |
 
 ## Phases
 
@@ -189,11 +252,15 @@ deferred torpedo-exposure work.
 6. **Terrain tuck** (skill-gated): finer reach/LOS near coast so a ship can sit against an
    island with only bow or stern guns open; navigator allowed to ram the shore to get covered;
    leaves the tuck when unspotted or HP allows.
-7. **Match plan** (after the heatmap): per spawn, a route of islands to take in order;
-   hold each until its enemies are dead or pushed back, then advance to the next.
+7. **Learned routes** (section 5, after the heatmap pipeline): visit recorder, cell graph
+   with returns, state buckets, route bias in Fight, read switch, generations. Replaces the hand-written match plan (islands in order,
+   hold each until its enemies are dead or pushed back): islands along a lane come out as depth bins.
 
 ## Open questions
 - RING_DECAY_MPS: 5 m/s takes ~3 min to give back 1 km.
 - WINDOW_M: 6 km vs a speed-scaled window (DDs cover more ground).
 - Survival check ignores detection: an unseen ship is not stopped (Disengage needs us lit).
+- Routes: the state key.
+- Routes: HP loss. Return-to-end already punishes early death; potential XP still rewards tanking.
+- Routes: whether the self-link dwell chain is enough time awareness, or a match-time bucket is needed.
 - Experience shrinkage: how many seconds of `present_s` before it overrides occupancy.
