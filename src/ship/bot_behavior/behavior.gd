@@ -701,7 +701,6 @@ func update_priorities(server: GameServer) -> void:
 	for k in priorities.size():
 		rank[_priority_key(priorities[k])] = k
 	var fresh: Array[Dictionary] = []
-	var allies: Array = server.get_team_ships(team_id).filter(func(s): return s != _ship and is_instance_valid(s) and s.is_alive())
 	for b in server._team_belief(team_id):
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
@@ -710,7 +709,7 @@ func update_priorities(server: GameServer) -> void:
 		var shoot: bool = d <= _ship.artillery_controller.get_params()._range and _aimable(b.ship) and can_hit_target(b.ship)
 		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
 		fresh.append({"ship": b.ship, "pos": b.pos, "d": d if shoot else PRIORITY_ROUTE_W * sail,
-			"score": priority_score(b.ship, b.pos, sail, shoot, allies)})
+			"score": priority_score(b.ship, b.pos, sail, shoot, _team_help(server, b.ship, b.pos))})
 	for r in server.anonymous_refs(team_id):
 		var proxy := _ref_proxy(server, int(r.id))
 		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
@@ -764,14 +763,11 @@ func update_priorities(server: GameServer) -> void:
 ## a ship slow to kill is focused before it does that harm.
 ## One we cannot shoot now (out of range, behind land, or dark) fades by e per
 ## PRIORITY_SAIL_S of PRIORITY_COVER_S plus the route past our guns.
-## `allies`: friends whose guns count toward the team's kill.
-func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, allies: Array = []) -> float:
+## `help`: our friends' dps on it (_team_help).
+func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, help: float = 0.0) -> float:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
 		return 0.0
 	var r: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-	var help := 0.0
-	for a: Ship in allies:
-		help += _curve_at(dps_curve(a, enemy), at.distance_to(Vector2(a.global_position.x, a.global_position.z)))
 	return priority_value(priority_parts(enemy, r, sail_m, shootable, help), aptitude.focus_w)
 
 static func priority_value(p: Vector4, focus_w: float = PRIORITY_FOCUS_W) -> float:
@@ -1514,20 +1510,33 @@ func _track_torpedo_target(t: Ship) -> void:
 	_torp_heading = h
 	_torp_at = now
 
+## _torpedo_target_at's whole TORP_PREDICT_DT steps for the intercept being solved.
+var _track_p := PackedVector2Array()
+var _track_h := PackedFloat64Array()
+
 ## Where `t` will be `s` seconds on: holding its smoothed speed, its turn rate fading by TORP_TURN_FADE_S.
+## Extends _track_p from `t` when empty.
 func _torpedo_target_at(t: Ship, s: float) -> Vector3:
-	var p := Vector2(t.global_position.x, t.global_position.z)
-	var h: float = _torp_heading
-	var step: float = 0.0
-	while step < s:
-		var dt: float = minf(TORP_PREDICT_DT, s - step)
-		h += _torp_yaw_rate * exp(-step / TORP_TURN_FADE_S) * dt
+	if _track_p.is_empty():
+		_track_p.append(Vector2(t.global_position.x, t.global_position.z))
+		_track_h.append(_torp_heading)
+	var k: int = int(s / TORP_PREDICT_DT)
+	while _track_p.size() <= k:
+		var n: int = _track_p.size() - 1
+		var hn: float = _track_h[n] + _torp_yaw_rate * exp(-n * TORP_PREDICT_DT / TORP_TURN_FADE_S) * TORP_PREDICT_DT
+		_track_h.append(hn)
+		_track_p.append(_track_p[n] + Vector2(sin(hn), cos(hn)) * _torp_speed * TORP_PREDICT_DT)
+	var p: Vector2 = _track_p[k]
+	var dt: float = s - k * TORP_PREDICT_DT
+	if dt > 0.0:
+		var h: float = _track_h[k] + _torp_yaw_rate * exp(-k * TORP_PREDICT_DT / TORP_TURN_FADE_S) * dt
 		p += Vector2(sin(h), cos(h)) * _torp_speed * dt
-		step += dt
 	return Vector3(p.x, 0.0, p.y)
 
 ## The first point on `t`'s predicted track a torpedo from `from` at `speed` reaches in time, within `max_s`; INF none.
 func _torpedo_intercept(t: Ship, from: Vector3, speed: float, max_s: float) -> Vector3:
+	_track_p.clear()
+	_track_h.clear()
 	var gap := func(s: float) -> float:
 		var p := _torpedo_target_at(t, s)
 		return Vector2(p.x - from.x, p.z - from.z).length() - speed * s
@@ -3657,9 +3666,18 @@ func _desired_by_trade(enemy: Ship) -> Vector2:
 ## POINT_BLANK_M to the shooter's gun range, scaled by HPManager.size_mod. HP does not enter, so it never goes stale.
 static var _dps_curves: Dictionary = {}
 
+static func _row(cache: Dictionary, shooter: Ship) -> Dictionary:
+	var id := shooter.get_instance_id()
+	var row = cache.get(id)
+	if row == null:
+		row = {}
+		cache[id] = row
+	return row
+
 static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
-	var key := [shooter.get_instance_id(), target.get_instance_id()]
-	var c: PackedFloat32Array = _dps_curves.get(key, PackedFloat32Array())
+	var row := _row(_dps_curves, shooter)
+	var key := target.get_instance_id()
+	var c: PackedFloat32Array = row.get(key, PackedFloat32Array())
 	if not c.is_empty() or shooter.artillery_controller == null:
 		return c
 	var aspect: float = guns_bear_aspect(target)
@@ -3670,16 +3688,18 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * DamageExpectation.salvo_factor(shooter, target, r, aspect)
 			+ _secondary_dps(shooter, target, r, aspect) * sec_mod)
 		r += DESIRED_STEP_M
-	_dps_curves[key] = c
+	row[key] = c
 	return c
 
 ## [shooter id, target id] -> dps_curve's most from each range or any nearer, should `shooter` close, fading by e per PRIORITY_CLOSE_S of its sailing; out to PRIORITY_DANGER_MAX_M.
 static var _danger_curves: Dictionary = {}
 
 static func danger_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
-	var key := [shooter.get_instance_id(), target.get_instance_id()]
-	if _danger_curves.has(key):
-		return _danger_curves[key]
+	var row := _row(_danger_curves, shooter)
+	var key := target.get_instance_id()
+	var held = row.get(key)
+	if held != null:
+		return held
 	var c := dps_curve(shooter, target)
 	var fade: float = exp(-DESIRED_STEP_M / maxf(shooter.movement_controller.max_speed, 1.0) / PRIORITY_CLOSE_S)
 	var out := PackedFloat32Array()
@@ -3688,7 +3708,7 @@ static func danger_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	for k in out.size():
 		best = maxf(best * fade, c[k] if k < c.size() else 0.0)
 		out[k] = best
-	_danger_curves[key] = out
+	row[key] = out
 	return out
 
 ## [shooter id, target id] -> [target HP bucket, curve]: danger_curve for torpedo_rate, rebuilt per TORP_DANGER_BUCKETS of HP.
@@ -3697,10 +3717,11 @@ static var _torp_danger: Dictionary = {}
 const TORP_DANGER_BUCKETS: int = 20
 
 static func torpedo_danger(shooter: Ship, target: Ship) -> PackedFloat32Array:
-	var key := [shooter.get_instance_id(), target.get_instance_id()]
+	var row := _row(_torp_danger, shooter)
+	var key := target.get_instance_id()
 	var bucket: int = int(target.health_controller.current_hp / maxf(target.health_controller.max_hp, 1.0) * TORP_DANGER_BUCKETS)
-	var held: Array = _torp_danger.get(key, [])
-	if not held.is_empty() and int(held[0]) == bucket:
+	var held = row.get(key)
+	if held != null and int(held[0]) == bucket:
 		return held[1]
 	var reach: float = shooter.torpedo_controller.get_max_range() if is_instance_valid(shooter.torpedo_controller) else 0.0
 	var seen: float = (shooter.concealment.params.p() as ConcealmentParams).radius \
@@ -3713,7 +3734,7 @@ static func torpedo_danger(shooter: Ship, target: Ship) -> PackedFloat32Array:
 		var r: float = POINT_BLANK_M + k * DESIRED_STEP_M
 		best = maxf(best * fade, torpedo_rate(shooter, target, r) if r <= reach and r >= seen else 0.0)
 		out[k] = best
-	_torp_danger[key] = [bucket, out]
+	row[key] = [bucket, out]
 	return out
 
 ## Radians between neighbouring torpedoes of a spread (TorpedoLauncher.fire).
@@ -3732,9 +3753,11 @@ const TORP_COURSE_S: float = 90.0
 static var _torp_curves: Dictionary = {}
 
 static func torpedo_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
-	var key := [shooter.get_instance_id(), target.get_instance_id()]
-	if _torp_curves.has(key):
-		return _torp_curves[key]
+	var row := _row(_torp_curves, shooter)
+	var key := target.get_instance_id()
+	var held = row.get(key)
+	if held != null:
+		return held
 	var c := PackedFloat32Array()
 	var tc: TorpedoController = shooter.torpedo_controller if is_instance_valid(shooter.torpedo_controller) else null
 	if tc != null and not tc.launchers.is_empty():
@@ -3752,7 +3775,7 @@ static func torpedo_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 			var reactable: float = clampf((warn - mc._p().rudder_response_time) / maxf(shift_s, 0.1), 0.0, 1.0)
 			c.append(tubes * torp.damage * lerpf(1.0, TORP_DODGE_KEEP, reactable) * exp(-r / maxf(torp.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0) / TORP_COURSE_S))
 			r += DESIRED_STEP_M
-	_torp_curves[key] = c
+	row[key] = c
 	return c
 
 ## Share of `target`'s HP `shooter`'s torpedoes take per second at `range_m`:
@@ -3909,10 +3932,8 @@ func aggro_radius(ctx: SkillContext, e: Ship, at: Vector2, within: float) -> flo
 	var c: Array = _aggro_cache.get(e.get_instance_id(), [])
 	if not c.is_empty() and now - float(c[0]) < AGGRO_TTL_S:
 		return c[1]
-	var tank := 0.0
-	for f: Ship in ctx.server.get_team_ships(_ship.team.team_id):
-		if f != _ship and is_instance_valid(f) and f.is_alive():
-			tank = maxf(tank, priority_value(score_parts(e, f, at.distance_to(Vector2(f.global_position.x, f.global_position.z)))))
+	var tv := _team_view(_team_tanks, ctx.server, e, at, true)
+	var tank: float = tv[2] if int(tv[3]) == _ship.get_instance_id() else tv[1]
 	var out := INF
 	if tank > 0.0:
 		var take := -1.0
@@ -3935,6 +3956,50 @@ func aggro_radius(ctx: SkillContext, e: Ship, at: Vector2, within: float) -> flo
 			out = take if cost <= AGGRO_BUDGET or release < 0.0 else release
 	_aggro_cache[e.get_instance_id()] = [now, out]
 	return out
+
+## Team id -> enemy id -> [time, best, runner-up, best friend id]: how `e` ranks its best two targets on the team.
+static var _team_tanks: Dictionary = {}
+## Team id -> enemy id -> [time, total, {friend id: dps}]: the team's dps on `e`.
+static var _team_dps: Dictionary = {}
+
+## Shared by the whole team for AGGRO_TTL_S: every bot would otherwise loop every friend for every enemy each tick.
+func _team_view(cache: Dictionary, server: GameServer, e: Ship, at: Vector2, tanks: bool) -> Array:
+	var now: float = SimClock.now()
+	var row = cache.get(_ship.team.team_id)
+	if row == null:
+		row = {}
+		cache[_ship.team.team_id] = row
+	var v = row.get(e.get_instance_id())
+	if v != null and now - float(v[0]) < AGGRO_TTL_S:
+		return v
+	var best := 0.0
+	var best_id := 0
+	var second := 0.0
+	var total := 0.0
+	var each := {}
+	for f: Ship in server.get_team_ships(_ship.team.team_id):
+		if not is_instance_valid(f) or not f.is_alive():
+			continue
+		var d: float = at.distance_to(Vector2(f.global_position.x, f.global_position.z))
+		if tanks:
+			var val: float = priority_value(score_parts(e, f, d))
+			if val > best:
+				second = best
+				best = val
+				best_id = f.get_instance_id()
+			elif val > second:
+				second = val
+		else:
+			var h: float = _curve_at(dps_curve(f, e), d)
+			total += h
+			each[f.get_instance_id()] = h
+	v = [now, best, second, best_id] if tanks else [now, total, each]
+	row[e.get_instance_id()] = v
+	return v
+
+func _team_help(server: GameServer, e: Ship, at: Vector2) -> float:
+	var tv := _team_view(_team_dps, server, e, at, false)
+	return maxf(float(tv[1]) - float((tv[2] as Dictionary).get(_ship.get_instance_id(), 0.0)), 0.0)
 
 static func _secondary_range(e: Ship) -> float:
 	return e.secondary_controller.get_max_range() if is_instance_valid(e.secondary_controller) else 0.0

@@ -51,24 +51,37 @@ impl ShipNavigator {
         // heading while its speed ramps toward `end_speed`, so a throttle chop
         // that lets a spread pass ahead is credited.
         // =========================================================
-        let torps: Vec<&DynamicObstacle> = self.obstacles.values().filter(|o| o.is_torpedo() && o.velocity.length() >= 1.0).collect();
+        const MAX_EXT_TIME: f32 = 90.0;
+        const EXT_DT: f32 = 0.5;
+        let last = *arc.last().unwrap();
+        let horizon = MAX_EXT_TIME.max(last.time) + EXT_DT;
+        // 1.5x: hull speed briefly overshoots max_speed in the model.
+        let ship_run = 1.5 * self.params.max_speed.abs() * horizon + hsl + hsb;
+        let torps: Vec<&DynamicObstacle> = self
+            .obstacles
+            .values()
+            .filter(|o| {
+                let v = o.velocity.length();
+                o.is_torpedo() && v >= 1.0 && (o.position - arc[0].position).length() <= v * horizon + ship_run + 2.0 * o.radius
+            })
+            .collect();
         if torps.is_empty() {
             return result;
         }
         let cal_weight = (TORPEDO_VIRTUAL_CALIBER * TORPEDO_VIRTUAL_CALIBER) / (200.0 * 200.0);
-        const MAX_EXT_TIME: f32 = 90.0;
-        const EXT_DT: f32 = 0.5;
-        let last = *arc.last().unwrap();
         let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
         // Arc points are seconds apart; one segment in the turning frame sweeps a receding torpedo back across the hull.
-        let mut track: Vec<(Vector2, f32, f32)> = vec![(arc[0].position, arc[0].heading, arc[0].time)];
+        // (position, sin heading, cos heading, time)
+        let mut track: Vec<(Vector2, f32, f32, f32)> = Vec::with_capacity(2 * (horizon / EXT_DT) as usize + arc.len());
+        track.push((arc[0].position, arc[0].heading.sin(), arc[0].heading.cos(), arc[0].time));
         for w in arc.windows(2) {
             let (a, b) = (w[0], w[1]);
             let n = ((b.time - a.time) / EXT_DT).ceil().max(1.0) as usize;
             let dh = angle_difference(a.heading, b.heading);
             for j in 1..=n {
                 let s = j as f32 / n as f32;
-                track.push((a.position.lerp(b.position, s), normalize_angle(a.heading + dh * s), lerp_f(a.time, b.time, s)));
+                let h = normalize_angle(a.heading + dh * s);
+                track.push((a.position.lerp(b.position, s), h.sin(), h.cos(), lerp_f(a.time, b.time, s)));
             }
         }
         let (fx, fz) = (last.heading.sin(), last.heading.cos());
@@ -77,11 +90,10 @@ impl ShipNavigator {
             speed = move_toward_f(speed, end_speed, EXT_DT * speed_rate);
             pos += Vector2::new(fx, fz) * speed * EXT_DT;
             t += EXT_DT;
-            track.push((pos, last.heading, t));
+            track.push((pos, fx, fz, t));
         }
-        let local = |torp: &DynamicObstacle, (p, h, t): (Vector2, f32, f32)| -> Vector2 {
+        let local = |torp: &DynamicObstacle, (p, fx, fz, t): (Vector2, f32, f32, f32)| -> Vector2 {
             let rel = torp.position + torp.velocity * t - p;
-            let (fx, fz) = (h.sin(), h.cos());
             Vector2::new(rel.x * fx + rel.y * fz, rel.x * fz - rel.y * fx)
         };
         for obs in torps {
@@ -93,7 +105,7 @@ impl ShipNavigator {
             for k in 1..track.len() {
                 let cur = local(obs, track[k]);
                 if let Some(f) = segment_enters_box(prev, cur, hx, hy) {
-                    let hit = track[k - 1].2 + f * (track[k].2 - track[k - 1].2);
+                    let hit = track[k - 1].3 + f * (track[k].3 - track[k - 1].3);
                     result.torpedo_score += cal_weight;
                     result.torpedo_time = result.torpedo_time.min(hit);
                     break;

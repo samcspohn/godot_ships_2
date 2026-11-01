@@ -248,7 +248,7 @@ func update_weapon_ui(delta: float) -> void:
 		if switch_progress and not switched_shell:
 			switch_progress.value = min(held_dur[i], 1.0)
 		if held_dur[i] > 1.0 and not switched_shell:
-			select_shell.rpc_id(1, i)
+			select_shell_now.rpc_id(1, i)
 			switched_shell = true
 			_held_selected[i] = true
 
@@ -260,9 +260,23 @@ func _process(delta: float) -> void:
 func select_shell(_shell_index: int) -> void:
 	if !(_Utils.authority()):
 		return
-	var idx: int = clamp(_shell_index, 0, button_names.size() - 1)
+	_select(_shell_index, false)
+
+
+## The hold-to-select: switches at once, as selecting the queued shell again does.
+@rpc("any_peer", "call_remote", "reliable")
+func select_shell_now(_shell_index: int) -> void:
+	if !(_Utils.authority()):
+		return
+	_select(_shell_index, true)
+
+
+func _select(i: int, now: bool) -> void:
+	var idx: int = clamp(i, 0, button_names.size() - 1)
 	if not multi_select:
 		_switch_guns(shell_index, idx)
+		if now:
+			_switch_guns(idx, idx)
 	_apply_selection(idx)
 	_sync_queue()
 	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), idx)
@@ -288,6 +302,14 @@ func _switch_guns(from: int, to: int) -> void:
 		if g.loaded < 0:
 			g.loaded = from
 		if g.loaded == to:
+			g.loaded = -1
+
+
+## The queued salvo is going out: guns holding the old shell that cannot fire with it switch now.
+func _force_stragglers() -> void:
+	for g in ammo_guns():
+		if g.loaded >= 0 and g.loaded != shell_index and not (g.reload >= 1.0 and g.can_fire and not g.disabled):
+			g.reload = minf(g.reload, 1.0 - SWITCH_RELOAD_LEFT)
 			g.loaded = -1
 
 

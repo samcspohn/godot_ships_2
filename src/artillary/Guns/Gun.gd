@@ -268,6 +268,7 @@ func fire(mod: TargetMod = null) -> void:
 			reload = 0
 			if loaded >= 0:
 				loaded = -1
+				_weapon()._force_stragglers()
 				_weapon()._sync_queue()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:

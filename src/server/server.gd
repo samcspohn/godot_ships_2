@@ -1992,11 +1992,23 @@ func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:
 	field.prebuild_tables(speeds, drags, heights, ranges, 0.0)
 
 
+## Team id -> [physics frame, belief]. Callers must not mutate the entries.
+var _belief_cache: Dictionary = {}
+
 ## What `team_id` believes about the enemy, one entry per hull it has any
 ## opinion on: {ship, pos: Vector2, weight, spread, force_spot, source}.
 ## source: 0 in sight, 1 last-known position, 2 presumption, 3 inferred spotter. Same tables and
 ## weights as _publish_team_threats.
 func _team_belief(team_id: int) -> Array[Dictionary]:
+	var frame: int = Engine.get_physics_frames()
+	var held: Array = _belief_cache.get(team_id, [])
+	if not held.is_empty() and int(held[0]) == frame:
+		return held[1]
+	var out := _build_team_belief(team_id)
+	_belief_cache[team_id] = [frame, out]
+	return out
+
+func _build_team_belief(team_id: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var published: Dictionary = {}
 	var t := teams[team_id]

@@ -306,13 +306,13 @@ func _ready() -> void:
 		i += 1
 
 
+	# Both sides start BBs on AP: a selection now would queue behind a salvo of HE.
+	if _ship.ship_class == Ship.ShipClass.BB:
+		shell_index = 0
 	if _Utils.authority():
 		set_physics_process(true)
 		set_process(false)
 	else:
-		if _ship.ship_class == Ship.ShipClass.BB:
-			select_shell.rpc_id(1, 0)
-
 		set_physics_process(false)
 
 	if guns.size() > 1:
