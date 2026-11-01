@@ -16,6 +16,8 @@ const RANGE_BUCKET_M: float = 250.0
 const BYSTANDER_WEIGHT: float = 0.5
 ## An unspotted ship deduced to be spotting us is this much likelier than _switch_chance to be shooting at us.
 const SPOTTER_TARGET_GAIN: float = 2.0
+## An unspotted ship whose gunfire LKP is younger than this many reloads is still firing.
+const GUNFIRE_ACTIVE_RELOADS: float = 1.5
 ## How far the route may pull the bow off the axis.
 const AXIS_CONE: float = deg_to_rad(15.0)
 ## Bow-in and stern-in swap only when the other end is this much nearer.
@@ -776,6 +778,8 @@ func _survey(ctx: SkillContext) -> bool:
 		var pos: Vector2 = Vector2(s.global_position.x, s.global_position.z) if seen or not belief.has(s) else belief[s].pos
 		var b: int = ids.find(s.get_instance_id())
 		_add_shooter(ctx, s, pos, &"on" if float(weight[s]) >= 1.0 else &"by", float(weight[s]), b if b < 63 and seen else -1, 0.0, now)
+	var sources: Dictionary = ctx.server.get_unspotted_enemy_sources(ship.team.team_id)
+	var times: Dictionary = ctx.server.get_unspotted_enemy_times(ship.team.team_id)
 	for b in belief.values():
 		var e: Ship = b.ship
 		if weight.has(e) or int(b.source) == 0 or not is_instance_valid(e) or not e.is_alive() or e.artillery_controller == null:
@@ -785,18 +789,24 @@ func _survey(ctx: SkillContext) -> bool:
 			continue
 		# An inferred spotter is the ship that has us lit.
 		var chance: float = minf(_switch_chance(ctx, e, b.pos) * (SPOTTER_TARGET_GAIN if int(b.source) == 3 else 1.0), 1.0)
-		_add_shooter(ctx, e, b.pos, &"dark", chance, -1, float(b.spread), now)
+		# A gunfire LKP dates its last salvo: it is on that clock while it keeps firing.
+		var next := NAN
+		var reload: float = maxf(e.artillery_controller.get_params().reload_time, 0.1)
+		if sources.get(e, "") == GameServer.LKP_SOURCE_GUNFIRE and now - float(times.get(e, -INF)) <= reload * GUNFIRE_ACTIVE_RELOADS:
+			next = fposmod(float(times[e]) - now, reload)
+		_add_shooter(ctx, e, b.pos, &"dark", chance, -1, float(b.spread), now, next)
 	return _shooters.any(func(sh): return sh.group != &"dark")
 
 
-func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, weight: float, bit: int, spread: float, now: float) -> void:
+func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, weight: float, bit: int, spread: float, now: float,
+		next_s: float = NAN) -> void:
 	var to: Vector2 = pos - Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
 	var reach: float = s.artillery_controller.get_params()._range
 	var rows := _rows(ctx.ship, s, minf(to.length(), reach))
 	if rows.is_empty():
 		return
 	var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
-	var next: float = ctx.behavior.salvo_clock.next_landing(s, now) if group != &"dark" else INF
+	var next: float = next_s if not is_nan(next_s) else ctx.behavior.salvo_clock.next_landing(s, now) if group != &"dark" else INF
 	_shooters.append({"id": s.get_instance_id(), "bearing": atan2(to.x, to.y), "rows": rows, "raw": _tables[s.get_instance_id()][2],
 		"weight": weight, "group": group, "bit": bit, "spread": spread, "threat": _threat(s, ctx.ship, to.length()),
 		"pos": pos, "range": reach, "reload": reload, "next": next if is_finite(next) else reload * 0.5})

@@ -421,6 +421,9 @@ func fire_all() -> void:
 
 @rpc("any_peer", "call_remote")
 func fire_next_ready() -> void:
+	if fires_full_salvo():
+		fire_all()
+		return
 	for g in guns:
 		if g.reload >= 1 and g.can_fire:
 			g.fire(target_mod)
@@ -447,10 +450,13 @@ func set_fire_held(held: bool) -> void:
 # 	shell_index = clamp(_shell_index, 0, 1)
 
 func get_shell_params() -> ShellParams:
-	if shell_index == 0:
-		return params.dynamic_mod.shell1
-	else:
-		return params.dynamic_mod.shell2
+	return shell_at(next_index())
+
+func shell_at(i: int) -> ShellParams:
+	return params.dynamic_mod.shell1 if i == 0 else params.dynamic_mod.shell2
+
+func ammo_guns() -> Array:
+	return guns
 
 func get_params() -> GunParams:
 	return params.dynamic_mod as GunParams

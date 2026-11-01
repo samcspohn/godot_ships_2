@@ -816,6 +816,19 @@ func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, obs
 	t.write_contact(ship, Vector3(position.x, 0.0, position.z), observed_time,
 		Vector3.ZERO, prev.rot if prev != null else 0.0, source)
 
+## A main-battery salvo shows where its ship is to every team that does not see it.
+func note_gunfire(ship: Ship, at: Vector3) -> void:
+	if not is_instance_valid(ship) or ship.team == null:
+		return
+	var now: float = SimClock.now()
+	for t in teams:
+		if t.id == ship.team.team_id or t.valid_targets.has(ship):
+			continue
+		var c: TeamState.Contact = t.contacts.get(ship)
+		if c != null and c.time >= now:
+			continue
+		record_observed_contact_at(t.id, ship, at, now, LKP_SOURCE_GUNFIRE)
+
 ## How long a deduction stays in the picture. Generous - an inference is already
 ## weighted by its own uncertainty radius, so an old one fades rather than
 ## misleading - but finite, so it eventually stops outranking the spawn-line

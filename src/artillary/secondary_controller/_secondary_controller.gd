@@ -179,10 +179,13 @@ func get_params() -> GunParams:
 
 func get_shell_params() -> ShellParams:
 	var params = get_params()
-	if shell_index == 0:
-		return params.shell1
-	else:
-		return params.shell2
+	return params.shell1 if next_index() == 0 else params.shell2
+
+func ammo_guns() -> Array:
+	var out := []
+	for sc in sub_controllers:
+		out.append_array(sc.guns)
+	return out
 
 func _ready() -> void:
 	if sub_controllers.size() > 0:
@@ -245,6 +248,9 @@ func fire_all():
 
 @rpc("any_peer", "reliable", "call_remote")
 func fire_next_ready():
+	if fires_full_salvo():
+		fire_all()
+		return
 	for sc in sub_controllers:
 		for g in sc.guns:
 			if guns_shooting_at_aim_point.has(g) and g.reload >= 1 and g.can_fire:

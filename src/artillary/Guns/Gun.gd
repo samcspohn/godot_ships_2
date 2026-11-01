@@ -124,8 +124,14 @@ func get_params() -> GunParams:
 func get_base_params() -> GunParams:
 	return controller.get_base_params()
 
+## Shell index this gun holds from before an ammo switch, -1 when it loads the selection.
+var loaded: int = -1
+
 func get_shell() -> ShellParams:
-	return controller.get_shell_params() # did you setup the secondary subcontroller(s)/ artillery controller?
+	return controller.shell_at(loaded if loaded >= 0 else _weapon().shell_index)
+
+func _weapon() -> WeaponController:
+	return controller if controller is WeaponController else controller.controller
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
@@ -255,8 +261,14 @@ func fire(mod: TargetMod = null) -> void:
 					# print(aim)
 			if not get_shell()._secondary:
 				GunneryCalibration.on_fire(_ship, _aim_point, muzzles.size(), get_shell())
+				var server = _ship.get_node_or_null("/root/Server")
+				if server != null:
+					server.note_gunfire(_ship, _ship.global_position)
 			_ship.concealment.bloom(get_params()._range)
 			reload = 0
+			if loaded >= 0:
+				loaded = -1
+				_weapon()._sync_queue()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 

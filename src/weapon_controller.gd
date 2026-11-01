@@ -25,6 +25,8 @@ var switch_progresss: Array[ProgressBar] = []
 var cooldown_progresss: Array[ProgressBar] = []
 # var held: Array[bool] = []
 var held_dur: Array[float] = []
+## The hold already selected this button's shell; its release must not select it again (that forces the switch).
+var _held_selected: Array[bool] = []
 
 # The selected weapon, for controllers that only ever have one selected at a
 # time. MEANINGLESS when multi_select is on - read selected_indices() instead,
@@ -47,6 +49,15 @@ func selected_indices() -> Array[int]:
 		return shell_indices
 	var single: Array[int] = [shell_index]
 	return single
+
+## Ammo switch: every gun fires what it is loading once more, then loads the new shell. Selecting the new
+## shell again switches now: a gun keeps at least this share of its reload left (1: full reload).
+const SWITCH_RELOAD_LEFT: float = 1.0
+## Ammo some gun still has loaded from before a switch, -1 with none; the owner's client gets it from the server.
+var queued_index: int = -1
+const LOADED_COLOR := Color(0.35, 0.95, 0.45, 0.9)
+const QUEUED_COLOR := Color(1.0, 0.7, 0.15, 0.9)
+var ammo_marks: Array[ColorRect] = []
 
 @export var button_names: Array[String] = []
 var tool_tips: Array[Callable] = []
@@ -71,6 +82,7 @@ func _input(event: InputEvent) -> void:
 						select_shell.rpc_id(1, i)
 					held[i] = false
 					switched_shell = false
+					_held_selected[i] = false
 
 func get_weapon_ui(offset: int) -> Array[Button]:
 	var ui_buttons: Array[Button] = []
@@ -83,6 +95,9 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 		)
 		button.pressed.connect(func():
 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+			if _held_selected[i]:
+				_held_selected[i] = false
+				return
 			select_shell.rpc_id(1, i)
 		)
 		button.button_up.connect(func():
@@ -102,6 +117,13 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 		switch_progress.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
 
 		button.add_child(switch_progress)
+		var mark := ColorRect.new()
+		mark.set_anchors_preset(Control.PRESET_TOP_WIDE)
+		mark.offset_bottom = 3.0
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.visible = false
+		button.add_child(mark)
+		ammo_marks.append(mark)
 		var key_label = Label.new()
 		key_label.text = str(offset + i + 1)
 		key_label.position = Vector2(4, 2)
@@ -115,6 +137,7 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 		cooldown_progresss.append(cooldown_progress)
 		held.append(false)
 		held_dur.append(0.0)
+		_held_selected.append(false)
 		# button.name = "WeaponButton" + str(i + offset)
 		ui_buttons.append(button)
 	return ui_buttons
@@ -218,11 +241,16 @@ func update_weapon_ui(delta: float) -> void:
 				if fill != null and fill.bg_color != color:
 					fill.bg_color = color
 		button.self_modulate = Color.WHITE if is_button_ready(i) else UNAVAILABLE_TINT
+		if i < ammo_marks.size():
+			var loaded := next_index()
+			ammo_marks[i].visible = not ammo_guns().is_empty() and (i == loaded or i == shell_index)
+			ammo_marks[i].color = LOADED_COLOR if i == loaded else QUEUED_COLOR
 		if switch_progress and not switched_shell:
 			switch_progress.value = min(held_dur[i], 1.0)
 		if held_dur[i] > 1.0 and not switched_shell:
 			select_shell.rpc_id(1, i)
 			switched_shell = true
+			_held_selected[i] = true
 
 
 func _process(delta: float) -> void:
@@ -233,8 +261,58 @@ func select_shell(_shell_index: int) -> void:
 	if !(_Utils.authority()):
 		return
 	var idx: int = clamp(_shell_index, 0, button_names.size() - 1)
+	if not multi_select:
+		_switch_guns(shell_index, idx)
 	_apply_selection(idx)
+	_sync_queue()
 	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), idx)
+
+
+## Guns whose shell an ammo switch changes; none for weapons without one.
+func ammo_guns() -> Array:
+	return []
+
+
+## The ammo the next shot fires: what is still loaded from before a switch, else the selection.
+func next_index() -> int:
+	return queued_index if queued_index >= 0 else shell_index
+
+
+func _switch_guns(from: int, to: int) -> void:
+	for g in ammo_guns():
+		if from == to:
+			if g.loaded >= 0 and g.loaded != to:
+				g.reload = minf(g.reload, 1.0 - SWITCH_RELOAD_LEFT)
+				g.loaded = -1
+			continue
+		if g.loaded < 0:
+			g.loaded = from
+		if g.loaded == to:
+			g.loaded = -1
+
+
+## Server: recompute queued_index after a switch or a shot, and tell the owning player.
+func _sync_queue() -> void:
+	var q := -1
+	for g in ammo_guns():
+		if g.loaded >= 0 and g.loaded != shell_index and not g.disabled:
+			q = g.loaded
+			break
+	if q == queued_index:
+		return
+	queued_index = q
+	if _ship != null and multiplayer.get_peers().has(_ship.peer_id):
+		set_queued_c.rpc_id(_ship.peer_id, q)
+
+
+@rpc("authority", "call_remote", "reliable")
+func set_queued_c(q: int) -> void:
+	queued_index = q
+
+
+## A single click while a switch is queued fires everything loaded, WoWS style.
+func fires_full_salvo() -> bool:
+	return queued_index >= 0
 
 
 
