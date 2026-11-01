@@ -1311,11 +1311,13 @@ func _build_leaderboard() -> Array[Dictionary]:
 		# ship at the bottom of the table was outplayed or was a recruit. Empty
 		# for humans, who do not have one.
 		var aptitude_name: String = ""
+		var salvos_held: int = 0
 		if ship.team.is_bot:
 			var bot_controller = ship.get_node_or_null("Modules/BotController")
-			if bot_controller != null and bot_controller.behavior != null \
-					and bot_controller.behavior.aptitude != null:
-				aptitude_name = bot_controller.behavior.aptitude.level_name()
+			if bot_controller != null and bot_controller.behavior != null:
+				salvos_held = bot_controller.behavior.salvos_held
+				if bot_controller.behavior.aptitude != null:
+					aptitude_name = bot_controller.behavior.aptitude.level_name()
 		var entry := {
 			"player_name": p_name,
 			"ship_name": ship.ship_name,
@@ -1332,6 +1334,7 @@ func _build_leaderboard() -> Array[Dictionary]:
 			"sec_damage": stats.sec_damage,
 			"torpedo_count": stats.torpedo_count,
 			"torpedoes_fired": stats.torpedoes_fired,
+			"salvos_held": salvos_held,
 			"torpedoes_grounded": stats.torpedoes_grounded,
 			"torpedoes_grounded_late": stats.torpedoes_grounded_late,
 			"torpedo_damage": stats.torpedo_damage,

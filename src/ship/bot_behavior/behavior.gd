@@ -39,6 +39,15 @@ const TORP_PREDICT_DT: float = 0.5
 ## Aim-point step cap; and the share of its speed a target may gain or shed over a run.
 const TORP_SPREAD_MAX: float = 0.06
 const TORP_SPEED_DOUBT: float = 0.15
+## Launch gate: tubes wait for a spread with this hit chance, the bar falling by e per TORP_HOLD_RELOADS held with a solution.
+const TORP_MIN_HIT: float = 0.3
+const TORP_HOLD_RELOADS: float = 1.0
+const TORP_WIGGLE_TAU_S: float = 20.0
+const TORP_ROOM_STEPS: int = 4
+var torp_hit_chance: float = 0.0
+var _torp_wiggle: float = 0.0
+var _torp_held_s: float = 0.0
+var _torp_held_at: float = -INF
 const MIN_TORPEDO_INTERVAL: float = 0.5
 const MAX_TORPEDO_INTERVAL: float = 15.0
 const RANGE_FOR_MAX_INTERVAL: float = 10000.0
@@ -245,7 +254,12 @@ func would_fire_guns() -> bool:
 
 ## The one rule for launching torpedoes now: a solved lead, which also holds the range gate.
 func would_fire_torpedoes() -> bool:
-	return has_valid_torpedo_solution
+	return has_valid_torpedo_solution and torp_hit_chance >= torp_hit_floor()
+
+func torp_hit_floor() -> float:
+	var tc = _ship.torpedo_controller
+	var reload: float = tc.get_params().reload_time if tc != null else 0.0
+	return TORP_MIN_HIT * exp(-_torp_held_s / maxf(TORP_HOLD_RELOADS * reload, 1.0))
 
 ## True when quiet guns would let us go, or stay, dark. Radar, hydro and
 ## aircraft do not read bloom, and neither does a spotter already inside our
@@ -1341,6 +1355,7 @@ func _can_hit_target(target: Ship, contact: Dictionary) -> bool:
 func update_torpedo_aim(target_ship: Ship):
 	"""Update torpedo aiming solution. Call this for ships with torpedoes."""
 	has_valid_torpedo_solution = false
+	torp_hit_chance = 0.0
 	current_salvo_positions.clear()
 
 	if !target_ship or !is_instance_valid(target_ship):
@@ -1371,10 +1386,16 @@ func update_torpedo_aim(target_ship: Ship):
 		return
 
 	var to_lead := torpedo_target_position - launch_from
-	var base_angle := atan2(to_lead.x, to_lead.z)
-	# The five aim points span the target's envelope at the intercept, the first on the prediction.
-	var spread_angle: float = minf(atan2(_torp_envelope(target_ship, interception_distance / torpedo_speed, torpedo_controller) * 0.5,
-		interception_distance), TORP_SPREAD_MAX)
+	var lane := Vector3(to_lead.z, 0.0, -to_lead.x).normalized()
+	var run_s: float = interception_distance / torpedo_speed
+	var env: float = _torp_envelope(target_ship, run_s, torpedo_controller, _torp_speed, _torp_wiggle)
+	var room := _torp_room(torpedo_target_position, lane, env, target_ship)
+	# The five aim points span where the target can be at the intercept, land cut off; the first at its middle.
+	var base_angle := atan2(to_lead.x, to_lead.z) + atan2((room.y - room.x) * 0.5, interception_distance)
+	var spread_angle: float = minf(atan2((room.x + room.y) * 0.25, interception_distance), TORP_SPREAD_MAX)
+	torp_hit_chance = _torp_spread_chance(target_ship, launch_from, torpedo_speed, base_angle, spread_angle,
+		interception_distance, room.x + room.y, _track_h[_track_h.size() - 1], torpedo_controller)
+	_note_torp_hold(torpedo_controller)
 
 	for offset in [0, -1, 1, -2, 2]:
 		var torpedo_angle = base_angle + (offset * spread_angle)
@@ -1502,11 +1523,14 @@ func _track_torpedo_target(t: Ship) -> void:
 		_torp_track = t
 		_torp_speed = v
 		_torp_yaw_rate = 0.0
+		_torp_wiggle = absf(t.angular_velocity.y)
 	else:
 		var dt: float = now - _torp_at
 		if dt > 0.0:
+			var yaw: float = angle_difference(_torp_heading, h) / dt
 			_torp_speed = lerpf(_torp_speed, v, 1.0 - exp(-dt / TORP_SPEED_TAU_S))
-			_torp_yaw_rate = lerpf(_torp_yaw_rate, angle_difference(_torp_heading, h) / dt, 1.0 - exp(-dt / TORP_YAW_TAU_S))
+			_torp_yaw_rate = lerpf(_torp_yaw_rate, yaw, 1.0 - exp(-dt / TORP_YAW_TAU_S))
+			_torp_wiggle = lerpf(_torp_wiggle, absf(yaw), 1.0 - exp(-dt / TORP_WIGGLE_TAU_S))
 	_torp_heading = h
 	_torp_at = now
 
@@ -1567,11 +1591,11 @@ func _launchers_centre(tc: TorpedoController) -> Vector3:
 	return out
 
 ## How far `t` can be from our prediction when a spread arrives `run_s` on: a full-rudder turn from when it
-## can see the torpedoes, and a throttle change over the whole run; at least a hull length.
-func _torp_envelope(t: Ship, run_s: float, tc: TorpedoController) -> float:
+## can see the torpedoes, its weaving before that, and a throttle change over the whole run; at least a hull length.
+func _torp_envelope(t: Ship, run_s: float, tc: TorpedoController, speed: float, wiggle: float) -> float:
 	var mc = t.movement_controller
 	var r: float = maxf(mc._p().turning_circle_radius, 1.0)
-	var v: float = maxf(_torp_speed, 1.0)
+	var v: float = maxf(speed, 1.0)
 	var tp: TorpedoParams = tc.get_torp_params()
 	var seen_m: float = tp.detection_range
 	if t.concealment != null and t.concealment.params != null:
@@ -1579,8 +1603,96 @@ func _torp_envelope(t: Ship, run_s: float, tc: TorpedoController) -> float:
 		seen_m = maxf(seen_m * cp.torpedo_detection_multiplier, cp.torpedo_detection_range_override)
 	var dodge_s: float = minf(run_s, seen_m / maxf(tp.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0))
 	var turn: float = r * (1.0 - cos(minf(v * dodge_s / r, PI / 2.0)))
+	var pre_s: float = maxf(run_s - dodge_s, 0.0)
+	turn += minf(0.25 * wiggle * v * pre_s * pre_s, r * (1.0 - cos(minf(v * pre_s / r, PI / 2.0))))
 	var throttle: float = TORP_SPEED_DOUBT * v * run_s
 	return maxf(mc.ship_length, sqrt(turn * turn + throttle * throttle))
+
+## How far `t` can get from `at` each way across the torpedo lane before land: Vector2(-lane, +lane), each at most `env`.
+func _torp_room(at: Vector3, lane: Vector3, env: float, t: Ship) -> Vector2:
+	var clear: float = t.movement_controller.ship_beam
+	var out := Vector2(env, env)
+	if NavigationMapManager.get_distance(at) < clear:
+		return out
+	for side in 2:
+		var dir: float = 1.0 if side == 1 else -1.0
+		for i in range(1, TORP_ROOM_STEPS + 1):
+			if NavigationMapManager.get_distance(at + lane * dir * env * i / TORP_ROOM_STEPS) < clear:
+				out[side] = env * (i - 1) / TORP_ROOM_STEPS
+				break
+	return out
+
+## Chance one launch hits a ship `width` of possible positions across the lane: its fan, each torpedo widened by
+## the hull seen across the lane, over that width.
+func _torp_launch_chance(t: Ship, heading: float, lane_angle: float, dist: float, width: float, tc: TorpedoController) -> float:
+	var tubes: int = _tube_count(tc)
+	var mc = t.movement_controller
+	var cross: float = absf(sin(angle_difference(heading, lane_angle)))
+	var profile: float = mc.ship_length * cross + mc.ship_beam * (1.0 - cross)
+	var cover: float = (tubes - 1) * minf(0.012 * dist, profile) + profile
+	return minf(1.0, cover / (width + profile))
+
+## Chance a spread laid on `base` hits anything: the target, from each live launcher's share of the spread,
+## and any other seen enemy whose possible positions the spread's sector crosses.
+func _torp_spread_chance(target: Ship, from: Vector3, speed: float, base: float, step: float, dist: float,
+		width: float, heading: float, tc: TorpedoController) -> float:
+	var live := 0
+	for l in tc.launchers:
+		live += 0 if l.disabled else 1
+	var miss: float = 1.0 - minf(1.0, live * _torp_launch_chance(target, heading, base, dist, width, tc))
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return 1.0 - miss
+	var reach: float = tc.get_params()._range * 0.95
+	var half: float = 2.0 * step + 0.006 * (_tube_count(tc) - 1)
+	for e: Ship in server_node.get_valid_targets(_ship.team.team_id):
+		if e == target or not e.is_alive():
+			continue
+		var at := _linear_intercept(e, from, speed)
+		var d: float = from.distance_to(at)
+		if not at.is_finite() or d > reach:
+			continue
+		var v: float = Vector2(e.linear_velocity.x, e.linear_velocity.z).length()
+		var w: float = atan2(_torp_envelope(e, d / speed, tc, v, absf(e.angular_velocity.y)), d)
+		var a: float = angle_difference(base, atan2(at.x - from.x, at.z - from.z))
+		var overlap: float = clampf((minf(a + w, half) - maxf(a - w, -half)) / (2.0 * w), 0.0, 1.0)
+		if overlap <= 0.0:
+			continue
+		var fwd: Vector3 = -e.global_transform.basis.z
+		miss *= 1.0 - overlap * _torp_launch_chance(e, atan2(fwd.x, fwd.z), base, d, 2.0 * w * d, tc)
+	return 1.0 - miss
+
+static func _tube_count(tc: TorpedoController) -> int:
+	var tubes := 1
+	for l in tc.launchers:
+		tubes = maxi(tubes, l.muzzles.size())
+	return tubes
+
+## Where a torpedo from `from` at `speed` meets `e` holding its velocity; INF never.
+static func _linear_intercept(e: Ship, from: Vector3, speed: float) -> Vector3:
+	var p := Vector2(e.global_position.x - from.x, e.global_position.z - from.z)
+	var v := Vector2(e.linear_velocity.x, e.linear_velocity.z)
+	var a: float = v.dot(v) - speed * speed
+	var b: float = 2.0 * p.dot(v)
+	var c: float = p.dot(p)
+	var disc: float = b * b - 4.0 * a * c
+	if absf(a) < 1e-6 or disc < 0.0:
+		return Vector3.INF
+	var t: float = (-b - sqrt(disc)) / (2.0 * a)
+	if t < 0.0:
+		t = (-b + sqrt(disc)) / (2.0 * a)
+	if t < 0.0:
+		return Vector3.INF
+	return Vector3(e.global_position.x + v.x * t, 0.0, e.global_position.z + v.y * t)
+
+## Seconds the tubes have waited loaded on a solution the gate refused; a launch starts over.
+func _note_torp_hold(tc: TorpedoController) -> void:
+	var now: float = SimClock.now()
+	if _get_max_torp_reload() < 1.0:
+		_torp_held_s = 0.0
+	elif now - _torp_held_at < 1.0:
+		_torp_held_s += now - _torp_held_at
+	_torp_held_at = now
 
 ## Torpedoes run on past the intercept; a fan is checked this far times its distance.
 const TORP_PATH_PAST: float = 1.25
@@ -4150,6 +4262,9 @@ func engage_target(target: Ship):
 		_ship.artillery_controller.select_shell(aim.ammo)
 		_ammo_changed_at = SimClock.now()
 
+	if _hold_salvo(target, contact, aim.ammo):
+		return
+
 	# Fire only a gun that is loaded, on the lead (its _aim_point can be stale from
 	# the nav fallback aim) and whose shell arc clears terrain.
 	for gun in _ship.artillery_controller.guns:
@@ -4161,6 +4276,68 @@ func engage_target(target: Ship):
 			return
 		gun.fire(_ship.artillery_controller.target_mod)
 		return
+
+## Salvo hold: the next salvo waits up to HOLD_MAX_RELOADS for the aspect the target is turning to,
+## when damage per second, EV(wait) / (reload + wait), is best after a wait.
+const HOLD_STEP_S: float = 1.0
+const HOLD_MAX_RELOADS: float = 0.5
+const HOLD_TURN_FADE_S: float = 10.0
+const HOLD_EVAL_S: float = 0.5
+var _hold_since: float = INF
+var _hold_eval_at: float = -INF
+var _hold_wait: bool = false
+var salvos_held: int = 0
+
+func _hold_salvo(target: Ship, contact: Dictionary, ammo: int) -> bool:
+	var ac = _ship.artillery_controller
+	for g in ac.guns:
+		if not g.disabled and g.reload < 1.0:
+			_hold_since = INF
+			_hold_wait = false
+			return false
+	var now: float = SimClock.now()
+	var reload: float = ac.get_params().reload_time
+	if now - _hold_since >= HOLD_MAX_RELOADS * reload:
+		return false
+	if now - _hold_eval_at < HOLD_EVAL_S:
+		return _hold_wait
+	_hold_eval_at = now
+	var wait: bool = salvo_wait_s(target, contact, ammo, reload, maxf(now - _hold_since, 0.0)) > 0.0
+	if wait and not _hold_wait and _hold_since == INF:
+		_hold_since = now
+		salvos_held += 1
+	_hold_wait = wait
+	return wait
+
+## The wait that maximises damage per second on `target`'s turn, seconds; 0 fires now.
+## `held`: seconds already waited, sunk into the reload.
+func salvo_wait_s(target: Ship, contact: Dictionary, ammo: int, reload: float, held: float = 0.0) -> float:
+	var yaw: float = _believed_yaw_rate(target, contact)
+	if absf(yaw) < 0.005 or reload <= 0.0:
+		return 0.0
+	var me := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var p := Vector2(contact.position.x, contact.position.z)
+	var tof: float = BotGunnery.flight_time(_ship, me.distance_to(p))
+	if not is_finite(tof):
+		return 0.0
+	var fwd: Vector3 = -(contact.basis as Basis).z
+	var h0: float = atan2(fwd.x, fwd.z)
+	var v := Vector2(contact.velocity.x, contact.velocity.z)
+	var key: String = "ap_ev" if ammo == 0 else "he_ev"
+	var best_t := 0.0
+	var best := -INF
+	var t := 0.0
+	while t <= HOLD_MAX_RELOADS * reload - held + 0.001:
+		var s: float = t + tof
+		var h: float = h0 + yaw * HOLD_TURN_FADE_S * (1.0 - exp(-s / HOLD_TURN_FADE_S))
+		var to_me: Vector2 = me - (p + v * s)
+		var aspect: float = rad_to_deg(absf(angle_difference(h, atan2(to_me.x, to_me.y))))
+		var ev: float = float(BotGunnery.expected(_ship, target, to_me.length(), aspect).get(key, 0.0)) / (reload + held + t)
+		if ev > best * (1.0 + 0.02 * signf(t)):
+			best = ev
+			best_t = t
+		t += HOLD_STEP_S
+	return best_t
 
 func _arc_clear(target_lead: Vector3) -> bool:
 	var shell_params = _ship.artillery_controller.get_shell_params()
