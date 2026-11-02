@@ -1,0 +1,42 @@
+{
+ "scenario": {
+  "duration_s": 300,
+  "elapsed_s": 900,
+  "trace": [
+   "SP1",
+   "Shimakaze"
+  ],
+  "log_dt": 5.0,
+  "expect": "Late game, SP1 alone vs a dark Shimakaze: SP1 hunts and spots it, closes and kills it."
+ },
+ "team": {
+  "sp1": {
+   "team": "0",
+   "player_id": "sp1",
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -2000,
+    -11000
+   ],
+   "heading_deg": 90,
+   "speed": 15
+  },
+  "shima": {
+   "team": "1",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    12000,
+    -11000
+   ],
+   "heading_deg": 270,
+   "speed": 15
+  }
+ }
+}

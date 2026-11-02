@@ -122,6 +122,8 @@ func _physics_process(_delta: float) -> void:
 		cols.append("%.1fdeg:%.0f" % [BotGunnery._descent_center(i), v_ref[i]])
 	print("bake: reference speeds " + " ".join(cols))
 	print("bake: hulls loaded at %.1f s" % ((_t_loaded - _t0) / 1000.0))
+	_bounce_classes = bounce_classes(shells)
+	print("bake: bounce classes %s deg" % [Array(_bounce_classes).map(func(x): return snappedf(rad_to_deg(x), 0.1))])
 	_bake_all(_to_bake, ref, v_ref, om_max)
 	merge()
 	print("bake: done in %.1f s" % ((Time.get_ticks_msec() - _t0) / 1000.0))
@@ -156,6 +158,21 @@ func _collect_shells() -> Array:
 						seen[sh.get_instance_id()] = true
 						sh.set_meta("bake_main", main)
 						out.append(sh)
+	return out
+
+
+var _bounce_classes := PackedFloat32Array()
+
+## Every AP shell's auto_bounce, distinct, ascending: the classes each profile is swept at.
+static func bounce_classes(shells: Array) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	for sh in shells:
+		if (sh as ShellParams).type != ShellParams.ShellType.AP:
+			continue
+		var a: float = sh.auto_bounce
+		if not Array(out).any(func(x): return absf(x - a) < 0.001):
+			out.append(a)
+	out.sort()
 	return out
 
 
@@ -306,6 +323,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 	var edges := PackedFloat32Array()
 	var edge_off := PackedInt32Array([0])
 	var ev_jobs := PackedByteArray()
+	var job_refine: Array = []
 	for h in todo.size():
 		for ai in BotGunnery._aspect_edges().size():
 			for di in BotGunnery.descent_edges().size():
@@ -323,11 +341,12 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 				pt_off.append(points.size())
 				edges.append_array(geo["edges"])
 				edge_off.append(edges.size())
+				job_refine.append(geo["refine"])
 	var t_geo := Time.get_ticks_msec()
 	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
 		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
-		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt,
-		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(),
+		"bisect_mm": BISECT_MM, "merge_mm": BotGunnery.PEN_QUANTUM_MM, "bounce_classes": _bounce_classes, "om_max": om_max, "threads": _threads, "smt": _smt,
+		"ev_jobs": ev_jobs, "job_refine": job_refine, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(),
 		"ev_guarantee": 0.0,
 		"ev_turret_cap": BotGunnery.DMG_TURRET})
 	var st: Dictionary = res.get("stats", {})

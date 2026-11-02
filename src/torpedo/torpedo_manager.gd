@@ -9,7 +9,7 @@ var bulletId: int = 0
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
 var _pd_shape_query := PhysicsShapeQueryParameters3D.new()
-const TORPEDO_SPEED_MULTIPLIER = 5.0
+const TORPEDO_SPEED_MULTIPLIER = 4.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 

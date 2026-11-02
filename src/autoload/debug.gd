@@ -1295,7 +1295,7 @@ func _update_sdf_tiles_node(cmd: Array, node: Node3D) -> void:
 func _update_line_node(cmd: Array, node: Node3D) -> void:
 	_update_color_only(cmd, node, 2)
 	var im := (node as MeshInstance3D).mesh as ImmediateMesh
-	if node.get_meta(&"ends", null) == [cmd[0], cmd[1]]:
+	if node.get_meta(&"ends", []) == [cmd[0], cmd[1]]:
 		return
 	node.set_meta(&"ends", [cmd[0], cmd[1]])
 	im.clear_surfaces()

@@ -1,0 +1,659 @@
+{
+ "scenario": {
+  "duration_s": 630.0,
+  "elapsed_s": 570.0,
+  "expect": "From 1793590960_0.replay at 9:30: the recorded match was won by team 1.",
+  "log_dt": 5.0,
+  "source": {
+   "at_s": 570.0,
+   "duration_s": 1205.0,
+   "final": {
+    "alive": [
+     2,
+     3
+    ],
+    "hp": [
+     29184.0,
+     82891.0
+    ],
+    "points": [
+     490,
+     590
+    ]
+   },
+   "replay": "1793590960_0.replay",
+   "winning_team": 1
+  },
+  "sunk": [
+   {
+    "class": 0,
+    "team": 0
+   },
+   {
+    "class": 1,
+    "team": 0
+   },
+   {
+    "class": 0,
+    "team": 0
+   },
+   {
+    "class": 2,
+    "team": 0
+   },
+   {
+    "class": 1,
+    "team": 0
+   },
+   {
+    "class": 1,
+    "team": 1
+   },
+   {
+    "class": 0,
+    "team": 1
+   },
+   {
+    "class": 1,
+    "team": 1
+   },
+   {
+    "class": 0,
+    "team": 1
+   },
+   {
+    "class": 2,
+    "team": 1
+   },
+   {
+    "class": 0,
+    "team": 1
+   },
+   {
+    "class": 1,
+    "team": 1
+   }
+  ],
+  "trace": []
+ },
+ "team": {
+  "p03": {
+   "aptitude": 1,
+   "heading_deg": 144.6,
+   "hp": 13464.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 17.6,
+    "pos": [
+     10648.0,
+     -1635.0
+    ],
+    "rot": -1.157,
+    "vel": [
+     42.08,
+     -4.83
+    ]
+   },
+   "player_id": "p03",
+   "pos": [
+    11213.6,
+    -2155.4
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "speed": 53.44,
+   "team": "0",
+   "throttle": 4,
+   "torp_last_s": {
+    "0": 277.7,
+    "1": 277.3,
+    "2": 276.8
+   }
+  },
+  "p04": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 88.8,
+     "slot": 3,
+     "used": 3
+    },
+    {
+     "last_s": 94.6,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 68.3,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": 144.4,
+   "hp": 39884.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 8.8,
+    "pos": [
+     10567.0,
+     -2600.0
+    ],
+    "rot": -0.265,
+    "vel": [
+     12.35,
+     -31.88
+    ]
+   },
+   "player_id": "p04",
+   "pos": [
+    10709.1,
+    -2951.0
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "speed": 38.06,
+   "team": "0",
+   "throttle": 4
+  },
+  "p05": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 362.3,
+     "slot": 2,
+     "used": 1
+    },
+    {
+     "last_s": 91.5,
+     "slot": 1,
+     "used": 1
+    },
+    {
+     "last_s": 37.2,
+     "slot": 0,
+     "used": 1
+    }
+   ],
+   "heading_deg": 66.2,
+   "hp": 19641.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 111.8,
+    "pos": [
+     2066.0,
+     -4146.0
+    ],
+    "rot": -1.246,
+    "vel": [
+     27.49,
+     -14.6
+    ]
+   },
+   "player_id": "p05",
+   "pos": [
+    4221.3,
+    -4415.0
+   ],
+   "reload": [
+    0.413,
+    0.409,
+    0.405,
+    0.401
+   ],
+   "ship": "res://assets/Ships/H42/H42.tscn",
+   "speed": -3.5,
+   "team": "0",
+   "throttle": -1
+  },
+  "p08": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 224.8,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 149.1,
+     "slot": 0,
+     "used": 2
+    },
+    {
+     "last_s": 148.0,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": 31.4,
+   "hp": 77209.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 15.4,
+    "pos": [
+     -6817.0,
+     -522.0
+    ],
+    "rot": -2.974,
+    "vel": [
+     3.24,
+     36.24
+    ]
+   },
+   "player_id": "p08",
+   "pos": [
+    -6686.6,
+    24.0
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/H42/H42.tscn",
+   "speed": 34.62,
+   "team": "0",
+   "throttle": 4
+  },
+  "p09": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 194.9,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 20.1,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": 105.9,
+   "hp": 9474.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 15.4,
+    "pos": [
+     -5869.0,
+     1076.0
+    ],
+    "rot": -0.079,
+    "vel": [
+     0.54,
+     -27.42
+    ]
+   },
+   "player_id": "p09",
+   "pos": [
+    -5723.8,
+    743.9
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "speed": 33.77,
+   "team": "0",
+   "throttle": 4,
+   "torp_last_s": {
+    "0": 34.8,
+    "1": 23.0
+   }
+  },
+  "p10": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 107.6,
+     "slot": 3,
+     "used": 3
+    },
+    {
+     "last_s": 107.6,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 213.3,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": 90.8,
+   "hp": 27934.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 43.2,
+    "pos": [
+     -6562.0,
+     -4201.0
+    ],
+    "rot": -1.239,
+    "vel": [
+     37.27,
+     -12.48
+    ]
+   },
+   "player_id": "p10",
+   "pos": [
+    -5855.1,
+    -4356.8
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "speed": -21.99,
+   "team": "0",
+   "throttle": -1
+  },
+  "p11": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 176.9,
+     "slot": 2,
+     "used": 2
+    }
+   ],
+   "heading_deg": 63.2,
+   "hp": 24516.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 15.4,
+    "pos": [
+     -8880.0,
+     667.0
+    ],
+    "rot": -0.373,
+    "vel": [
+     -0.69,
+     -39.96
+    ]
+   },
+   "player_id": "p11",
+   "pos": [
+    -8548.7,
+    359.4
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "speed": 36.74,
+   "team": "0",
+   "throttle": 4
+  },
+  "p14": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 278.9,
+     "slot": 1,
+     "used": 2
+    },
+    {
+     "last_s": 172.1,
+     "slot": 2,
+     "used": 1
+    }
+   ],
+   "heading_deg": 103.8,
+   "hp": 1969.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 172.1,
+    "pos": [
+     -7794.0,
+     5643.0
+    ],
+    "rot": 3.127,
+    "vel": [
+     0.68,
+     46.69
+    ]
+   },
+   "player_id": "p14",
+   "pos": [
+    -3938.4,
+    7983.0
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "speed": 38.65,
+   "team": "1",
+   "throttle": 3,
+   "torp_last_s": {
+    "0": 76.7,
+    "1": 76.3,
+    "2": 116.9
+   }
+  },
+  "p18": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 104.8,
+     "slot": 3,
+     "used": 3
+    },
+    {
+     "last_s": 118.6,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 335.7,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": 125.3,
+   "hp": 24771.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 13.5,
+    "pos": [
+     3195.0,
+     3825.0
+    ],
+    "rot": 0.526,
+    "vel": [
+     -25.74,
+     -22.8
+    ]
+   },
+   "player_id": "p18",
+   "pos": [
+    3137.2,
+    3385.0
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "speed": 34.12,
+   "team": "1",
+   "throttle": 4
+  },
+  "p20": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 188.9,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 181.6,
+     "slot": 1,
+     "used": 1
+    }
+   ],
+   "heading_deg": -153.5,
+   "hp": 18011.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 16.1,
+    "pos": [
+     43.0,
+     3185.0
+    ],
+    "rot": 0.352,
+    "vel": [
+     -5.26,
+     -32.39
+    ]
+   },
+   "player_id": "p20",
+   "pos": [
+    -192.4,
+    2509.8
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "speed": 47.53,
+   "team": "1",
+   "throttle": 4,
+   "torp_last_s": {
+    "0": 88.0,
+    "1": 86.8
+   }
+  },
+  "p22": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 106.9,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 6.7,
+     "slot": 0,
+     "used": 1
+    }
+   ],
+   "heading_deg": 168.8,
+   "hp": 93114.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 21.5,
+    "pos": [
+     5741.0,
+     -536.0
+    ],
+    "rot": -0.17,
+    "vel": [
+     2.98,
+     -26.13
+    ]
+   },
+   "player_id": "p22",
+   "pos": [
+    5849.8,
+    -1180.5
+   ],
+   "reload": [
+    0.068,
+    0.065,
+    0.276,
+    0.248
+   ],
+   "ship": "res://assets/Ships/H44/H44.2.tscn",
+   "speed": 34.76,
+   "team": "1",
+   "throttle": 4
+  },
+  "p23": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 199.9,
+     "slot": 2,
+     "used": 2
+    },
+    {
+     "last_s": 126.8,
+     "slot": 1,
+     "used": 2
+    },
+    {
+     "last_s": 228.4,
+     "slot": 0,
+     "used": 1
+    }
+   ],
+   "heading_deg": 101.0,
+   "hp": 20867.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 47.0,
+    "pos": [
+     14414.0,
+     1020.0
+    ],
+    "rot": -1.254,
+    "vel": [
+     0.03,
+     -0.01
+    ]
+   },
+   "player_id": "p23",
+   "pos": [
+    15690.8,
+    712.3
+   ],
+   "reload": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "speed": 30.37,
+   "team": "1",
+   "throttle": 4,
+   "torp_last_s": {
+    "0": 118.1,
+    "1": 117.7
+   }
+  }
+ }
+}

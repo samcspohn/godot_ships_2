@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 15
+const SOLVER_VERSION: int = 18
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -96,6 +96,14 @@ const FINE_Y_HI_M: float = 4.0
 const FINE_ROW_M: float = 0.8
 const FINE_ROWS_MAX: int = 12
 const FINE_DESCENT_MAX_DEG: float = 20.0
+## Each feature point's cell and the cells above and below it are split to about SUB_CELL_M, so a
+## narrow pen window there is walked, not aliased; the points are aim candidates too.
+const SUB_CELL_M: float = 1.0
+const SUB_MAX: int = 3
+## Projected feature points closer than this many columns and metres to one kept earlier are dropped:
+## a thin projection squeezes the citadel's 15 into a few cells.
+const ANCHOR_GAP_COLS: float = 2.0
+const ANCHOR_GAP_V_M: float = 2.0
 ## A candidate within this fraction of the best value wins if nearer the centre.
 const CENTER_PULL: float = 0.03
 
@@ -153,6 +161,7 @@ static var _answers: Dictionary = {}
 ## [table path, bucket key, pen quantum, overmatch, is_he] -> resolved codes
 static var _resolved: Dictionary = {}
 static var _frames: Dictionary = {}
+static var _features: Dictionary = {}
 static var _payout_table := PackedFloat64Array()
 static var _native_pm: Object = null
 static var _range_edge_cache: Dictionary = {}
@@ -203,6 +212,7 @@ func _solve(shooter: Ship, target: Ship, kind: int) -> Dictionary:
 		"dps": ans["dps"],
 		"salvo_ev": ans["salvo_ev"],
 		"reload": ans["reload"],
+		"options": ans["options"],
 	}
 
 
@@ -275,17 +285,17 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 			var sigma: float = m["sigma"]
 			var miss := lead_axes(s[0], aspect_deg, range_m, lead) * sigma
 			var wide := Vector2(Vector2(hd.x, miss.x).length(), Vector2(hd.y, miss.y).length())
-			var r: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, wide, sigma)
+			var r: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, shell.auto_bounce, wide, sigma)
 			if r.x < 0.0:
 				continue
-			var medium: float = maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, wide, sigma).y, 0.0) * r.x
+			var medium: float = maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, shell.auto_bounce, wide, sigma).y, 0.0) * r.x
 			var g: float = pm.ev_guarantee_share(float(m["guarantee"]), CITADEL_ELLIPSE, sigma)
 			if g > 0.0:
 				var gw := Vector2(Vector2(hd.x * CITADEL_ELLIPSE.x * GUARANTEE_SD.x * sigma, miss.x).length(),
 					Vector2(hd.y * CITADEL_ELLIPSE.y * GUARANTEE_SD.y * sigma, miss.y).length())
-				var q: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, gw, sigma)
+				var q: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, shell.auto_bounce, gw, sigma)
 				if q.x >= 0.0:
-					medium = (1.0 - g) * medium + g * maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, gw, sigma).y, 0.0) * q.x
+					medium = (1.0 - g) * medium + g * maxf(pm.ev_levels(chunk, s[2], shell.overmatch, is_he, shell.auto_bounce, gw, sigma).y, 0.0) * q.x
 					r = (1.0 - g) * r + g * q
 			var size: float = HPManager.size_mod(target.mass, shell.caliber)
 			value[ammo] += (r.x - medium + medium * pen_scale(target, shell.damage * size)) * shell.damage * size * rate
@@ -379,7 +389,7 @@ static func _register(ship: Ship) -> void:
 		ammo.append_array([shell.overmatch if shell != null else 0.0,
 			1.0 if shell != null and shell.type == ShellParams.ShellType.HE else 0.0,
 			shell.damage if shell != null else 0.0, shell.fire_buildup if shell != null else 0.0,
-			shell.caliber if shell != null else 0.0])
+			shell.caliber if shell != null else 0.0, shell.auto_bounce if shell != null else 0.0])
 	var r: float = SHELL_RANGE_STEP_M
 	while r <= top:
 		for t in tables:
@@ -749,6 +759,107 @@ static func _row_edges(lo: float, hi: float, n_u: int, band_lo: float, band_hi: 
 	return out
 
 
+## Ship-local aim features: citadel side 5 x 3, its ends 3 each and deck 3; upper casemate 5;
+## superstructure 3; bow and stern 2 each. Shooter on +x, as the lattice frames have it.
+static func feature_points(target: Ship) -> PackedVector3Array:
+	var key: String = target.scene_file_path
+	if _features.has(key):
+		return _features[key]
+	var boxes := {}
+	for part in target.armor_parts:
+		var mesh := part.get_parent() as MeshInstance3D
+		if mesh == null or part.type == ArmorPart.Type.MODULE:
+			continue
+		var box: AABB = target._node_to_ship_transform(mesh) * mesh.get_aabb()
+		boxes[part.type] = (boxes[part.type] as AABB).merge(box) if boxes.has(part.type) else box
+	var out := PackedVector3Array()
+	var along := func(b: AABB, i: int, n: int) -> float: return lerpf(b.position.z, b.end.z, (i + 0.5) / n)
+	var cit = boxes.get(ArmorPart.Type.CITADEL)
+	if cit != null:
+		var c: AABB = cit
+		for i in 5:
+			for j in 3:
+				out.append(Vector3(c.end.x, lerpf(c.position.y, c.end.y, (j + 0.5) / 3.0), along.call(c, i, 5)))
+		for z in [c.position.z, c.end.z]:
+			for i in 3:
+				out.append(Vector3(lerpf(c.position.x, c.end.x, (i + 0.5) / 3.0), c.get_center().y, z))
+		for i in 3:
+			out.append(Vector3(0.0, c.end.y, along.call(c, i, 3)))
+	var cas = boxes.get(ArmorPart.Type.CASEMATE)
+	if cas != null:
+		var k: AABB = cas
+		var y_lo: float = (cit as AABB).end.y if cit != null else k.get_center().y
+		for i in 5:
+			out.append(Vector3(k.end.x, 0.5 * (y_lo + k.end.y), along.call(k, i, 5)))
+	for t in [[ArmorPart.Type.SUPERSTRUCTURE, 3], [ArmorPart.Type.BOW, 2], [ArmorPart.Type.STERN, 2]]:
+		var b = boxes.get(t[0])
+		if b == null:
+			continue
+		var bb: AABB = b
+		var x: float = 0.0 if t[0] == ArmorPart.Type.SUPERSTRUCTURE else 0.5 * bb.end.x
+		var y: float = bb.get_center().y if t[0] == ArmorPart.Type.SUPERSTRUCTURE else lerpf(maxf(bb.position.y, 0.0), bb.end.y, 0.3)
+		for i in int(t[1]):
+			out.append(Vector3(x, y, along.call(bb, i, int(t[1]))))
+	_features[key] = out
+	return out
+
+
+## The feature points in the plane, the cells split around them, and the sub-cell ray points:
+## the blob's refine section (survey.rs) and the points to walk after the grid's.
+static func _refine(target: Ship, frame: Array, dir: Vector3, rect: Vector4, nx: int,
+		edges: PackedFloat32Array) -> Dictionary:
+	var ny: int = edges.size() - 1
+	var du: float = (rect.z - rect.x) / nx
+	var anchors := PackedVector2Array()
+	var split := {}
+	for p in feature_points(target):
+		var q := _to_plane(p, dir, frame)
+		if q.x <= rect.x or q.x >= rect.z or q.y <= rect.y or q.y >= rect.w or anchors.size() >= 255:
+			continue
+		var near := false
+		for a in anchors:
+			if absf(a.x - q.x) < ANCHOR_GAP_COLS * du and absf(a.y - q.y) < ANCHOR_GAP_V_M:
+				near = true
+				break
+		if near:
+			continue
+		anchors.append(q)
+		var ix: int = clampi(int((q.x - rect.x) / du), 0, nx - 1)
+		var iy: int = clampi(edges.bsearch(q.y) - 1, 0, ny - 1)
+		for dy in [-1, 0, 1]:
+			if iy + dy >= 0 and iy + dy < ny:
+				split[(iy + dy) * nx + ix] = true
+	var cells: Array = split.keys()
+	cells.sort()
+	var kx: int = clampi(ceili(du / SUB_CELL_M - 0.001), 1, SUB_MAX)
+	var ky := PackedByteArray()
+	for iy in ny:
+		ky.append(clampi(ceili((edges[iy + 1] - edges[iy]) / SUB_CELL_M - 0.001), 1, SUB_MAX))
+	var b := PackedByteArray()
+	b.resize(3)
+	b.encode_u16(0, cells.size())
+	b.encode_u8(2, kx)
+	b.append_array(ky)
+	var pts := PackedVector3Array()
+	for c in cells:
+		var o := b.size()
+		b.resize(o + 2)
+		b.encode_u16(o, c)
+		var ix: int = c % nx
+		var iy: int = c / nx
+		for sy in ky[iy]:
+			var v: float = lerpf(edges[iy], edges[iy + 1], (sy + 0.5) / ky[iy])
+			for sx in kx:
+				pts.append(frame[1] * (rect.x + (ix + (sx + 0.5) / kx) * du) + frame[2] * v)
+	b.append(anchors.size())
+	for a in anchors:
+		var o := b.size()
+		b.resize(o + 8)
+		b.encode_float(o, a.x)
+		b.encode_float(o + 4, a.y)
+	return {"refine": b, "points": pts}
+
+
 ## Parallel-ray lattice geometry for one bucket, from the hull's AABB.
 static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictionary:
 	var frame := lattice_frame(aspect_i)
@@ -780,8 +891,11 @@ static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictio
 	var rect := Vector4(lo.x, lo.y, lo.x + w, lo.y + h)
 	var edges := _row_edges(rect.y, rect.w, ny_u, band_lo, band_hi,
 		_descent_center(descent_i) < FINE_DESCENT_MAX_DEG)
+	var points := lattice_points(frame, rect, nx, edges)
+	var ref := _refine(target, frame, dir, rect, nx, edges)
+	points.append_array(ref["points"])
 	return {"nx": nx, "ny": edges.size() - 1, "rect": rect, "dir": dir, "edges": edges,
-		"points": lattice_points(frame, rect, nx, edges)}
+		"points": points, "refine": ref["refine"]}
 
 
 # ------------------------------------------------------------------ tables
@@ -917,15 +1031,15 @@ static func _shell_at(t: Dictionary, range_m: float) -> Array:
 
 
 static func _resolve(path: String, bid: int, blob: PackedByteArray, pen: float,
-		overmatch: float, is_he: bool) -> PackedByteArray:
-	var key := [path, bid, roundi(pen / PEN_QUANTUM_MM), roundi(overmatch), is_he]
+		overmatch: float, is_he: bool, bounce: float) -> PackedByteArray:
+	var key := [path, bid, roundi(pen / PEN_QUANTUM_MM), roundi(overmatch), is_he, 0.0 if is_he else snappedf(bounce, 0.001)]
 	var cached = _resolved.get(key)
 	if cached != null:
 		return cached
 	if _resolved.size() >= RESOLVE_CACHE_MAX:
 		_resolved.clear()
 	var pm := _projectile_native()
-	var codes: PackedByteArray = pm.lattice_resolve(blob, pen, overmatch, is_he)
+	var codes: PackedByteArray = pm.lattice_resolve(blob, pen, overmatch, is_he, bounce)
 	_resolved[key] = codes
 	return codes
 
@@ -965,7 +1079,31 @@ static func bucket_cells_off(b: PackedByteArray) -> int:
 
 
 static func bucket_prof_off(b: PackedByteArray) -> int:
-	return bucket_cells_off(b) + b.decode_u8(0) * b.decode_u8(1) * bucket_cell_width(b)
+	var r := bucket_refine(b)
+	return int(r["subs_off"]) + int(r["n_sub"]) * bucket_cell_width(b)
+
+
+## The refine section: {kx, ky, cells, anchors, subs_off, n_sub}.
+static func bucket_refine(b: PackedByteArray) -> Dictionary:
+	var nx: int = b.decode_u8(0)
+	var ny: int = b.decode_u8(1)
+	var o: int = bucket_cells_off(b) + nx * ny * bucket_cell_width(b)
+	var n_ref: int = b.decode_u16(o)
+	var kx: int = b.decode_u8(o + 2)
+	var ky := b.slice(o + 3, o + 3 + ny)
+	o += 3 + ny
+	var cells := PackedInt32Array()
+	var n_sub := 0
+	for i in n_ref:
+		var c: int = b.decode_u16(o + 2 * i)
+		cells.append(c)
+		n_sub += kx * ky[c / nx]
+	o += 2 * n_ref
+	var anchors := PackedVector2Array()
+	for i in b.decode_u8(o):
+		anchors.append(Vector2(b.decode_float(o + 1 + 8 * i), b.decode_float(o + 5 + 8 * i)))
+	o += 1 + 8 * anchors.size()
+	return {"kx": kx, "ky": ky, "cells": cells, "anchors": anchors, "subs_off": o, "n_sub": n_sub}
 
 
 static func bucket_cell(b: PackedByteArray, i: int) -> int:
@@ -1031,8 +1169,10 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	var b0 = buckets.get(bucket_id(aspect_c, desc_c))
 	if b0 == null:
 		return {}
-	var cands := lattice_points(lattice_frame(aspect_c), bucket_rect(b0), bucket_nx(b0),
-		bucket_edges(b0), CANDIDATE_STRIDE)
+	var frame_c := lattice_frame(aspect_c)
+	var cands := lattice_points(frame_c, bucket_rect(b0), bucket_nx(b0), bucket_edges(b0), CANDIDATE_STRIDE)
+	for a in bucket_refine(b0)["anchors"]:
+		cands.append(frame_c[1] * a.x + frame_c[2] * a.y)
 	var n := cands.size()
 	var cand_aspect := PackedInt32Array()
 	var cand_range := PackedFloat64Array()
@@ -1052,6 +1192,7 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	var fire := _zeros(n)
 	var chance := _zeros(n)
 	var guns: float = 0.0
+	var lead := DamageExpectation.lead_sigmas(target)
 
 	for m in mounts:
 		var rate: float = m["rate"]
@@ -1088,16 +1229,20 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 				var s := _shell_at(st, mean_r)
 				if s.is_empty():
 					continue
-				var codes := _resolve(path, gk, b, s[2], shell.overmatch, is_he)
+				var codes := _resolve(path, gk, b, s[2], shell.overmatch, is_he, shell.auto_bounce)
 				var frame := lattice_frame(int(gk) / 64)
 				var b_dir := bucket_dir(b)
 				var aims := PackedVector2Array()
 				aims.resize(idx.size())
 				for k in idx.size():
 					aims[k] = _to_plane(cands[idx[k]], b_dir, frame)
+				# Shells land where the lead puts them as well as where the guns spread them.
+				var hd := _half_disp(m, mean_r)
+				var miss := lead_axes(s[0], _aspect_center(int(gk) / 64), mean_r, lead) * float(m["sigma"])
+				hd = Vector2(Vector2(hd.x, miss.x).length(), Vector2(hd.y, miss.y).length())
 				var res: PackedFloat64Array = pm.lattice_score(codes, bucket_nx(b), bucket_ny(b),
-					bucket_rect(b), bucket_edges(b), aims, _half_disp(m, mean_r), m["sigma"],
-					m["guarantee"], CITADEL_ELLIPSE, payouts, DMG_TURRET)
+					bucket_rect(b), bucket_edges(b), aims, hd, m["sigma"],
+					m["guarantee"], CITADEL_ELLIPSE, payouts, DMG_TURRET, b)
 				var vals: PackedFloat64Array = value[ammo]
 				var lands: PackedFloat64Array = landed[ammo]
 				for k in idx.size():
@@ -1129,65 +1274,43 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	return ans
 
 
-## Shell by the landed-weighted mean over the plane (a magazine is committed for
-## an engagement), aim point by best value with a mild pull toward the centre.
+## Per shell, the best aim with a mild pull toward the centre; the shell whose best aim pays more.
+## Both answers are kept under "options" for the bot's shell policy.
 static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
 		fire: PackedFloat64Array, chance: PackedFloat64Array, total_rate: float, target: Ship) -> Dictionary:
 	var n := cands.size()
-	var ap_mean := _weighted_mean(value[0], landed[0], null, 0.0)
-	var he_mean := _weighted_mean(value[1], landed[1], fire, 1.0)
 	var center := Vector3(0.0, (target.aabb.position.y + target.aabb.size.y) * 0.25, 0.0)
-	for ammo in ([1, 0] if he_mean > ap_mean else [0, 1]):
+	var options := [{}, {}]
+	for ammo in 2:
 		var best: float = 0.0
 		for ci in n:
-			var v: float = value[ammo][ci]
-			if ammo == 1:
-				v += fire[ci]
-			best = maxf(best, v)
+			best = maxf(best, value[ammo][ci] + (fire[ci] if ammo == 1 else 0.0))
 		if best <= 0.0:
 			continue
 		var best_ci: int = -1
 		var best_dist: float = INF
 		for ci in n:
-			var v: float = value[ammo][ci]
-			if ammo == 1:
-				v += fire[ci]
-			if v < best * (1.0 - CENTER_PULL):
+			if value[ammo][ci] + (fire[ci] if ammo == 1 else 0.0) < best * (1.0 - CENTER_PULL):
 				continue
 			var dist: float = cands[ci].distance_to(center)
 			if dist < best_dist:
 				best_dist = dist
 				best_ci = ci
-		if best_ci >= 0:
-			var v: float = value[ammo][best_ci]
-			if ammo == 1:
-				v += fire[best_ci]
-			var fire_ev: float = fire[best_ci] if ammo == 1 else 0.0
-			return {"offset": cands[best_ci], "ammo": ammo, "payout": v, "landed": landed[ammo][best_ci],
-				"fire_chance": chance[best_ci] if ammo == 1 else 0.0, "fire_ev": fire_ev}
-	return {}
+		var fire_ev: float = fire[best_ci] if ammo == 1 else 0.0
+		options[ammo] = {"offset": cands[best_ci], "ammo": ammo, "payout": value[ammo][best_ci] + fire_ev,
+			"landed": landed[ammo][best_ci], "fire_chance": chance[best_ci] if ammo == 1 else 0.0, "fire_ev": fire_ev}
+	var pick: int = 0 if float(options[0].get("payout", 0.0)) >= float(options[1].get("payout", 0.0)) else 1
+	if options[pick].is_empty():
+		return {}
+	var ans: Dictionary = (options[pick] as Dictionary).duplicate()
+	ans["options"] = options
+	return ans
 
 
 ## Aspect bucket of the bearing from local point `p` to the gun at `g`.
 static func _aspect_of(g: Vector3, p: Vector3) -> int:
 	var d := g - p
 	return _aspect_index(rad_to_deg(atan2(absf(d.x), -d.z)))
-
-
-static func _weighted_mean(vals: PackedFloat64Array, weights: PackedFloat64Array,
-		extra, extra_scale: float) -> float:
-	var total: float = 0.0
-	var weight: float = 0.0
-	for i in vals.size():
-		var w: float = weights[i]
-		if w <= 0.0:
-			continue
-		var v: float = vals[i]
-		if extra != null:
-			v += (extra as PackedFloat64Array)[i] * extra_scale
-		total += v * w
-		weight += w
-	return total / weight if weight > 0.0 else 0.0
 
 
 static func _zeros(n: int) -> PackedFloat64Array:

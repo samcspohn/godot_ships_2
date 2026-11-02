@@ -1312,10 +1312,12 @@ func _build_leaderboard() -> Array[Dictionary]:
 		# for humans, who do not have one.
 		var aptitude_name: String = ""
 		var salvos_held: int = 0
+		var shots_by_ammo := PackedInt32Array([0, 0])
 		if ship.team.is_bot:
 			var bot_controller = ship.get_node_or_null("Modules/BotController")
 			if bot_controller != null and bot_controller.behavior != null:
 				salvos_held = bot_controller.behavior.salvos_held
+				shots_by_ammo = bot_controller.behavior.shots_by_ammo
 				if bot_controller.behavior.aptitude != null:
 					aptitude_name = bot_controller.behavior.aptitude.level_name()
 		var entry := {
@@ -1335,6 +1337,8 @@ func _build_leaderboard() -> Array[Dictionary]:
 			"torpedo_count": stats.torpedo_count,
 			"torpedoes_fired": stats.torpedoes_fired,
 			"salvos_held": salvos_held,
+			"gun_shots_ap": shots_by_ammo[0],
+			"gun_shots_he": shots_by_ammo[1],
 			"torpedoes_grounded": stats.torpedoes_grounded,
 			"torpedoes_grounded_late": stats.torpedoes_grounded_late,
 			"torpedo_damage": stats.torpedo_damage,

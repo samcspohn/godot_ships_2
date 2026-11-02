@@ -43,6 +43,22 @@ scenarios:
 		--gun-matrix-cache --no-live-mods --metrics build/scenario/$$n.json 2>&1 | cat > build/scenario/$$n.log & done; wait
 	python3 tools/botmatch/scenario_report.py build/scenario tools/scenarios
 
+# A scenario from a replay snapshot (default: newest replay, 9:30), then SNAP_N runs of it against the recorded ending.
+# make snap [REPLAY=user://replays/x.replay] [AT=9:30] [TRACE=SP1,Shimakaze];  make snap-run S=tools/scenarios/snap_x_930.json
+AT ?= 9:30
+SNAP_N ?= 8
+snap:
+	"$(GODOT)" --headless --path . -s res://tools/replay_scenario.gd -- --at $(AT) $(if $(REPLAY),--replay $(REPLAY)) \
+		$(if $(TRACE),--trace $(TRACE)) 2>&1 | grep -A40 "^replay_scenario"
+
+snap-run:
+	d=build/snap/$(notdir $(basename $(S))); rm -rf $$d; mkdir -p $$d; \
+	for i in $$(seq 1 $(SNAP_N)); do \
+		"$(GODOT)" --headless --path . --fixed-fps 16 --server --port $$((30600+i)) --botmatch res://$(S) --no-replay \
+		--gun-matrix-cache --no-live-mods --metrics $$d/run_$$i.json > $$d/run_$$i.log 2>&1 & done; wait; \
+	grep -c "SCRIPT ERROR" $$d/*.log | grep -v ":0$$"; \
+	python3 tools/botmatch/snap_report.py $(S) $$d
+
 # 3v3 behaviour check, not a performance metric.
 SMOKE_N ?= 4
 smoke:

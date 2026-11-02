@@ -1,5 +1,5 @@
 use super::survey::{
-    axis_weights, blob_header, erf, rd_u16, resolve_codes, BlobHdr, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
+    blob_header, erf, rd_u16, resolve_codes, AxisW, BlobHdr, Leaves, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
     CELL_SECTION_SHIFT, CELL_TURRET, MM_MISS,
 };
 
@@ -42,6 +42,8 @@ pub(crate) struct EvKernel {
     pub om_max: f64,
     /// Section-major like `payouts`: 0 light, 1 medium, 2 heavy (HPManager.DAMAGE_LEVEL).
     pub levels: Vec<u8>,
+    /// The blob's bounce classes, auto_bounce in radians, ascending.
+    pub bounces: Vec<f64>,
 }
 
 impl EvKernel {
@@ -71,19 +73,18 @@ fn disp_of(i: usize) -> (f64, f64, f64) {
         (EV_S0 + EV_S_STEP * is as f32) as f64)
 }
 
-/// Kernel mass per cell for every distinct aim column and row, per dispersion.
+/// Kernel mass for every grid aim column and row, then every feature point's, per dispersion.
 struct Weights {
-    wh: Vec<Vec<f64>>,
-    qh: Vec<Vec<f64>>,
-    wv: Vec<Vec<f64>>,
-    qv: Vec<Vec<f64>>,
+    u: Vec<AxisW>,
+    v: Vec<AxisW>,
 }
 
 struct Lattice {
-    nx: usize,
-    ny: usize,
-    aim_u: Vec<f64>,
-    aim_v: Vec<f64>,
+    leaves: Leaves,
+    /// Grid aims are every (column, row) pair of the first `n_u` x `n_v`; feature point k is (n_u + k, n_v + k).
+    n_u: usize,
+    n_v: usize,
+    n_anchor: usize,
     /// Per kernel: the citadel guarantee's share of shells.
     g: Vec<f64>,
     weights: Vec<Weights>,
@@ -93,9 +94,9 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
     let (nx, ny) = (h.nx, h.ny);
     let (u0, u1) = (h.rect.x as f64, h.rect.z as f64);
     let du = (u1 - u0) / nx.max(1) as f64;
-    let ue: Vec<f64> = (0..=nx).map(|i| u0 + du * i as f64).collect();
     let ve: Vec<f64> = (0..=ny).map(|i| f32::from_le_bytes(b[h.edges + 4 * i..h.edges + 4 * i + 4].try_into().unwrap()) as f64).collect();
-    let aim_u: Vec<f64> = (0..nx).step_by(AIM_STRIDE).map(|ix| u0 + (ix as f64 + 0.5) * du).collect();
+    let leaves = Leaves::new(nx, ny, u0, u1, &ve, Some(&h.refine));
+    let mut aim_u: Vec<f64> = (0..nx).step_by(AIM_STRIDE).map(|ix| u0 + (ix as f64 + 0.5) * du).collect();
     let mut aim_v = Vec::new();
     let mut last = f64::NEG_INFINITY;
     for iy in (0..ny).step_by(AIM_STRIDE) {
@@ -105,6 +106,9 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
             last = v;
         }
     }
+    let (n_u, n_v, n_anchor) = (aim_u.len(), aim_v.len(), h.refine.anchors.len());
+    aim_u.extend(h.refine.anchors.iter().map(|a| a.0 as f64));
+    aim_v.extend(h.refine.anchors.iter().map(|a| a.1 as f64));
     let ea = k.ellipse.0.max(0.01);
     let eb = k.ellipse.1.max(0.01) * 0.785;
     let guar_h = |x: f64| ((x + ea) / (2.0 * ea)).clamp(0.0, 1.0);
@@ -115,12 +119,13 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
             let (hh, hv, s) = disp_of(d);
             let erf_bound = erf(s / std::f64::consts::SQRT_2);
             g.push(guarantee_share(k.guarantee, k.ellipse, s));
-            let (wh, qh) = aim_u.iter().map(|&a| axis_weights(&ue, a, hh, s, erf_bound, &guar_h)).unzip();
-            let (wv, qv) = aim_v.iter().map(|&a| axis_weights(&ve, a, hv, s, erf_bound, &guar_v)).unzip();
-            Weights { wh, qh, wv, qv }
+            Weights {
+                u: aim_u.iter().map(|&a| leaves.u_weights(a, hh, s, erf_bound, &guar_h)).collect(),
+                v: aim_v.iter().map(|&a| leaves.v_weights(a, hv, s, erf_bound, &guar_v)).collect(),
+            }
         })
         .collect();
-    Lattice { nx, ny, aim_u, aim_v, g, weights }
+    Lattice { leaves, n_u, n_v, n_anchor, g, weights }
 }
 
 /// Share of shells DispersionCalculator moves into the citadel ellipse: `frac` of salvos, when none of
@@ -136,32 +141,53 @@ pub(crate) fn guarantee_share(frac: f64, ellipse: (f64, f64), sigma: f64) -> f64
     frac * (1.0 - p_in).powi(3)
 }
 
-/// Best-aim (value per shell, landed share) for every dispersion. The kernel
-/// is separable, so rows are summed once per aim column, not once per aim.
+/// Across-row sums of one value array under one aim column's weights.
+#[derive(Default)]
+struct Pass {
+    r: Vec<f64>,
+    s: Vec<f64>,
+    rq: Vec<f64>,
+    sq: Vec<f64>,
+}
+
+impl Pass {
+    fn run(&mut self, l: &Leaves, u: &AxisW, m: &[f64], g: f64) {
+        l.u_pass(&u.w, &u.wf, m, &mut self.r, &mut self.s);
+        if g > 0.0 {
+            l.u_pass(&u.q, &u.qf, m, &mut self.rq, &mut self.sq);
+        }
+    }
+
+    fn at(&self, l: &Leaves, v: &AxisW, g: f64) -> f64 {
+        let a = l.v_pass(&v.w, &v.wf, &self.r, &self.s);
+        let b = if g > 0.0 { l.v_pass(&v.q, &v.qf, &self.rq, &self.sq) } else { 0.0 };
+        (1.0 - g) * a + g * b
+    }
+}
+
+/// Best-aim (value per shell, landed share) for every dispersion, over the grid aims and the
+/// feature points. The kernel is separable, so rows are summed once per aim column.
 fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -> [Cell; ND] {
     let mut out = [Cell::default(); ND];
-    let (nx, ny) = (l.nx, l.ny);
-    let row_sums = |w: &[f64], m: &[f64], out: &mut Vec<f64>| {
-        out.clear();
-        for iy in 0..ny {
-            let r = &m[iy * nx..iy * nx + nx];
-            out.push(w.iter().zip(r).map(|(a, b)| a * b).sum());
-        }
-    };
-    let (mut rw, mut rq) = (Vec::with_capacity(ny), Vec::with_capacity(ny));
+    let mut pass = Pass::default();
     for (d, w) in l.weights.iter().enumerate() {
         let g = l.g[d];
         let mut best = (f64::NEG_INFINITY, 0usize, 0usize);
-        for iu in 0..l.aim_u.len() {
-            row_sums(&w.wh[iu], pay, &mut rw);
-            row_sums(&w.qh[iu], pay, &mut rq);
-            for iv in 0..l.aim_v.len() {
-                let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
-                let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
-                let v = (1.0 - g) * a + g * b;
+        for iu in 0..l.n_u {
+            pass.run(&l.leaves, &w.u[iu], pay, g);
+            for iv in 0..l.n_v {
+                let v = pass.at(&l.leaves, &w.v[iv], g);
                 if v > best.0 {
                     best = (v, iu, iv);
                 }
+            }
+        }
+        for k in 0..l.n_anchor {
+            let (iu, iv) = (l.n_u + k, l.n_v + k);
+            pass.run(&l.leaves, &w.u[iu], pay, g);
+            let v = pass.at(&l.leaves, &w.v[iv], g);
+            if v > best.0 {
+                best = (v, iu, iv);
             }
         }
         if !best.0.is_finite() {
@@ -169,11 +195,8 @@ fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -
         }
         let (_, iu, iv) = best;
         let mut at_aim = |m: &[f64]| -> f32 {
-            row_sums(&w.wh[iu], m, &mut rw);
-            row_sums(&w.qh[iu], m, &mut rq);
-            let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
-            let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
-            ((1.0 - g) * a + g * b) as f32
+            pass.run(&l.leaves, &w.u[iu], m, g);
+            pass.at(&l.leaves, &w.v[iv], g) as f32
         };
         let value = best.0 as f32;
         let share = |x: f32| if value > 0.0 { (x / value).clamp(0.0, 1.0) } else { 0.0 };
@@ -231,21 +254,75 @@ fn thresholds(b: &[u8], h: &BlobHdr, om_max: f64) -> Vec<u16> {
 /// AP LANDED, per AP class: u8 landed[NP][ND] (version 12)
 /// ND = EV_NH x EV_NV x EV_NS kernels, sigma fastest (version 13; 5 x 4 x 4 since 14)
 /// Baked without the citadel guarantee since 15: DamageModel mixes it in under the lead error.
+/// Split cells and feature-point aims since 16.
+/// Since 18 a chunk is `u8 n | f32 auto_bounce[n] | u32 off[n]` then the sub-chunks above, one per
+/// bounce class; a class whose lattice resolves as the one below shares its offset.
 /// ```
 /// value = expected payout per shell fired (fraction of alpha) at the best
 /// aim, landed = share of shells on the hull there, heavy / medium = shares
 /// of the value landing as citadel / penetration damage, all sqrt-coded.
 /// Classes that score alike are merged.
 pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
+    let classes = super::survey::bounce_classes(b);
+    let n = classes.len().max(1);
+    let mut out = vec![n as u8];
+    for c in 0..n {
+        out.extend_from_slice(&classes.get(c).map_or(0.0f32, |x| x.0).to_le_bytes());
+    }
+    let head = out.len();
+    out.resize(head + 4 * n, 0);
+    // A class within one code step everywhere of the one below reads that one's.
+    let mut prev: Option<(u32, Vec<u8>)> = None;
+    for c in 0..n {
+        let off = match &prev {
+            Some((o, _)) if classes.get(c).is_some_and(|x| x.1 == 0) => *o,
+            _ => {
+                let bounce = classes.get(c).map_or(f64::INFINITY, |x| x.0 as f64 + 1e-5);
+                let sub = ev_class(b, k, bounce);
+                match &prev {
+                    Some((o, p)) if p.len() == sub.len() && p.iter().zip(&sub).all(|(x, y)| x.abs_diff(*y) <= 1) => *o,
+                    _ => {
+                        let o = out.len() as u32;
+                        out.extend_from_slice(&sub);
+                        prev = Some((o, sub));
+                        o
+                    }
+                }
+            }
+        };
+        out[head + 4 * c..head + 4 * c + 4].copy_from_slice(&off.to_le_bytes());
+    }
+    out
+}
+
+/// The sub-chunk an AP shell of `auto_bounce` <= `bounce` reads.
+fn sub_chunk(b: &[u8], bounce: f64) -> Option<&[u8]> {
+    let n = *b.first()? as usize;
+    if b.len() < 1 + 8 * n || n == 0 {
+        return None;
+    }
+    let mut pick = 0;
+    for c in 0..n {
+        let o = 1 + 4 * c;
+        if f32::from_le_bytes(b[o..o + 4].try_into().ok()?) as f64 <= bounce + 1e-4 {
+            pick = c;
+        }
+    }
+    let o = 1 + 4 * n + 4 * pick;
+    let off = u32::from_le_bytes(b[o..o + 4].try_into().ok()?) as usize;
+    b.get(off..)
+}
+
+fn ev_class(b: &[u8], k: &EvKernel, bounce: f64) -> Vec<u8> {
     let mut out = Vec::new();
     let Some(h) = blob_header(b) else { return out };
     if h.nx == 0 || h.ny == 0 {
         return out;
     }
     let lat = lattice(b, &h, k);
-    let ncell = h.nx * h.ny;
+    let ncell = h.n_codes();
     let eval = |pen: f64, om: f64, he: bool| -> Row {
-        match resolve_codes(b, pen, om, he) {
+        match resolve_codes(b, pen, om, he, bounce) {
             Some(codes) if codes.len() == ncell => {
                 let pay: Vec<f64> = codes.iter().map(|&c| k.payout(c)).collect();
                 let hit: Vec<f64> = codes.iter().map(|&c| if c == CELL_MISS { 0.0 } else { 1.0 }).collect();
@@ -316,7 +393,8 @@ fn grid_pos(x: f32, x0: f32, ratio: f32, n: usize) -> (usize, f32) {
 
 /// (value per shell fired as a fraction of alpha, landed share) for one shell
 /// against one bucket chunk: lerped in log pen, log half-dispersion and sigma.
-pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, bounce: f64, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+    let b = sub_chunk(b, if is_he { 0.0 } else { bounce })?;
     let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v, sigma)?;
     let vals = if is_he { c.head + (c.n_thr + 1) * c.block } else { c.head + c.class * c.block };
     // Below the grid's first pen the value fades to zero rather than holding.
@@ -336,7 +414,8 @@ impl Chunk {
 }
 
 /// (heavy, medium) shares of `ev_lookup`'s value; None for chunks baked without them.
-pub(crate) fn ev_levels(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+pub(crate) fn ev_levels(b: &[u8], pen: f64, overmatch: f64, is_he: bool, bounce: f64, half_h: f32, half_v: f32, sigma: f32) -> Option<(f32, f32)> {
+    let b = sub_chunk(b, if is_he { 0.0 } else { bounce })?;
     let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v, sigma)?;
     let levels = c.head + (c.n_thr + 1) * c.block + 2 * c.block;
     if b.len() < levels + (c.n_thr + 2) * 2 * c.block {

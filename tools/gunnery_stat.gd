@@ -22,6 +22,10 @@ func _ready() -> void:
 	var n_bp_om := 0
 	var max_np := 0
 	var max_ny := 0
+	var n_split := 0
+	var n_sub := 0
+	var n_sub_only := 0
+	var ev_bytes := 0
 	var keys := hulls.keys()
 	keys.sort()
 	for key in keys:
@@ -30,6 +34,8 @@ func _ready() -> void:
 		raw += int(e["rsize"])
 		var buckets: Dictionary = t["buckets"]
 		n_buckets += buckets.size()
+		for c in (t.get("ev", {}) as Dictionary).values():
+			ev_bytes += (c as PackedByteArray).size()
 		for bid in buckets:
 			var b: PackedByteArray = buckets[bid]
 			var np: int = b.decode_u16(2)
@@ -39,12 +45,28 @@ func _ready() -> void:
 			n_prof += np
 			max_np = maxi(max_np, np)
 			max_ny = maxi(max_ny, b.decode_u8(1))
+			var r := BotGunnery.bucket_refine(b)
+			n_split += (r["cells"] as PackedInt32Array).size()
+			n_sub += int(r["n_sub"])
+			var on_grid := {}
+			for i in ncell:
+				on_grid[BotGunnery.bucket_cell(b, i)] = true
+			var cw := BotGunnery.bucket_cell_width(b)
+			var sub_only := {}
+			for i in int(r["n_sub"]):
+				var off: int = int(r["subs_off"]) + i * cw
+				var pi: int = b.decode_u16(off) if cw == 2 else b.decode_u8(off)
+				if not on_grid.has(pi):
+					sub_only[pi] = true
+			n_sub_only += sub_only.size()
 			for i in np:
 				n_bp += b.decode_u8(a0 + 3 * np + i)
 				n_bp_om += b.decode_u8(a0 + 4 * np + i)
 		print("  %-40s %7d -> %7d" % [key.get_file(), int(e["rsize"]), int(e["csize"])])
 	print("\n%d hulls  %d buckets  %d cells  %d profiles  %d bp  %d bp_om   max profiles/bucket %d  max ny %d"
 		% [hulls.size(), n_buckets, n_cells, n_prof, n_bp, n_bp_om, max_np, max_ny])
+	print("split cells %d  sub-cells %d  profiles only on sub-cells %d  ev summary bytes %d"
+		% [n_split, n_sub, n_sub_only, ev_bytes])
 	print("raw %d  disk %d  ratio %.2f  per hull %d" % [raw, disk, float(raw) / disk,
 		disk / maxi(hulls.size(), 1)])
 	var payload := HDR * n_buckets + n_cells + 5 * n_prof + 3 * (n_bp + n_bp_om)

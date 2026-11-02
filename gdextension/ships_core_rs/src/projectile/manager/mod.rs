@@ -596,6 +596,7 @@ impl ProjectileManager {
         pen: f64,
         overmatch: f64,
         is_he: bool,
+        bounce: f64,
         half_disp: Vector2,
         sigma: f32,
     ) -> Vector2 {
@@ -604,6 +605,7 @@ impl ProjectileManager {
             pen,
             overmatch,
             is_he,
+            bounce,
             half_disp.x,
             half_disp.y,
             sigma,
@@ -613,8 +615,8 @@ impl ProjectileManager {
 
     /// (heavy, medium) shares of `ev_lookup`'s value; (-1, -1) if the chunk has none.
     #[func]
-    pub(crate) fn ev_levels(chunk: PackedByteArray, pen: f64, overmatch: f64, is_he: bool, half_disp: Vector2, sigma: f32) -> Vector2 {
-        ev::ev_levels(chunk.as_slice(), pen, overmatch, is_he, half_disp.x, half_disp.y, sigma)
+    pub(crate) fn ev_levels(chunk: PackedByteArray, pen: f64, overmatch: f64, is_he: bool, bounce: f64, half_disp: Vector2, sigma: f32) -> Vector2 {
+        ev::ev_levels(chunk.as_slice(), pen, overmatch, is_he, bounce, half_disp.x, half_disp.y, sigma)
             .map_or(Vector2::new(-1.0, -1.0), |(h, m)| Vector2::new(h, m))
     }
 
@@ -637,11 +639,12 @@ impl ProjectileManager {
         pen: f64,
         overmatch: f64,
         is_he: bool,
+        bounce: f64,
     ) -> PackedByteArray {
-        Self::lattice_resolve_impl(&blob, pen, overmatch, is_he)
+        Self::lattice_resolve_impl(&blob, pen, overmatch, is_he, bounce)
     }
 
-    /// `nx`, `ny`, `rect` and `dir` of a baked bucket blob; empty if malformed.
+    /// `nx`, `ny`, `rect`, `dir`, edges and feature points of a baked bucket blob; empty if malformed.
     #[func]
     pub(crate) fn lattice_header(blob: PackedByteArray) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -651,6 +654,13 @@ impl ProjectileManager {
             d.set("rect", h.rect);
             d.set("dir", h.dir);
             d.set("edges", &survey::blob_v_edges(blob.as_slice(), &h));
+            let anchors: PackedVector2Array = h.refine.anchors.iter().map(|a| Vector2::new(a.0, a.1)).collect();
+            d.set("anchors", &anchors);
+            d.set("split", h.refine.cells.len() as i32);
+            d.set("sub_cells", h.refine.n_sub as i32);
+            let cls = survey::bounce_classes(blob.as_slice());
+            d.set("bounce_classes", &cls.iter().map(|c| c.0).collect::<PackedFloat32Array>());
+            d.set("bounce_overrides", &cls.iter().map(|c| c.1 as i32).collect::<PackedInt32Array>());
         }
         d
     }
@@ -670,10 +680,11 @@ impl ProjectileManager {
         ellipse: Vector2,
         payouts: PackedFloat64Array,
         turret_cap: f64,
+        blob: PackedByteArray,
     ) -> PackedFloat64Array {
         Self::lattice_score_impl(
             &cells, nx, ny, rect, &v_edges, &aims, half_disp, sigma, guarantee, ellipse, &payouts,
-            turret_cap,
+            turret_cap, &blob,
         )
     }
 }

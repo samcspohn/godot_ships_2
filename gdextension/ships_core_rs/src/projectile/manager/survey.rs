@@ -35,13 +35,20 @@ pub const FLAG_WATER: u8 = 0x04;
 ///  2 u16 np             Rows are not uniform: fine at the waterline so a
 ///  4 f32x4 rect         short citadel band is sampled, coarse above.
 ///                  E=32+4(ny+1)  cells (profile index): u8, or u16 when np > 255
-///                  A=E+nx*ny*cw  u16[np] first_mm (MM_MISS = no hit)
+///                  R=E+nx*ny*cw  u16 n_ref | u8 kx | u8 ky[ny] | u16 split cell[n_ref]
+///                                | u8 n_anchor | f32x2 anchor[n_anchor]   (v16)
+///                  S             sub-cells, kx*ky[row] per split cell, row-major
+///                  A=S+n_sub*cw  u16[np] first_mm (MM_MISS = no hit)
 ///                    A+2np   u8[np]  first_flags
 ///                    A+3np   u8[np]  bp_cnt
 ///                    A+4np   u8[np]  bp_cnt_om
 ///                  B=A+5np   (u16 mm, u8 code)[sum bp_cnt]
 ///                  C=B+3*sum (u16 mm, u8 code)[sum bp_cnt_om]
+///                  D         u8 n_cls | f32 auto_bounce[n_cls] (rad, ascending)        (v18)
+///                            per class 1..n_cls: u16 n_over | (u16 profile, u8 cnt, u8 cnt_om)[n_over]
+///                            | base runs | om runs: the profiles whose lists differ from the class below
 /// ```
+/// A–C are bounce class 0. An AP shell resolves with the highest class at or under its auto_bounce.
 pub const BLOB_HDR: usize = 32;
 pub const MM_MISS: u16 = 0xFFFF;
 /// Breakpoint counts are u8; the sweep can emit at most `coarse + budget`.
@@ -63,18 +70,65 @@ pub struct BlobHdr {
     pub np: usize,
     pub rect: Vector4,
     pub dir: Vector3,
-    /// Byte offsets of the v_edges, cells and profile sections.
+    /// Byte offsets of the v_edges, cells, sub-cells and profile sections.
     pub edges: usize,
     pub cells: usize,
+    pub subs: usize,
     /// Bytes per cell index: 1, or 2 once a bucket has more than 255 profiles.
     pub cw: usize,
     pub prof: usize,
+    pub refine: Refine,
 }
 
 impl BlobHdr {
+    /// Grid cells first, then the sub-cells.
     pub fn cell(&self, b: &[u8], i: usize) -> usize {
-        if self.cw == 2 { rd_u16(b, self.cells + 2 * i) as usize } else { b[self.cells + i] as usize }
+        let g = self.nx * self.ny;
+        let off = if i < g { self.cells + i * self.cw } else { self.subs + (i - g) * self.cw };
+        if self.cw == 2 { rd_u16(b, off) as usize } else { b[off] as usize }
     }
+
+    pub fn n_codes(&self) -> usize {
+        self.nx * self.ny + self.refine.n_sub
+    }
+}
+
+/// Grid cells around the feature points, split `kx` x `ky[row]`, and the points (plane u, v).
+#[derive(Default, Clone)]
+pub struct Refine {
+    pub kx: usize,
+    pub ky: Vec<usize>,
+    /// Grid index of each split cell, ascending.
+    pub cells: Vec<usize>,
+    pub anchors: Vec<(f32, f32)>,
+    pub n_sub: usize,
+}
+
+/// The refine section at `off` (layout above) and its length in bytes.
+pub fn parse_refine(b: &[u8], off: usize, nx: usize, ny: usize) -> Option<(Refine, usize)> {
+    let mut o = off;
+    if b.len() < o + 3 + ny {
+        return None;
+    }
+    let n_ref = rd_u16(b, o) as usize;
+    let kx = (b[o + 2] as usize).max(1);
+    o += 3;
+    let ky: Vec<usize> = b[o..o + ny].iter().map(|&k| (k as usize).max(1)).collect();
+    o += ny;
+    if b.len() < o + 2 * n_ref + 1 {
+        return None;
+    }
+    let cells: Vec<usize> = (0..n_ref).map(|i| rd_u16(b, o + 2 * i) as usize).collect();
+    o += 2 * n_ref;
+    let na = b[o] as usize;
+    o += 1;
+    if b.len() < o + 8 * na || cells.iter().any(|&c| c >= nx * ny) {
+        return None;
+    }
+    let anchors = (0..na).map(|i| (rd_f32(b, o + 8 * i), rd_f32(b, o + 8 * i + 4))).collect();
+    o += 8 * na;
+    let n_sub = cells.iter().map(|&c| kx * ky[c / nx]).sum();
+    Some((Refine { kx, ky, cells, anchors, n_sub }, o - off))
 }
 
 pub fn blob_header(b: &[u8]) -> Option<BlobHdr> {
@@ -88,11 +142,124 @@ pub fn blob_header(b: &[u8]) -> Option<BlobHdr> {
     let edges = BLOB_HDR;
     let cells = edges + 4 * (ny + 1);
     let cw = if np > 255 { 2 } else { 1 };
-    let prof = cells + nx * ny * cw;
+    let (refine, len) = parse_refine(b, cells + nx * ny * cw, nx, ny)?;
+    let subs = cells + nx * ny * cw + len;
+    let prof = subs + refine.n_sub * cw;
     if b.len() < prof + 5 * np {
         return None;
     }
-    Some(BlobHdr { nx, ny, np, rect, dir, edges, cells, cw, prof })
+    Some(BlobHdr { nx, ny, np, rect, dir, edges, cells, subs, cw, prof, refine })
+}
+
+/// Kernel mass along one axis: per coarse cell, and per fine cell where cells are split.
+pub(crate) struct AxisW {
+    pub w: Vec<f64>,
+    pub q: Vec<f64>,
+    pub wf: Vec<f64>,
+    pub qf: Vec<f64>,
+}
+
+impl AxisW {
+    pub fn sums(&self) -> (f64, f64) {
+        (self.w.iter().sum(), self.q.iter().sum())
+    }
+}
+
+/// A lattice's cells as integrated: the grid, with split cells replaced by their sub-cells.
+/// Code index: grid cells row-major, then each split cell's sub-cells row-major.
+pub(crate) struct Leaves {
+    pub nx: usize,
+    pub ny: usize,
+    pub kx: usize,
+    uf: Vec<f64>,
+    vf: Vec<f64>,
+    vo: Vec<usize>,
+    split: Vec<bool>,
+    rows: Vec<Vec<(usize, usize)>>,
+    pub n_codes: usize,
+}
+
+impl Leaves {
+    pub fn new(nx: usize, ny: usize, u0: f64, u1: f64, ve: &[f64], r: Option<&Refine>) -> Self {
+        let kx = r.map_or(1, |r| r.kx.max(1));
+        let du = (u1 - u0) / (nx * kx).max(1) as f64;
+        let uf: Vec<f64> = (0..=nx * kx).map(|i| u0 + du * i as f64).collect();
+        let mut vo = vec![0usize; ny + 1];
+        let mut vf = Vec::new();
+        for iy in 0..ny {
+            let k = r.and_then(|r| r.ky.get(iy).copied()).unwrap_or(1).max(1);
+            for sy in 0..k {
+                vf.push(ve[iy] + (ve[iy + 1] - ve[iy]) * sy as f64 / k as f64);
+            }
+            vo[iy + 1] = vo[iy] + k;
+        }
+        vf.push(ve[ny]);
+        let mut split = vec![false; nx * ny];
+        let mut rows = vec![Vec::new(); ny];
+        let mut next = nx * ny;
+        if let Some(r) = r {
+            for &c in &r.cells {
+                let iy = c / nx;
+                split[c] = true;
+                rows[iy].push((c % nx, next));
+                next += kx * (vo[iy + 1] - vo[iy]);
+            }
+        }
+        Self { nx, ny, kx, uf, vf, vo, split, rows, n_codes: next }
+    }
+
+    fn axis(edges: &[f64], groups: impl Fn(usize) -> (usize, usize), n: usize, aim: f64, hd: f64, s: f64,
+            erf_bound: f64, guar: &dyn Fn(f64) -> f64) -> AxisW {
+        let (wf, qf) = axis_weights(edges, aim, hd, s, erf_bound, guar);
+        let (mut w, mut q) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for i in 0..n {
+            let (a, b) = groups(i);
+            w.push(wf[a..b].iter().sum());
+            q.push(qf[a..b].iter().sum());
+        }
+        AxisW { w, q, wf, qf }
+    }
+
+    pub fn u_weights(&self, aim: f64, hd: f64, s: f64, erf_bound: f64, guar: &dyn Fn(f64) -> f64) -> AxisW {
+        let kx = self.kx;
+        Self::axis(&self.uf, |i| (i * kx, i * kx + kx), self.nx, aim, hd, s, erf_bound, guar)
+    }
+
+    pub fn v_weights(&self, aim: f64, hd: f64, s: f64, erf_bound: f64, guar: &dyn Fn(f64) -> f64) -> AxisW {
+        let vo = &self.vo;
+        Self::axis(&self.vf, |i| (vo[i], vo[i + 1]), self.ny, aim, hd, s, erf_bound, guar)
+    }
+
+    /// `p` summed across each row under column weights `w` (unsplit cells, per row) and `wf`
+    /// (split cells, per fine row).
+    pub fn u_pass(&self, w: &[f64], wf: &[f64], p: &[f64], r: &mut Vec<f64>, sub: &mut Vec<f64>) {
+        let (nx, kx) = (self.nx, self.kx);
+        r.clear();
+        sub.clear();
+        sub.resize(self.vo[self.ny], 0.0);
+        for iy in 0..self.ny {
+            let row = &p[iy * nx..iy * nx + nx];
+            let sp = &self.split[iy * nx..iy * nx + nx];
+            let mut acc = 0.0;
+            for ix in 0..nx {
+                if !sp[ix] {
+                    acc += w[ix] * row[ix];
+                }
+            }
+            r.push(acc);
+            for &(ix, s0) in &self.rows[iy] {
+                let cw = &wf[ix * kx..ix * kx + kx];
+                for sy in 0..self.vo[iy + 1] - self.vo[iy] {
+                    let ps = &p[s0 + sy * kx..s0 + sy * kx + kx];
+                    sub[self.vo[iy] + sy] += cw.iter().zip(ps).map(|(a, b)| a * b).sum::<f64>();
+                }
+            }
+        }
+    }
+
+    pub fn v_pass(&self, w: &[f64], wf: &[f64], r: &[f64], sub: &[f64]) -> f64 {
+        w.iter().zip(r).map(|(a, b)| a * b).sum::<f64>() + wf.iter().zip(sub).map(|(a, b)| a * b).sum::<f64>()
+    }
 }
 
 pub fn blob_v_edges(b: &[u8], h: &BlobHdr) -> PackedFloat32Array {
@@ -262,13 +429,14 @@ fn walk_cell(
 #[allow(clippy::too_many_arguments)]
 fn sweep(
     mesh: &ArmorMesh, aabb: Aabb, base: &ShellSpec, base_pen: f64, p: Vector3, dir: Vector3,
-    speed: f64, pens: &[f64], bisect_mm: f64, overmatch: f64,
+    speed: f64, pens: &[f64], bisect_mm: f64, overmatch: f64, bounce: f64,
 ) -> (Vec<(f32, u8)>, u64) {
     let mut walks: u64 = 0;
     let at = |pen: f64, walks: &mut u64| -> u8 {
         let mut s = *base;
         s.pen_mod = pen / base_pen;
         s.overmatch = overmatch;
+        s.auto_bounce = bounce;
         *walks += 1;
         walk_cell(mesh, aabb, &s, p, dir, speed, false).0
     };
@@ -317,17 +485,42 @@ pub(crate) fn sweep_bucket(
     ny: i32,
     rect: Vector4,
     v_edges: &[f32],
+    refine: &[u8],
     pens: &[f64],
     bisect_mm: f64,
     om_max: f64,
+    merge_mm: f64,
+    bounces: &[f64],
 ) -> Result<(Vec<u8>, i64), String> {
     if pens.is_empty() {
         return Err("no coarse pens".into());
+    }
+    let own = [ref_spec.auto_bounce];
+    let bounces = if bounces.is_empty() { &own[..] } else { bounces };
+    if bounces.len() > 255 {
+        return Err("too many bounce classes".into());
+    }
+    let (ng, ny_u) = ((nx.max(0) * ny.max(0)) as usize, ny.max(0) as usize);
+    let ref_in = if refine.is_empty() {
+        Refine { kx: 1, ky: vec![1; ny_u], ..Default::default() }
+    } else {
+        let Some((r, len)) = parse_refine(refine, 0, nx.max(0) as usize, ny_u) else {
+            return Err("malformed refine section".into());
+        };
+        if len != refine.len() {
+            return Err(format!("refine section {} bytes, parsed {len}", refine.len()));
+        }
+        r
+    };
+    let n_sub = ref_in.n_sub;
+    if pts.len() != ng + n_sub {
+        return Err(format!("{} points for {ng} cells + {n_sub} sub-cells", pts.len()));
     }
     let dir = dir.normalized();
     let mut base = *ref_spec;
     base.overmatch = 0.0;
     base.is_he = false;
+    base.auto_bounce = bounces[0];
     base.k_nose = K_NOSE_APC;
     let base_pen = NativeArmorInteraction::calculate_de_marre_penetration(base.mass, v_ref, base.caliber).max(1e-6);
     let mut spec_mid = base;
@@ -377,45 +570,34 @@ pub(crate) fn sweep_bucket(
             profiles.len() - 1
         });
     }
-    // A byte per cell unless this bucket needs more: bow-on rays run the
-    // hull's length and nearly every one is its own profile.
-    let cells: Vec<u8> = if profiles.len() > 255 {
-        cell_idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect()
-    } else {
-        cell_idx.iter().map(|&i| i as u8).collect()
-    };
-
-    let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
+    // Per profile, per bounce class: (base, overmatched) breakpoints.
+    type Lists = (Vec<(f32, u8)>, Vec<(f32, u8)>);
+    let mut walks: i64 = pts.len() as i64;
+    let sweeps: Vec<Vec<Lists>> = profiles
         .iter()
         .map(|prof| {
             if prof.first_mm < 0.0 {
-                return (vec![(0.0, CELL_MISS)], Vec::new(), 0);
+                return vec![(vec![(0.0, CELL_MISS)], Vec::new()); bounces.len()];
             }
             let p = pts[prof.rep];
-            let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0);
-            let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
-                sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64)
-            } else {
-                (Vec::new(), 0)
-            };
-            (bps, bps_om, w1 + w2)
+            bounces
+                .iter()
+                .map(|&bo| {
+                    let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0, bo);
+                    let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
+                        sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64, bo)
+                    } else {
+                        (Vec::new(), 0)
+                    };
+                    walks += (w1 + w2) as i64;
+                    (bps, bps_om)
+                })
+                .collect()
         })
         .collect();
-
-    let mut walks: i64 = pts.len() as i64;
-    let np = profiles.len();
-    if np > u16::MAX as usize {
-        return Err(format!("{np} profiles in one bucket"));
-    }
     if v_edges.len() != ny.max(0) as usize + 1 {
         return Err(format!("{} v_edges for ny={ny}", v_edges.len()));
     }
-    let mut fm: Vec<u8> = Vec::with_capacity(2 * np);
-    let mut flags: Vec<u8> = Vec::with_capacity(np);
-    let mut cnt: Vec<u8> = Vec::with_capacity(np);
-    let mut cnt_om: Vec<u8> = Vec::with_capacity(np);
-    let mut bps_buf: Vec<u8> = Vec::new();
-    let mut bps_om_buf: Vec<u8> = Vec::new();
     let enc = |buf: &mut Vec<u8>, bps: &[(f32, u8)]| -> u8 {
         let n = bps.len().min(BP_MAX);
         for (mm, code) in &bps[..n] {
@@ -425,38 +607,142 @@ pub(crate) fn sweep_bucket(
         }
         n as u8
     };
-    for (prof, (bps, bps_om, w)) in profiles.iter().zip(sweeps.iter()) {
-        walks += *w as i64;
-        let mm = if prof.first_mm < 0.0 {
-            MM_MISS
+    // Profiles with the same results in the same order, breakpoints within `merge_mm`, are one:
+    // neighbouring rays differ in plate angle and sweep to thresholds a few mm apart.
+    // One bounce class's lists, encoded: (cnt, cnt_om, base runs, om runs).
+    #[derive(PartialEq)]
+    struct Cls {
+        cnt: u8,
+        cnt_om: u8,
+        bps: Vec<u8>,
+        bps_om: Vec<u8>,
+    }
+    struct Enc {
+        mm: u16,
+        flags: u8,
+        cls: Vec<Cls>,
+    }
+    let mut kept: Vec<Enc> = Vec::new();
+    let mut by_key: BTreeMap<Vec<u8>, Vec<usize>> = BTreeMap::new();
+    let thresholds = |e: &Enc| -> Vec<u16> {
+        e.cls.iter().flat_map(|c| c.bps.chunks(3).chain(c.bps_om.chunks(3)))
+            .map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    };
+    let mut remap: Vec<usize> = Vec::with_capacity(profiles.len());
+    for (prof, lists) in profiles.iter().zip(sweeps.iter()) {
+        let mm = if prof.first_mm < 0.0 { MM_MISS } else { (prof.first_mm.round().clamp(0.0, 65534.0)) as u16 };
+        let cls: Vec<Cls> = lists.iter().map(|(bps, bps_om)| {
+            let mut c = Cls { cnt: 0, cnt_om: 0, bps: Vec::new(), bps_om: Vec::new() };
+            c.cnt = enc(&mut c.bps, bps);
+            c.cnt_om = enc(&mut c.bps_om, bps_om);
+            c
+        }).collect();
+        let e = Enc { mm, flags: prof.flags, cls };
+        let mut key = mm.to_le_bytes().to_vec();
+        key.push(e.flags);
+        for c in &e.cls {
+            key.extend_from_slice(&[c.cnt, c.cnt_om]);
+            key.extend(c.bps.chunks(3).chain(c.bps_om.chunks(3)).map(|x| x[2]));
+        }
+        let t = thresholds(&e);
+        let reps = by_key.entry(key).or_default();
+        let near = reps.iter().copied().find(|&r| {
+            thresholds(&kept[r]).iter().zip(&t).all(|(a, b)| (*a as f64 - *b as f64).abs() <= merge_mm)
+        });
+        let i = near.unwrap_or_else(|| {
+            kept.push(e);
+            reps.push(kept.len() - 1);
+            kept.len() - 1
+        });
+        remap.push(i);
+    }
+    let idx: Vec<usize> = cell_idx.iter().map(|&i| remap[i]).collect();
+
+    // A split cell whose sub-cells all resolve alike is unsplit, taking their profile.
+    let nxu = nx.max(0) as usize;
+    let mut idx = idx;
+    let mut cells_kept: Vec<usize> = Vec::new();
+    let mut subs: Vec<usize> = Vec::new();
+    let mut at = ng;
+    for &c in &ref_in.cells {
+        let n = ref_in.kx * ref_in.ky[c / nxu];
+        let run = idx[at..at + n].to_vec();
+        if run.iter().all(|&i| i == run[0]) {
+            idx[c] = run[0];
         } else {
-            (prof.first_mm.round().clamp(0.0, 65534.0)) as u16
-        };
-        fm.extend_from_slice(&mm.to_le_bytes());
-        flags.push(prof.flags);
-        cnt.push(enc(&mut bps_buf, bps));
-        cnt_om.push(enc(&mut bps_om_buf, bps_om));
+            cells_kept.push(c);
+            subs.extend_from_slice(&run);
+        }
+        at += n;
+    }
+    let mut refine_out = (cells_kept.len() as u16).to_le_bytes().to_vec();
+    refine_out.push(ref_in.kx as u8);
+    refine_out.extend(ref_in.ky.iter().map(|&k| k as u8));
+    for &c in &cells_kept {
+        refine_out.extend_from_slice(&(c as u16).to_le_bytes());
+    }
+    refine_out.push(ref_in.anchors.len() as u8);
+    for a in &ref_in.anchors {
+        refine_out.extend_from_slice(&a.0.to_le_bytes());
+        refine_out.extend_from_slice(&a.1.to_le_bytes());
     }
 
-    let mut blob: Vec<u8> = Vec::with_capacity(
-        BLOB_HDR + 4 * v_edges.len() + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
+    let np = kept.len();
+    if np > u16::MAX as usize {
+        return Err(format!("{np} profiles in one bucket"));
+    }
+    // A byte per cell unless this bucket needs more: bow-on rays run the
+    // hull's length and nearly every one is its own profile.
+    let put = |out: &mut Vec<u8>, i: usize| {
+        if np > 255 { out.extend_from_slice(&(i as u16).to_le_bytes()) } else { out.push(i as u8) }
+    };
+    let mut blob: Vec<u8> = Vec::with_capacity(BLOB_HDR + 4 * v_edges.len() + 2 * (ng + subs.len()) + refine_out.len() + 5 * np);
     blob.push(nx.clamp(0, 255) as u8);
     blob.push(ny.clamp(0, 255) as u8);
-    blob.extend_from_slice(&(np.min(u16::MAX as usize) as u16).to_le_bytes());
+    blob.extend_from_slice(&(np as u16).to_le_bytes());
     for v in [rect.x, rect.y, rect.z, rect.w, dir.x, dir.y, dir.z] {
         blob.extend_from_slice(&v.to_le_bytes());
     }
     for e in v_edges {
         blob.extend_from_slice(&e.to_le_bytes());
     }
-    blob.extend_from_slice(&cells);
-    blob.extend_from_slice(&fm);
-    blob.extend_from_slice(&flags);
-    blob.extend_from_slice(&cnt);
-    blob.extend_from_slice(&cnt_om);
-    blob.extend_from_slice(&bps_buf);
-    blob.extend_from_slice(&bps_om_buf);
-
+    for &i in &idx[..ng] {
+        put(&mut blob, i);
+    }
+    blob.extend_from_slice(&refine_out);
+    for &i in &subs {
+        put(&mut blob, i);
+    }
+    for e in &kept {
+        blob.extend_from_slice(&e.mm.to_le_bytes());
+    }
+    blob.extend(kept.iter().map(|e| e.flags));
+    blob.extend(kept.iter().map(|e| e.cls[0].cnt));
+    blob.extend(kept.iter().map(|e| e.cls[0].cnt_om));
+    for e in &kept {
+        blob.extend_from_slice(&e.cls[0].bps);
+    }
+    for e in &kept {
+        blob.extend_from_slice(&e.cls[0].bps_om);
+    }
+    blob.push(bounces.len() as u8);
+    for &bo in bounces {
+        blob.extend_from_slice(&(bo as f32).to_le_bytes());
+    }
+    for k in 1..bounces.len() {
+        let over: Vec<usize> = (0..np).filter(|&i| kept[i].cls[k] != kept[i].cls[k - 1]).collect();
+        blob.extend_from_slice(&(over.len() as u16).to_le_bytes());
+        for &i in &over {
+            blob.extend_from_slice(&(i as u16).to_le_bytes());
+            blob.extend_from_slice(&[kept[i].cls[k].cnt, kept[i].cls[k].cnt_om]);
+        }
+        for &i in &over {
+            blob.extend_from_slice(&kept[i].cls[k].bps);
+        }
+        for &i in &over {
+            blob.extend_from_slice(&kept[i].cls[k].bps_om);
+        }
+    }
     Ok((blob, walks))
 }
 
@@ -464,31 +750,55 @@ pub(crate) fn sweep_bucket(
 /// `overmatch` (mm). HE resolves off the first plate alone, as the walk does.
 /// AP reads the swept breakpoints, from the overmatched sweep when the shell
 /// overmatches the first plate.
-pub(crate) fn resolve_codes(b: &[u8], pen: f64, overmatch: f64, is_he: bool) -> Option<Vec<u8>> {
+pub(crate) fn resolve_codes(b: &[u8], pen: f64, overmatch: f64, is_he: bool, bounce: f64) -> Option<Vec<u8>> {
     let h = blob_header(b)?;
-    let (np, ncell) = (h.np, h.nx * h.ny);
+    let (np, ncell) = (h.np, h.n_codes());
     let mut out = vec![CELL_MISS; ncell];
     if np == 0 {
         return Some(out);
     }
     let a = h.prof;
     let (fm_o, fl_o, cnt_o, cnt_om_o) = (a, a + 2 * np, a + 3 * np, a + 4 * np);
-    let bp_o = a + 5 * np;
-    let total: usize = b[cnt_o..cnt_o + np].iter().map(|&c| c as usize).sum();
-    let bp_om_o = bp_o + 3 * total;
+    // Per profile: (base run offset, count, om run offset, count), class 0 then each class's overrides.
+    let mut runs: Vec<(usize, usize, usize, usize)> = Vec::with_capacity(np);
+    let mut off = a + 5 * np;
+    for pi in 0..np {
+        let n = b[cnt_o + pi] as usize;
+        runs.push((off, n, 0, b[cnt_om_o + pi] as usize));
+        off += 3 * n;
+    }
+    for r in runs.iter_mut() {
+        r.2 = off;
+        off += 3 * r.3;
+    }
+    if !is_he {
+        for (k, (start, n_over)) in bounce_overrides(b, off, np)?.into_iter().enumerate() {
+            if bounce_angle(b, off, k + 1)? as f64 > bounce + 1e-4 {
+                break;
+            }
+            let mut o = start + 4 * n_over;
+            let mut entries = Vec::with_capacity(n_over);
+            for e in 0..n_over {
+                let q = start + 4 * e;
+                entries.push((rd_u16(b, q) as usize, b[q + 2] as usize, b[q + 3] as usize));
+            }
+            for &(pi, n, _) in &entries {
+                runs[pi].0 = o;
+                runs[pi].1 = n;
+                o += 3 * n;
+            }
+            for &(pi, _, n_om) in &entries {
+                runs[pi].2 = o;
+                runs[pi].3 = n_om;
+                o += 3 * n_om;
+            }
+        }
+    }
 
-    // Per-profile breakpoint runs are stored as counts, so the offsets are a
-    // running sum taken alongside the resolve.
-    let mut off = bp_o;
-    let mut off_om = bp_om_o;
     let mut codes: Vec<u8> = Vec::with_capacity(np);
     for pi in 0..np {
         let raw = rd_u16(b, fm_o + 2 * pi);
-        let n = b[cnt_o + pi] as usize;
-        let n_om = b[cnt_om_o + pi] as usize;
-        let (a_bp, a_om) = (off, off_om);
-        off += 3 * n;
-        off_om += 3 * n_om;
+        let (a_bp, n, a_om, n_om) = runs[pi];
         if raw == MM_MISS {
             codes.push(CELL_MISS);
             continue;
@@ -536,6 +846,56 @@ pub(crate) fn resolve_codes(b: &[u8], pen: f64, overmatch: f64, is_he: bool) -> 
         }
     }
     Some(out)
+}
+
+/// Offset of the bounce section: after class 0's om runs.
+pub(crate) fn bounce_section(b: &[u8]) -> Option<usize> {
+    let h = blob_header(b)?;
+    let np = h.np;
+    let a = h.prof;
+    let total: usize = b[a + 3 * np..a + 4 * np].iter().map(|&c| c as usize).sum();
+    let total_om: usize = b[a + 4 * np..a + 5 * np].iter().map(|&c| c as usize).sum();
+    let d = a + 5 * np + 3 * (total + total_om);
+    (b.len() > d).then_some(d)
+}
+
+fn bounce_angle(b: &[u8], d: usize, k: usize) -> Option<f32> {
+    let o = d + 1 + 4 * k;
+    (k < *b.get(d)? as usize && b.len() >= o + 4).then(|| rd_f32(b, o))
+}
+
+/// (start, override count) of each class from 1, the section at `d`.
+pub(crate) fn bounce_overrides(b: &[u8], d: usize, np: usize) -> Option<Vec<(usize, usize)>> {
+    let n_cls = *b.get(d)? as usize;
+    let mut o = d + 1 + 4 * n_cls;
+    let mut out = Vec::with_capacity(n_cls.saturating_sub(1));
+    for _ in 1..n_cls {
+        if b.len() < o + 2 {
+            return None;
+        }
+        let n = rd_u16(b, o) as usize;
+        let start = o + 2;
+        let mut runs = 0;
+        for e in 0..n {
+            let q = start + 4 * e;
+            if b.len() < q + 4 || rd_u16(b, q) as usize >= np {
+                return None;
+            }
+            runs += b[q + 2] as usize + b[q + 3] as usize;
+        }
+        out.push((start, n));
+        o = start + 4 * n + 3 * runs;
+    }
+    Some(out)
+}
+
+/// Auto-bounce angle of each class and how many profiles it overrides.
+pub(crate) fn bounce_classes(b: &[u8]) -> Vec<(f32, usize)> {
+    let Some(h) = blob_header(b) else { return Vec::new() };
+    let Some(d) = bounce_section(b) else { return Vec::new() };
+    let Some(over) = bounce_overrides(b, d, h.np) else { return Vec::new() };
+    let n_cls = b[d] as usize;
+    (0..n_cls).map(|k| (bounce_angle(b, d, k).unwrap_or(0.0), if k == 0 { 0 } else { over[k - 1].1 })).collect()
 }
 
 impl ProjectileManager {
@@ -656,6 +1016,9 @@ impl ProjectileManager {
         let opt = |k: &str| opts.get(k).unwrap_or_default();
         let coarse_pens: PackedFloat32Array = opt("coarse_pens").try_to().unwrap_or_default();
         let (bisect_mm, om_max) = (opt("bisect_mm").to_f64(), opt("om_max").to_f64());
+        let merge_mm = opts.get("merge_mm").map_or(0.0, |v| v.to_f64());
+        let bounces: Vec<f64> = opt("bounce_classes").try_to::<PackedFloat32Array>()
+            .map(|a| a.as_slice().iter().map(|&x| x as f64).collect()).unwrap_or_default();
         let (threads, smt) = (opt("threads").to_i32(), opts.get("smt").is_none_or(|v| v.to_bool()));
         let n = job_hull.len();
         if job_dir.len() != n || job_vref.len() != n || job_nxny.len() != 2 * n || job_rect.len() != n
@@ -685,6 +1048,9 @@ impl ProjectileManager {
         let ellipse: Vector2 = opt("ev_ellipse").try_to().unwrap_or(Vector2::new(0.4, 0.1));
         let ev_jobs: PackedByteArray = opt("ev_jobs").try_to().unwrap_or_default();
         let ev_jobs = ev_jobs.as_slice();
+        let refines: Vec<Vec<u8>> = opt("job_refine").try_to::<VarArray>().map(|a| {
+            a.iter_shared().map(|v| v.try_to::<PackedByteArray>().map(|p| p.to_vec()).unwrap_or_default()).collect()
+        }).unwrap_or_default();
         let kernel = (!ev_payouts.is_empty()).then(|| super::ev::EvKernel {
             guarantee: opt("ev_guarantee").to_f64(),
             ellipse: (ellipse.x as f64, ellipse.y as f64),
@@ -692,6 +1058,7 @@ impl ProjectileManager {
             turret_cap: opt("ev_turret_cap").to_f64(),
             om_max,
             levels: opt("ev_levels").try_to::<PackedByteArray>().map(|l| l.to_vec()).unwrap_or_default(),
+            bounces: bounces.clone(),
         });
 
         let (results, stats) = crate::sched::run_balanced(&costs, threads.max(0) as usize, smt, |j, w| {
@@ -705,7 +1072,8 @@ impl ProjectileManager {
                 &pts[po[j] as usize..po[j + 1] as usize],
                 nxny[2 * j], nxny[2 * j + 1], rects[j],
                 &eds[eo[j] as usize..eo[j + 1] as usize],
-                &pens, bisect_mm, om_max,
+                refines.get(j).map_or(&[][..], |r| r.as_slice()),
+                &pens, bisect_mm, om_max, merge_mm, &bounces,
             )?;
             let ev = match &kernel {
                 Some(k) if ev_jobs.get(j).is_some_and(|&f| f != 0) => super::ev::ev_bucket(&blob, k),
@@ -757,14 +1125,15 @@ impl ProjectileManager {
     }
 
     pub(crate) fn lattice_resolve_impl(
-        blob: &PackedByteArray, pen: f64, overmatch: f64, is_he: bool,
+        blob: &PackedByteArray, pen: f64, overmatch: f64, is_he: bool, bounce: f64,
     ) -> PackedByteArray {
-        resolve_codes(blob.as_slice(), pen, overmatch, is_he).map_or_else(PackedByteArray::new, |c| PackedByteArray::from(c.as_slice()))
+        resolve_codes(blob.as_slice(), pen, overmatch, is_he, bounce).map_or_else(PackedByteArray::new, |c| PackedByteArray::from(c.as_slice()))
     }
 
     /// Expected payout and arrival rate of one shell aimed at each of `aims`
     /// (lattice-plane coordinates), integrating `cells` under the gun's
-    /// truncated-Gaussian kernel. Returns [value, landed] per aim; value is in
+    /// truncated-Gaussian kernel. `blob`, when given, supplies the split cells
+    /// `cells` carries past the grid. Returns [value, landed] per aim; value is in
     /// payout-multiplier units, -1 where no walked cell carries any mass.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lattice_score_impl(
@@ -780,26 +1149,28 @@ impl ProjectileManager {
         ellipse: Vector2,
         payouts: &PackedFloat64Array,
         turret_cap: f64,
+        blob: &PackedByteArray,
     ) -> PackedFloat64Array {
         let na = aims.len();
         let mut out = PackedFloat64Array::new();
         out.resize(na * 2);
         let (nx, ny) = (nx.max(0) as usize, ny.max(0) as usize);
-        if nx == 0 || ny == 0 || cells.len() < nx * ny {
+        let hdr = if blob.is_empty() { None } else { blob_header(blob.as_slice()) };
+        let (u0, v0, u1, v1) = (rect.x as f64, rect.y as f64, rect.z as f64, rect.w as f64);
+        let ve: Vec<f64> = if v_edges.len() == ny + 1 {
+            (0..=ny).map(|i| v_edges[i] as f64).collect()
+        } else {
+            let dv = (v1 - v0) / ny.max(1) as f64;
+            (0..=ny).map(|i| v0 + dv * i as f64).collect()
+        };
+        let leaves = Leaves::new(nx, ny, u0, u1, &ve, hdr.as_ref().map(|h| &h.refine));
+        let cells = cells.as_slice();
+        if nx == 0 || ny == 0 || cells.len() < leaves.n_codes {
             out.fill(-1.0);
             return out;
         }
         let s = sigma.max(0.01);
         let erf_bound = erf(s / std::f64::consts::SQRT_2);
-        let (u0, v0, u1, v1) = (rect.x as f64, rect.y as f64, rect.z as f64, rect.w as f64);
-        let du = (u1 - u0) / nx as f64;
-        let ue: Vec<f64> = (0..=nx).map(|i| u0 + du * i as f64).collect();
-        let ve: Vec<f64> = if v_edges.len() == ny + 1 {
-            (0..=ny).map(|i| v_edges[i] as f64).collect()
-        } else {
-            let dv = (v1 - v0) / ny as f64;
-            (0..=ny).map(|i| v0 + dv * i as f64).collect()
-        };
         let ea = (ellipse.x as f64).max(0.01);
         let eb = (ellipse.y as f64).max(0.01) * 0.785;
         let guar_h = |x: f64| ((x + ea) / (2.0 * ea)).clamp(0.0, 1.0);
@@ -820,35 +1191,43 @@ impl ProjectileManager {
             }
             v
         };
+        let codes = &cells[..leaves.n_codes];
+        let walked: Vec<f64> = codes.iter().map(|&c| if c == CELL_UNWALKED { 0.0 } else { 1.0 }).collect();
+        let hit: Vec<f64> = codes.iter().map(|&c| if c == CELL_UNWALKED || c == CELL_MISS { 0.0 } else { 1.0 }).collect();
+        let pay: Vec<f64> = codes.iter().map(|&c| if c == CELL_UNWALKED || c == CELL_MISS { 0.0 } else { payout(c) }).collect();
+        let arrays = [&walked, &hit, &pay];
 
+        // Aims share columns, so the across-row pass is made once per distinct u.
+        struct UPass {
+            sums: (f64, f64),
+            r: [Vec<f64>; 6],
+            s: [Vec<f64>; 6],
+        }
+        let mut by_u: std::collections::HashMap<u32, UPass> = std::collections::HashMap::new();
         for ai in 0..na {
             let aim = aims[ai];
-            let (wh, qh) = axis_weights(&ue, aim.x as f64, half_disp.x as f64, s, erf_bound, &guar_h);
-            let (wv, qv) = axis_weights(&ve, aim.y as f64, half_disp.y as f64, s, erf_bound, &guar_v);
-            let mut in_mass = 0.0;
-            let mut walked_mass = 0.0;
-            let mut val = 0.0;
-            let mut landed = 0.0;
-            for iy in 0..ny {
-                let row = iy * nx;
-                for ix in 0..nx {
-                    let w = (1.0 - g) * wh[ix] * wv[iy] + g * qh[ix] * qv[iy];
-                    if w <= 0.0 {
-                        continue;
+            let up = by_u.entry(aim.x.to_bits()).or_insert_with(|| {
+                let uw = leaves.u_weights(aim.x as f64, half_disp.x as f64, s, erf_bound, &guar_h);
+                let mut r: [Vec<f64>; 6] = Default::default();
+                let mut sb: [Vec<f64>; 6] = Default::default();
+                for (k, p) in arrays.iter().enumerate() {
+                    leaves.u_pass(&uw.w, &uw.wf, p, &mut r[2 * k], &mut sb[2 * k]);
+                    if g > 0.0 {
+                        leaves.u_pass(&uw.q, &uw.qf, p, &mut r[2 * k + 1], &mut sb[2 * k + 1]);
                     }
-                    in_mass += w;
-                    let c = cells[row + ix];
-                    if c == CELL_UNWALKED {
-                        continue;
-                    }
-                    walked_mass += w;
-                    if c == CELL_MISS {
-                        continue;
-                    }
-                    landed += w;
-                    val += w * payout(c);
                 }
+                UPass { sums: uw.sums(), r, s: sb }
+            });
+            let vw = leaves.v_weights(aim.y as f64, half_disp.y as f64, s, erf_bound, &guar_v);
+            let (sv, sq) = vw.sums();
+            let in_mass = (1.0 - g) * up.sums.0 * sv + g * up.sums.1 * sq;
+            let mut res = [0.0f64; 3];
+            for (k, r) in res.iter_mut().enumerate() {
+                let a = leaves.v_pass(&vw.w, &vw.wf, &up.r[2 * k], &up.s[2 * k]);
+                let b = if g > 0.0 { leaves.v_pass(&vw.q, &vw.qf, &up.r[2 * k + 1], &up.s[2 * k + 1]) } else { 0.0 };
+                *r = (1.0 - g) * a + g * b;
             }
+            let [walked_mass, landed, val] = res;
             if walked_mass <= 0.0 {
                 out[ai * 2] = -1.0;
                 out[ai * 2 + 1] = -1.0;

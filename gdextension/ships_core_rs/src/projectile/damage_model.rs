@@ -19,6 +19,7 @@ struct Ammo {
     damage: f32,
     fire_buildup: f32,
     caliber: f32,
+    auto_bounce: f32,
 }
 
 struct Shooter {
@@ -246,8 +247,9 @@ impl DamageModel {
             let (perp, los) = lead_axes(desc, aspect_deg, range, &h.lead);
             let (sp, sl) = (s.sigma * perp, s.sigma * los);
             let look = |dh: f32, dv: f32| -> Option<(f32, f32, (f32, f32))> {
-                let (v, l) = ev_lookup(chunk, pen as f64, a.overmatch as f64, a.is_he, dh, dv, s.sigma)?;
-                Some((v, l, ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, dh, dv, s.sigma).unwrap_or((0.0, 0.0))))
+                let bo = a.auto_bounce as f64;
+                let (v, l) = ev_lookup(chunk, pen as f64, a.overmatch as f64, a.is_he, bo, dh, dv, s.sigma)?;
+                Some((v, l, ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, bo, dh, dv, s.sigma).unwrap_or((0.0, 0.0))))
             };
             let Some((mut v, mut l, (va_h, va_m))) = look(hd_h.hypot(sp), hd_v.hypot(sl)) else { continue };
             let (mut heavy_v, mut medium_v) = (v * va_h, v * va_m);
@@ -322,15 +324,16 @@ impl DamageModel {
     }
 
     /// `curve`: per `step` metres from `step`, [desc0, pen0, desc1, pen1, half_h, half_v]
-    /// (NaN for a missing ammo). `ammo`: [overmatch, is_he, damage, fire_buildup, caliber] x 2,
+    /// (NaN for a missing ammo). `ammo`: [overmatch, is_he, damage, fire_buildup, caliber, auto_bounce] x 2,
     /// damage <= 0 where the slot is empty. `rate`: shells per second.
     #[func]
     fn set_shooter(&mut self, id: i64, step: f32, curve: PackedFloat32Array, rate: f32, sigma: f32, guarantee: f32,
         ellipse: Vector2, ammo: PackedFloat32Array) {
         let a = ammo.as_slice();
         let slot = |k: usize| -> Option<Ammo> {
-            let b = &a.get(5 * k..5 * k + 5)?;
-            (b[2] > 0.0).then(|| Ammo { overmatch: b[0], is_he: b[1] != 0.0, damage: b[2], fire_buildup: b[3], caliber: b[4] })
+            let b = &a.get(6 * k..6 * k + 6)?;
+            (b[2] > 0.0).then(|| Ammo { overmatch: b[0], is_he: b[1] != 0.0, damage: b[2], fire_buildup: b[3], caliber: b[4],
+                auto_bounce: b[5] })
         };
         self.grids.retain(|k, _| k.0 != id);
         self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, sigma, guarantee, ellipse: (ellipse.x, ellipse.y),

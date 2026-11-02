@@ -10,7 +10,7 @@ extends BotSkill
 ## nothing in reach, and when nothing else is found, fight the presumed, else
 ## close on our priority.
 ## Whichever search answers, the sailed destination eases from the last one
-## toward it at our top speed plus EASE_GAIN_MPS for every second it has held still, never jumping,
+## toward it at EASE_RATE x (our top speed plus EASE_GAIN_MPS for every second it has held still), never jumping,
 ## along the navigator's route to it, so it goes round islands.
 ## Params: only (run that Mode alone), prefer_cover (advancing OFFENSE cover first), and
 ## each search's own.
@@ -34,6 +34,7 @@ const EASE_GAP_S := 1.0
 var _shown := Vector2.INF
 var _shown_at: float = -INF
 const EASE_GAIN_MPS := 1.0
+const EASE_RATE := 2.0
 ## A goal moving less than this is the same destination.
 const EASE_SAME_M := 50.0
 ## Resuming with the eased point this far behind us restarts it from the hull.
@@ -79,7 +80,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if not _goal.is_finite() or _goal.distance_to(goal) > EASE_SAME_M:
 		_goal_since = now
 	_goal = goal
-	var speed: float = ctx.ship.movement_controller.max_speed + EASE_GAIN_MPS * (now - _goal_since)
+	var speed: float = EASE_RATE * (ctx.ship.movement_controller.max_speed + EASE_GAIN_MPS * (now - _goal_since))
 	# Resuming from a cover or kite leg behind us: ease from the hull, never sail back to it.
 	var here := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
 	if _shown.is_finite() and (_shown - here).dot((goal - here).normalized()) < -EASE_BEHIND_M:

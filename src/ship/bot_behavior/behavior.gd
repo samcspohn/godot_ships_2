@@ -499,9 +499,10 @@ func _target_aim_error(target: Ship) -> Dictionary:
 		for k in _aim_error.keys():
 			if not is_instance_valid(k) or not k.is_alive():
 				_aim_error.erase(k)
-		for k in _motion.keys():
-			if not is_instance_valid(k) or not k.is_alive():
-				_motion.erase(k)
+		for d in [_motion, _aspect_hist, _ammo_policy]:
+			for k in d.keys():
+				if not is_instance_valid(k) or not k.is_alive():
+					d.erase(k)
 	return rolled
 
 ## Believed turn rate for `target`, rad/sec about +Y. Zero unless this bot
@@ -954,8 +955,7 @@ static func _blind(sol: Dictionary) -> bool:
 ## and AP at a citadel are different answers to "where can this gun hurt this
 ## hull", and choosing them separately lets them disagree.
 func pick_ammo(target: Ship) -> int:
-	var solution := _gunnery.solve(_ship, target)
-	return int(solution.get("ammo", 0))
+	return int(_ammo_choice(target)["ammo"])
 
 ## Where to point for a target this bot is only considering. Cheap by design -
 ## see BotGunnery.aim_hint(). Used by the paths that run over every enemy on the
@@ -969,8 +969,102 @@ func aim_offset_hint(target: Ship) -> Vector3:
 ## this ship's own shells, so a battleship and a destroyer shooting at the same
 ## cruiser reach different answers without either of them being written down.
 func target_aim_offset(target: Ship) -> Vector3:
-	var solution := _gunnery.solve(_ship, target)
-	return solution.get("offset", Vector3.ZERO) as Vector3
+	return _ammo_choice(target)["offset"] as Vector3
+
+## The policy's shell and that shell's own best aim.
+func _ammo_choice(target: Ship) -> Dictionary:
+	var sol := _gunnery.solve(_ship, target)
+	var opts = sol.get("options")
+	if opts == null or (opts[0] as Dictionary).is_empty() or (opts[1] as Dictionary).is_empty():
+		return {"ammo": int(sol.get("ammo", 0)), "offset": sol.get("offset", Vector3.ZERO)}
+	var ammo := _policy_ammo(target, opts)
+	return {"ammo": ammo, "offset": opts[ammo]["offset"]}
+
+## Shell policy: AP is judged on what the target has shown lately, not on this shot alone. A ship
+## that keeps manoeuvring shows a broadside within a hold window often enough for loaded AP to punish;
+## one that has stayed angled through several salvos gets HE. The loaded shell holds unless the
+## other wins by AMMO_SWITCH_MARGIN.
+const ASPECT_SAMPLE_S: float = 1.0
+const ASPECT_HISTORY_S: float = 120.0
+const ASPECT_GAP_S: float = 30.0
+const AMMO_FORECAST_SALVOS: float = 3.0
+const AMMO_SWITCH_MARGIN: float = 1.15
+const AMMO_POLICY_S: float = 1.0
+var _aspect_hist: Dictionary = {}  # Ship -> {t: PackedFloat64Array, a: PackedFloat32Array}
+var _ammo_policy: Dictionary = {}  # Ship -> {at, ammo}
+var ammo_forecast_debug: Vector3 = Vector3.ZERO  # (this shot's AP/HE, forecast AP/HE, forecast weight)
+
+func _note_aspect(target: Ship, contact: Dictionary) -> void:
+	if contact.get("is_lkp", true):
+		return
+	var now: float = SimClock.now()
+	var h: Dictionary = _aspect_hist.get(target, {})
+	var t: PackedFloat64Array = h.get("t", PackedFloat64Array())
+	var a: PackedFloat32Array = h.get("a", PackedFloat32Array())
+	if not t.is_empty() and now - t[t.size() - 1] > ASPECT_GAP_S:
+		t.clear()
+		a.clear()
+	if not t.is_empty() and now - t[t.size() - 1] < ASPECT_SAMPLE_S:
+		return
+	t.append(now)
+	a.append(BotGunnery.aspect_from(target, _ship.global_position))
+	while t[0] < now - ASPECT_HISTORY_S:
+		t.remove_at(0)
+		a.remove_at(0)
+	_aspect_hist[target] = {"t": t, "a": a}
+
+func _policy_ammo(target: Ship, opts: Array) -> int:
+	var now: float = SimClock.now()
+	var held: Dictionary = _ammo_policy.get(target, {})
+	if not held.is_empty() and now - float(held["at"]) < AMMO_POLICY_S:
+		return int(held["ammo"])
+	var r_now: float = float(opts[0]["payout"]) / maxf(float(opts[1]["payout"]), 1e-6)
+	var f := _ap_forecast(target)
+	var ratio: float = lerpf(r_now, f.x, f.y)
+	ammo_forecast_debug = Vector3(r_now, f.x, f.y)
+	var cur: int = _ship.artillery_controller.shell_index
+	var ammo: int = cur
+	if cur == 0 and ratio * AMMO_SWITCH_MARGIN < 1.0:
+		ammo = 1
+	elif cur == 1 and ratio > AMMO_SWITCH_MARGIN:
+		ammo = 0
+	elif cur != 0 and cur != 1:
+		ammo = 0 if ratio >= 1.0 else 1
+	_ammo_policy[target] = {"at": now, "ammo": ammo}
+	return ammo
+
+## (AP over HE across the aspects `target` has shown us, AP fired at the best moment within a salvo
+## hold of each; weight 0..1 by how many salvos of history back it).
+func _ap_forecast(target: Ship) -> Vector2:
+	var h: Dictionary = _aspect_hist.get(target, {})
+	var t: PackedFloat64Array = h.get("t", PackedFloat64Array())
+	var a: PackedFloat32Array = h.get("a", PackedFloat32Array())
+	var ac = _ship.artillery_controller
+	if t.size() < 2 or ac == null or ac.get_params() == null:
+		return Vector2(1.0, 0.0)
+	var reload: float = ac.get_params().reload_time
+	var rng: float = _ship.global_position.distance_to(target.global_position)
+	var window: int = int(HOLD_MAX_RELOADS * reload / ASPECT_SAMPLE_S)
+	var by_bucket := {}
+	var ap := PackedFloat32Array()
+	var he := 0.0
+	for x in a:
+		var k: int = BotGunnery.ev_bucket_index(BotGunnery._aspect_index(x))
+		if not by_bucket.has(k):
+			var e := BotGunnery.expected(_ship, target, rng, x)
+			by_bucket[k] = Vector2(float(e.get("ap_ev", 0.0)), float(e.get("he_ev", 0.0)))
+		ap.append(by_bucket[k].x)
+		he += by_bucket[k].y
+	if he <= 0.0:
+		return Vector2(1.0, 0.0)
+	var punish := 0.0
+	for i in ap.size():
+		var best := 0.0
+		for j in range(i, mini(i + window + 1, ap.size())):
+			best = maxf(best, ap[j])
+		punish += best
+	var span: float = t[t.size() - 1] - t[0]
+	return Vector2(punish / he, clampf(span / maxf(AMMO_FORECAST_SALVOS * reload, 1.0), 0.0, 1.0))
 
 
 ## Stance's throttle ceiling, applied by BotControllerV4 every frame.
@@ -4235,6 +4329,7 @@ func engage_target(target: Ship):
 	var contact := get_contact_solution(target)
 	if not is_engageable_contact(contact):
 		return
+	_note_aspect(target, contact)
 	var aim := _cached_aim(target, contact)
 	var adjusted_target_pos: Vector3 = contact.position + contact.basis * (aim.offset as Vector3)
 	if contact.position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
@@ -4274,7 +4369,9 @@ func engage_target(target: Ship):
 			continue
 		if not _arc_clear(target_lead):
 			return
+		var he: bool = gun.get_shell().type == ShellParams.ShellType.HE
 		gun.fire(_ship.artillery_controller.target_mod)
+		shots_by_ammo[1 if he else 0] += 1
 		return
 
 ## Salvo hold: the next salvo waits up to HOLD_MAX_RELOADS for the aspect the target is turning to,
@@ -4287,6 +4384,7 @@ var _hold_since: float = INF
 var _hold_eval_at: float = -INF
 var _hold_wait: bool = false
 var salvos_held: int = 0
+var shots_by_ammo := PackedInt32Array([0, 0])
 
 func _hold_salvo(target: Ship, contact: Dictionary, ammo: int) -> bool:
 	var ac = _ship.artillery_controller

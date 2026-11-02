@@ -128,7 +128,7 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	intent.target_heading = _heading
 	intent.heading_weight = 1.0
 	# A duel is fought under way: the navigator would brake for a destination stance is not sailing to.
-	if is_finite(_duel_h):
+	if is_finite(_duel_h) and _throttle > 0.0:
 		intent.throttle_override = 4
 	intent.force_reverse = _throttle < 0.0
 	intent.forbid_reverse = _throttle >= 0.0
@@ -885,6 +885,7 @@ var _duel_turn_at: float = INF
 var _duel_h: float = INF
 var _duel_until: float = -INF
 var _duel_name: String = ""
+var _duel_throttle: float = 1.0
 var _last_dealt := 0.0
 var _last_taken := 0.0
 var _last_kill_s := INF
@@ -926,31 +927,33 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var tp := Vector2(t.global_position.x, t.global_position.z)
 	var to_t: float = atan2(tp.x - at.x, tp.y - at.y)
 	var away: float = wrapf(to_t + PI, -PI, PI)
-	# [heading, astern, then heading, after s]. Ties go to the first: bow-in shows the least.
+	# [heading, throttle, then heading, after s]. Ties go to the first: bow-in shows the least.
 	var options := {}
 	var side: float = signf(angle_difference(to_t, hdg)) if angle_difference(to_t, hdg) != 0.0 else 1.0
 	var bow_in: float = wrapf(to_t + side * DUEL_ANGLE, -PI, PI)
-	options["bow-in"] = [bow_in, false, INF, 0.0]
+	options["bow-in"] = [bow_in, 1.0, INF, 0.0]
 	var bs := _nearer(StanceSim.nearest_bearing(arty.guns, tp, hdg, hdg, true), hdg)
 	if is_finite(bs):
-		options["broadside"] = [bs, false, INF, 0.0]
-	options["away"] = [away, false, INF, 0.0]
+		options["broadside"] = [bs, 1.0, INF, 0.0]
+	options["away"] = [away, 1.0, INF, 0.0]
+	options["stop"] = [hdg, 0.0, INF, 0.0]
+	options["reverse"] = [hdg, -1.0, INF, 0.0]
 	var out := INF
 	if tc != null:
 		out = _nearer(StanceSim.nearest_bearing(tc.launchers, tp, hdg, away, false), away)
 		if is_finite(out):
-			options["torp-out"] = [out, false, INF, 0.0]
+			options["torp-out"] = [out, 1.0, INF, 0.0]
 	# Its next salvo: show the bow until it lands, then turn to launch (or bear the guns).
 	var due: float = ctx.behavior.salvo_clock.next_landing(t, now)
 	var then: float = out if is_finite(out) else bs
 	if is_finite(due) and due > 0.0 and due < DUEL_WINDOW_S and is_finite(then):
-		options["angle-then-turn"] = [bow_in, false, then, due]
-	options["lie"] = [_heading, _throttle < 0.0, INF, 0.0]
+		options["angle-then-turn"] = [bow_in, 1.0, then, due]
+	options["lie"] = [_heading, _throttle, INF, 0.0]
 	var tracks := {}
 	var lethal := {}
 	for name in options:
 		var o: Array = options[name]
-		var track := _option_track(ctx, hdg, float(o[0]), bool(o[1]), float(o[2]), float(o[3]))
+		var track := _option_track(ctx, hdg, float(o[0]), float(o[1]), float(o[2]), float(o[3]))
 		if not track.is_empty():
 			tracks[name] = track
 			lethal[name] = _lethal(ctx, t, track)
@@ -961,7 +964,7 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var best := "lie"
 	var best_score := -INF
 	for name in tracks:
-		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name], bool(options[name][1]))
+		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name])
 		if is_finite(sc):
 			_pred[name] = Vector2(_last_pred_d, _last_pred_t)
 			wins[name] = _last_kill_s < _last_die_s
@@ -983,6 +986,7 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var row: Dictionary = duel_stats.get_or_add(key, {})
 	row[best] = int(row.get(best, 0)) + 1
 	_duel_h = INF if best == "lie" else float(options[best][0])
+	_duel_throttle = float(options[best][1])
 	_duel_then = float(options[best][2]) if best != "lie" else INF
 	_duel_turn_at = now + float(options[best][3])
 	_duel_until = now + maxf(minf(_next_gun_s(arty), float(options[best][3]) if float(options[best][3]) > 0.0 else INF), DUEL_HOLD_MIN_S)
@@ -1022,7 +1026,7 @@ func _take_duel() -> void:
 		_duel_h = _duel_then
 		_duel_then = INF
 	_heading = _duel_h
-	_throttle = 1.0
+	_throttle = _duel_throttle
 	_turning = false
 
 ## Seconds until our first gun loads.
@@ -1034,22 +1038,22 @@ static func _next_gun_s(arty) -> float:
 			s = minf(s, (1.0 - clampf(g.reload, 0.0, 1.0)) * reload)
 	return s if is_finite(s) else reload
 
-## DUEL_WINDOW_S of sailing `h` (backing on it when `astern`), turning onto it first; with `then`, turning
-## onto that after `after_s`.
-func _option_track(ctx: SkillContext, hdg: float, h: float, astern: bool, then: float = INF, after_s: float = 0.0) -> Array:
+## DUEL_WINDOW_S of sailing `h` at full ahead, turning onto it first; with `then`, turning onto that after
+## `after_s`. Stopped or astern, the bow held as it lies.
+func _option_track(ctx: SkillContext, hdg: float, h: float, throttle: float, then: float = INF, after_s: float = 0.0) -> Array:
 	var mv = ctx.ship.movement_controller
 	var p: MovementParams = mv._p()
 	var vmax: float = maxf(mv.max_speed, 1.0)
+	if throttle <= 0.0:
+		return _hold_track(ctx, hdg, throttle * (vmax * p.reverse_speed_ratio if throttle < 0.0 else vmax))
 	var v: float = vmax * TURN_SPEED_FRAC
 	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
 	var start := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
 	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
 	var swing: float = absf(angle_difference(hdg, h))
 	var way: float = signf(angle_difference(hdg, h)) if swing > 0.0 else 1.0
-	var run: float = vmax * p.reverse_speed_ratio if astern else vmax
-	var goal: float = wrapf(h + PI, -PI, PI) if astern else h
-	var track := _escape_track(start, hdg, goal, DUEL_WINDOW_S * vmax * 2.0, vmax, run, w * way,
-		p.rudder_response_time, swing, astern, ctx.behavior._get_ship_clearance(), reach)
+	var track := _escape_track(start, hdg, h, DUEL_WINDOW_S * vmax * 2.0, vmax, vmax, w * way,
+		p.rudder_response_time, swing, false, ctx.behavior._get_ship_clearance(), reach)
 	if is_finite(then) and not track.is_empty():
 		var k: int = clampi(int(after_s / ESCAPE_DT), 0, track.size() - 1)
 		var last: Array = track[k]
@@ -1062,7 +1066,27 @@ func _option_track(ctx: SkillContext, hdg: float, h: float, astern: bool, then: 
 		track = track.slice(0, k + 1) + rest
 	return track.slice(0, int(DUEL_WINDOW_S / ESCAPE_DT))
 
-func _duel_score(ctx: SkillContext, t: Ship, track: Array, _astern: bool) -> float:
+## Bow fixed on `hdg`, speed run from the current toward `v_goal` (negative astern) at the hull's rates.
+func _hold_track(ctx: SkillContext, hdg: float, v_goal: float) -> Array:
+	var mv = ctx.ship.movement_controller
+	var p: MovementParams = mv._p()
+	var vmax: float = maxf(mv.max_speed, 1.0)
+	var dir := Vector2(sin(hdg), cos(hdg))
+	var at := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	var v: float = Vector2(ctx.ship.linear_velocity.x, ctx.ship.linear_velocity.z).dot(dir)
+	var clearance: float = ctx.behavior._get_ship_clearance()
+	var track: Array = []
+	for k in int(DUEL_WINDOW_S / ESCAPE_DT):
+		var slowing: bool = v * (v_goal - v) < 0.0
+		var rate: float = vmax / maxf(p.deceleration_time if slowing else p.acceleration_time, 0.1)
+		v = move_toward(v, v_goal, rate * ESCAPE_DT)
+		at += dir * v * ESCAPE_DT
+		if NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
+			return []
+		track.append([at, hdg, absf(v)])
+	return track
+
+func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	var ship: Ship = ctx.ship
 	var arty = ship.artillery_controller
 	var gp: GunParams = arty.get_params()
