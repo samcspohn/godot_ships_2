@@ -96,9 +96,9 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		sit["arm"] = &"engaged"
 	return held
 
-## The engaged arm: hidden island cover with a target in reach first.
-func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _fight(ctx, {"prefer_cover": true})
+## The engaged arm: hidden island cover with a target in reach first when cover_first.
+func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	return _fight(ctx, {"prefer_cover": cover_first(ctx, sit)})
 
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	# Only when something is actually spotted, matching the arms this used to sit

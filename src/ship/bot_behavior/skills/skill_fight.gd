@@ -123,6 +123,10 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var held := _run(ctx, Mode.COVER, _checkpoint(ctx, advance_cover_params(ctx)))
 		if held != null:
 			return held
+		# Open water here is a fight we lose: the nearest cover with a shot, any way round.
+		held = _run(ctx, Mode.COVER, cover_params(ctx, SkillCover.Mode.OFFENSE).merged({"cone_half": PI}))
+		if held != null:
+			return held
 	var b: BotBehavior = ctx.behavior
 	var threat: float = b.get_threat_score(ctx)
 	if not station.resting() and (SimClock.now() >= _shelter_until or threat < BotBehavior.REENGAGE_THREAT):
@@ -132,8 +136,8 @@ func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			return intent
 		if intent != null:
 			_shelter_until = SimClock.now() + SHELTER_S
-	# Calm and nothing in reach: close in rather than hide.
-	if threat < BotBehavior.DISENGAGE_THREAT and not b._has_shootable_contact(ctx):
+	# Calm and nothing in reach: close in rather than hide. One in range the land shields wants a firing position, not a charge.
+	if threat < BotBehavior.DISENGAGE_THREAT and not b._has_shootable_contact(ctx) and not b.lit_in_range(ctx):
 		var closing := _close_in(ctx, params)
 		if closing != null:
 			return closing
@@ -184,7 +188,7 @@ func _keep_mode(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			var p := advance_cover_params(ctx)
 			return _run(ctx, Mode.COVER, _checkpoint(ctx, p) if bool(params.get("prefer_cover", false)) else p)
 		Mode.SPOT:
-			if SimClock.now() - _mode_since < SPOT_MIN_S:
+			if SimClock.now() - _mode_since < SPOT_MIN_S or ctx.behavior.spot_holding(ctx):
 				return _run(ctx, Mode.SPOT, {})
 	return null
 

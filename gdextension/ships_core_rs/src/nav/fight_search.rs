@@ -1,5 +1,6 @@
 use godot::prelude::*;
 
+use crate::nav::forecast::Forecast;
 use crate::nav::spot_walk::SpotInputs;
 use crate::nav::visibility::VisibilityGrid;
 
@@ -64,6 +65,23 @@ pub(crate) struct FightArgs {
     /// of the best our guns could do; 0 for none.
     pub checkpoint: f32,
     pub goal: Vector2,
+    /// Per enemy, `torp_steps` samples on the same spacing: our torpedoes' share of its HP per second, 0 without tubes.
+    pub torp: Vec<f32>,
+    pub torp_steps: usize,
+    /// Per enemy: its velocity, led by a run's time to aim the lane at; a circle stations are walked on for tubes, 0 for none.
+    pub torp_vel: Vec<Vector2>,
+    pub torp_walk_r: Vec<f32>,
+    pub torp_speed: f32,
+    /// Tubes load this long from now, reload in `torp_reload_s`; cells reached first wait, pricing the spread down.
+    pub torp_ready_s: f32,
+    pub torp_reload_s: f32,
+    pub origin: Vector2,
+    /// A station's harm is averaged over our hold of it, each enemy where the forecast has it.
+    pub forecast: Forecast,
+    /// Pushing this enemy: the station is found by a walk along its circle from where the line to it
+    /// crosses, turning away from `push_away` (a friend on it), instead of the whole circles.
+    pub push: Option<usize>,
+    pub push_away: Vector2,
 }
 
 impl FightArgs {
@@ -106,35 +124,67 @@ impl FightArgs {
             busy: o.get("busy").and_then(|v| v.try_to::<PackedByteArray>().ok()).map_or(Vec::new(), |a| a.to_vec()),
             checkpoint: f("checkpoint", 0.0),
             goal: o.get("goal").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
+            torp: arr("torp"),
+            torp_steps: o.get("torp_steps").map_or(0, |v| v.to::<i32>().max(0) as usize),
+            torp_vel: o.get("torp_vel").and_then(|v| v.try_to::<PackedVector2Array>().ok()).map_or(Vec::new(), |a| a.to_vec()),
+            torp_walk_r: arr("torp_walk_r"),
+            torp_speed: f("torp_speed", 1.0).max(1.0),
+            torp_ready_s: f("torp_ready_s", 0.0),
+            torp_reload_s: f("torp_reload_s", 1.0).max(1.0),
+            origin: o.get("origin").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
+            forecast: Forecast::from_opts(o),
+            push: o.get("push_i").map(|v| v.to::<i32>()).filter(|&i| i >= 0).map(|i| i as usize),
+            push_away: o.get("push_away").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF),
         }
+    }
+
+    /// Enemy `i` (`e`) where the forecast has it when we reach `p`.
+    fn ahead(&self, i: usize, e: &crate::nav::spot_walk::Enemy, p: Vector2) -> Vector2 {
+        if self.forecast.is_empty() { e.pos } else { self.forecast.at(i, self.forecast.eta(p)).unwrap_or(e.pos) }
+    }
+
+    /// Enemy `i` when we could reach a circle of radius `r` round it from `from`.
+    fn ahead_by(&self, i: usize, e: &crate::nav::spot_walk::Enemy, from: Vector2, r: f32) -> Vector2 {
+        let s = (from.distance_to(e.pos) - r).max(0.0) / self.forecast.speed.max(1.0);
+        if self.forecast.is_empty() { e.pos } else { self.forecast.at(i, s).unwrap_or(e.pos) }
     }
 
     fn busy(&self, i: usize) -> bool {
         self.busy.get(i).is_some_and(|&b| b != 0)
     }
 
-    /// The most any target is worth to our guns at any range.
+    /// The most any target is worth to our guns and tubes at any range.
     fn best_value(&self, inp: &SpotInputs) -> f32 {
+        let peak = |c: &[f32], n: usize, i: usize| c.get(i * n..(i + 1) * n).map_or(0.0, |c| c.iter().copied().fold(0.0, f32::max));
         inp.enemies.iter().enumerate().take(64).filter(|(_, e)| e.shootable).fold(0.0f32, |m, (i, _)| {
-            let peak = self.out.get(i * self.steps..(i + 1) * self.steps).map_or(0.0, |c| c.iter().copied().fold(0.0, f32::max));
-            m.max(self.value.get(i).copied().unwrap_or(0.0) * peak)
+            m.max(self.value.get(i).copied().unwrap_or(0.0) * (peak(&self.out, self.steps, i) + peak(&self.torp, self.torp_steps, i)))
         })
     }
 
     fn at(&self, curve: &[f32], i: usize, d: f32) -> f32 {
-        if self.steps == 0 || curve.len() < (i + 1) * self.steps {
+        self.at_n(curve, self.steps, i, d)
+    }
+
+    fn at_n(&self, curve: &[f32], steps: usize, i: usize, d: f32) -> f32 {
+        if steps == 0 || curve.len() < (i + 1) * steps {
             return 0.0;
         }
         let t = (d - self.p0_m) / self.step_m;
         if t < 0.0 {
-            return curve[i * self.steps];
+            return curve[i * steps];
         }
         let k = t.floor() as usize;
-        if k + 1 >= self.steps {
-            return if k + 1 == self.steps { curve[i * self.steps + k] } else { 0.0 };
+        if k + 1 >= steps {
+            return if k + 1 == steps { curve[i * steps + k] } else { 0.0 };
         }
         let f = t - k as f32;
-        curve[i * self.steps + k] * (1.0 - f) + curve[i * self.steps + k + 1] * f
+        curve[i * steps + k] * (1.0 - f) + curve[i * steps + k + 1] * f
+    }
+
+    /// The share of a spread's worth tubes still loading when we reach `p` leave.
+    fn torp_ready(&self, p: Vector2) -> f32 {
+        let arrive = if self.origin.is_finite() { self.origin.distance_to(p) / self.speed } else { 0.0 };
+        (1.0 - (self.torp_ready_s - arrive).max(0.0) / self.torp_reload_s).clamp(0.0, 1.0)
     }
 }
 
@@ -150,20 +200,47 @@ pub(crate) struct FightCell {
 /// beyond what the friend we screen would, else at its aggro; grown by `focus`
 /// for each shooter past the first and by `crossfire` as their bearings spread
 /// past what one angle can face. Seen: some enemy sees the cell inside its sight of us.
+/// Fixed-point steps putting a walk-circle cell round the target's position at that cell's own arrival.
+const AHEAD_ITERS: usize = 3;
+
 pub(crate) fn exposure(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &FightArgs) -> (f32, bool) {
+    exposure_by(g, k, inp, a, |_| None)
+}
+
+/// `exposure` averaged over our hold of `k`, from arrival, each enemy at its forecast position.
+pub(crate) fn exposure_ahead(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &FightArgs) -> f32 {
+    let fc = &a.forecast;
+    if fc.is_empty() {
+        return exposure(g, k, inp, a).0;
+    }
+    let w = fc.window(g.centres[k]);
+    w.iter().map(|&s| exposure_by(g, k, inp, a, |i| fc.at(i, s)).0).sum::<f32>() / w.len() as f32
+}
+
+/// `exposure` with enemy i at `at(i)` where that is Some.
+fn exposure_by(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &FightArgs, at: impl Fn(usize) -> Option<Vector2>) -> (f32, bool) {
     let p = g.centres[k];
     let (mut harm, mut shooters, mut seen) = (0.0f32, 0.0f32, false);
     let mut bearings = [(0.0f32, 0.0f32); 64];
     let mut nb = 0;
     // One answer per cell for every enemy: ReachLookup::hits recomputes the whole mask per call.
-    let fire = inp.fire.as_ref().map(|f| (f.known_mask(), f.mask(p)));
+    let mut fire = None;
     for (i, e) in inp.enemies.iter().enumerate().take(64) {
+        let moved = at(i);
+        let pos = moved.unwrap_or(e.pos);
+        let cell = if moved.is_some() { g.cell_of(pos) } else { e.cell };
+        let d = p.distance_to(pos);
+        let los = cell.is_none_or(|c| g.visible_idx(k, c));
+        seen = seen || d < e.los_r || (d < e.det_r && los);
         if !e.heavy {
             continue;
         }
-        let d = p.distance_to(e.pos);
-        seen = seen || (d < e.det_r && e.cell.is_none_or(|ec| g.visible_idx(k, ec)));
-        if fire.is_some_and(|(known, hit)| known & (1 << i) != 0 && hit & (1 << i) == 0) {
+        let missed = match (inp.fire.as_ref(), moved) {
+            (Some(f), Some(q)) => f.known(i) && !f.hits_at(i, q, cell, p, Some(k), los && cell.is_some()),
+            _ => fire.get_or_insert_with(|| inp.fire.as_ref().map(|f| (f.known_mask(), f.mask(p))))
+                .is_some_and(|(known, hit)| known & (1 << i) != 0 && hit & (1 << i) == 0),
+        };
+        if missed {
             continue;
         }
         let dps = a.at(&a.inn, i, d);
@@ -180,12 +257,17 @@ pub(crate) fn exposure(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &Fight
         harm += h;
         shooters += h / dps;
         if h > 0.0 {
-            bearings[nb] = ((e.pos - p).x.atan2((e.pos - p).y), h);
+            bearings[nb] = ((pos - p).x.atan2((pos - p).y), h);
             nb += 1;
         }
     }
     let spread = (shooter_arc(&mut bearings[..nb]) - CROSSFIRE_FREE) / (CROSSFIRE_FULL - CROSSFIRE_FREE);
     (harm * (1.0 + a.focus * (shooters - 1.0).max(0.0)) * (1.0 + a.crossfire * spread.clamp(0.0, 1.0)), seen)
+}
+
+/// `e` sees cell `k`, `d` off: inside its radar or hydro (los_r), or its sight with line of sight.
+fn sees(g: &VisibilityGrid, k: usize, d: f32, e: &crate::nav::spot_walk::Enemy) -> bool {
+    d < e.los_r || (d < e.det_r && e.cell.is_none_or(|ec| g.visible_idx(k, ec)))
 }
 
 /// route_field's costs to the cells it settled, and how many it settled.
@@ -236,48 +318,96 @@ impl VisibilityGrid {
         if self.sdf_c[k] < inp.clearance || self.ringed(k, inp, a) {
             return None;
         }
-        let mask = self.spotted_mask(k, inp);
+        let guns = self.lead_mask(k, inp, &a.forecast);
+        let tubes = self.torp_mask(k, inp, a);
+        let mask = guns | tubes;
         if mask == 0 {
             return None;
         }
-        let mut value = self.fight_value(k, mask, inp, a);
+        let mut value = self.fight_value(k, guns, tubes, inp, a);
         if value <= 0.0 {
             return None;
         }
         if a.seen_cost > 0.0 && !self.hidden_from_free(k, inp, a) {
             value *= 1.0 - a.seen_cost;
         }
-        Some(FightCell { mask, value, harm: exposure(self, k, inp, a).0 })
+        Some(FightCell { mask, value, harm: exposure_ahead(self, k, inp, a) })
     }
 
-    /// One target at a time: the best of those `mask` reaches is what the guns are worth at `k`.
-    fn fight_value(&self, k: usize, mask: u64, inp: &SpotInputs, a: &FightArgs) -> f32 {
+    /// One target at a time: the best of what the guns (`guns` reaches) and tubes (`tubes` has lanes to) are worth at `k`.
+    fn fight_value(&self, k: usize, guns: u64, tubes: u64, inp: &SpotInputs, a: &FightArgs) -> f32 {
         let p = self.centres[k];
+        let ready = if tubes != 0 { a.torp_ready(p) } else { 0.0 };
         let mut value = 0.0f32;
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
-            if mask & (1 << i) != 0 {
-                value = value.max(a.value.get(i).copied().unwrap_or(0.0) * a.at(&a.out, i, p.distance_to(e.pos)));
-            }
+            let d = p.distance_to(a.ahead(i, e, p));
+            let gun = if guns & (1 << i) != 0 { a.at(&a.out, i, d) } else { 0.0 };
+            let torp = if tubes & (1 << i) != 0 { ready * a.at_n(&a.torp, a.torp_steps, i, d) } else { 0.0 };
+            value = value.max(a.value.get(i).copied().unwrap_or(0.0) * (gun + torp));
         }
         value
+    }
+
+    /// Targets a spread from `k` runs to over water, aimed where each will be when it arrives.
+    fn torp_mask(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> u64 {
+        if a.torp_steps == 0 {
+            return 0;
+        }
+        let p = self.centres[k];
+        let mut mask = 0u64;
+        for (i, e) in inp.enemies.iter().enumerate().take(64) {
+            let d = p.distance_to(e.pos);
+            if !e.shootable || a.at_n(&a.torp, a.torp_steps, i, d) <= 0.0 {
+                continue;
+            }
+            let lead = a.torp_vel.get(i).copied().unwrap_or(Vector2::ZERO) * (d / a.torp_speed);
+            if self.torp_lane(p, e.pos + lead) {
+                mask |= 1u64 << i;
+            }
+        }
+        mask
+    }
+
+    /// Open water every half cell from `from` to `to`, the last cell spared: a hull hugging a coast is still hit.
+    fn torp_lane(&self, from: Vector2, to: Vector2) -> bool {
+        let len = from.distance_to(to);
+        let n = (len / (self.cell * 0.5)).ceil() as usize;
+        (1..n).all(|j| {
+            let q = from + (to - from) * (j as f32 / n as f32);
+            if q.distance_to(to) < self.cell {
+                return true;
+            }
+            let (ix, iz) = self.grid_of(q);
+            self.water(ix, iz).is_some()
+        })
     }
 
     /// Inside some enemy's ring where its shells land, or may.
     fn ringed(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> bool {
         let p = self.centres[k];
-        let fire = inp.fire.as_ref().map(|f| (f.known_mask(), f.mask(p)));
+        let mut fire = None;
         inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
-            !a.busy(i)
-                && a.ring.get(i).is_some_and(|&r| p.distance_to(e.pos) < r)
-                && fire.is_none_or(|(known, hit)| known & (1 << i) == 0 || hit & (1 << i) != 0)
+            let q = a.ahead(i, e, p);
+            if a.busy(i) || !a.ring.get(i).is_some_and(|&r| p.distance_to(q) < r) {
+                return false;
+            }
+            let Some(f) = inp.fire.as_ref() else { return true };
+            if !f.known(i) {
+                return true;
+            }
+            if q != e.pos {
+                let cq = self.cell_of(q);
+                return f.hits_at(i, q, cq, p, Some(k), cq.is_some_and(|c| self.visible_idx(k, c)));
+            }
+            *fire.get_or_insert_with(|| f.mask(p)) & (1 << i) != 0
         })
     }
 
-    /// A cell no heavy enemy but a busy one sees inside its sight of us.
+    /// A cell no enemy but a busy one sees: its sight of us, or its radar or hydro.
     fn hidden_from_free(&self, k: usize, inp: &SpotInputs, a: &FightArgs) -> bool {
         let p = self.centres[k];
         !inp.enemies.iter().enumerate().take(64).any(|(i, e)| {
-            e.heavy && !a.busy(i) && p.distance_to(e.pos) < e.det_r && e.cell.is_none_or(|ec| self.visible_idx(k, ec))
+            !a.busy(i) && sees(self, k, p.distance_to(e.pos), e)
         })
     }
 
@@ -292,7 +422,7 @@ impl VisibilityGrid {
             return None;
         }
         let value = a.checkpoint * best * gain.min(a.window_m) / a.window_m;
-        Some(FightCell { mask: 0, value, harm: exposure(self, k, inp, a).0 })
+        Some(FightCell { mask: 0, value, harm: exposure_ahead(self, k, inp, a) })
     }
 
     /// fight_cell, else checkpoint_cell from `from`.
@@ -399,6 +529,56 @@ impl VisibilityGrid {
         out
     }
 
+    /// fight_search_impl when pushing enemy `i`: from where the line from `from` meets its circle, the first
+    /// station along the circle, turning away from push_away (else whichever way finds one sooner); with none,
+    /// the first water on the walk as a chase leg, so the push goes round land.
+    fn push_search(&self, from: Vector2, held: Vector2, i: usize, inp: &SpotInputs, a: &FightArgs)
+        -> (Option<(usize, f32, FightCell)>, Option<(f32, FightCell)>, Option<(usize, Vector2)>, usize) {
+        let e = &inp.enemies[i];
+        let r = a.walk_r.get(i).copied().unwrap_or(0.0).max(self.cell);
+        let c = a.ahead_by(i, e, from, r);
+        let at = |t: f32| (from - c).x.atan2((from - c).y) + t;
+        let mut ways: Vec<f32> = vec![1.0, -1.0];
+        if a.push_away.is_finite() {
+            let side = crate::nav::types::angle_difference(at(0.0), (a.push_away - c).x.atan2((a.push_away - c).y));
+            ways = vec![if side > 0.0 { -1.0 } else { 1.0 }];
+        }
+        let step = self.cell / r;
+        let n = (std::f32::consts::PI / step).ceil() as usize;
+        let route = RouteField::default();
+        let (mut weighed, mut first_water) = (0usize, None);
+        'walk: for j in 0..=n {
+            for &w in &ways {
+                let t = at(w * j as f32 * step);
+                let dir = Vector2::new(t.sin(), t.cos()) * r;
+                let mut p = c + dir;
+                for _ in 0..AHEAD_ITERS {
+                    p = a.ahead(i, e, p) + dir;
+                }
+                let (ix, iz) = self.grid_of(p);
+                let Some(k) = self.water(ix, iz).filter(|&k| self.sdf_c[k] >= inp.clearance) else { continue };
+                weighed += 1;
+                first_water = first_water.or(Some(k));
+                if let Some(fc) = self.fight_cell(k, inp, a) {
+                    let sc = fc.value - fc.harm - self.penalty(k, a, &route);
+                    let held = self.held_cell(held, from, inp, a, &route);
+                    return (Some((k, sc, fc)), held, None, weighed);
+                }
+                if j == 0 {
+                    continue 'walk;
+                }
+            }
+        }
+        let held = self.held_cell(held, from, inp, a, &route);
+        (None, held, first_water.map(|k| (k, c)), weighed)
+    }
+
+    fn held_cell(&self, held: Vector2, from: Vector2, inp: &SpotInputs, a: &FightArgs, route: &RouteField) -> Option<(f32, FightCell)> {
+        let (hx, hz) = held.is_finite().then(|| self.grid_of(held))?;
+        let k = self.water(hx, hz)?;
+        self.station_cell(k, from, inp, a).map(|fc| (fc.value - fc.harm - self.penalty(k, a, route), fc))
+    }
+
     /// Inside the lateral band, and for a new station not back against the walk.
     fn walk_ok(&self, p: Vector2, new: bool, a: &FightArgs) -> bool {
         let lat = (p - a.lat_origin).dot(a.lat_axis);
@@ -436,10 +616,13 @@ impl VisibilityGrid {
     /// `held`'s score. (best, held score, chase (cell, target), weighed).
     pub(crate) fn fight_search_impl(&self, from: Vector2, held: Vector2, inp: &SpotInputs, a: &FightArgs)
         -> (Option<(usize, f32, FightCell)>, Option<(f32, FightCell)>, Option<(usize, Vector2)>, usize) {
+        if let Some(i) = a.push.filter(|&i| i < inp.enemies.len().min(64)) {
+            return self.push_search(from, held, i, inp, a);
+        }
         let chase = inp.enemies.iter().enumerate().take(64)
             .filter(|(i, e)| e.shootable && a.value.get(*i).is_some_and(|&v| v > 0.0))
             .max_by(|x, y| a.value[x.0].total_cmp(&a.value[y.0]))
-            .map(|(i, e)| (i, e.pos));
+            .map(|(i, e)| (i, a.ahead_by(i, e, from, a.walk_r.get(i).copied().unwrap_or(0.0))));
         let mut seen = std::collections::HashSet::new();
         let mut cand: Vec<usize> = Vec::new();
         let mut add = |p: Vector2, cand: &mut Vec<usize>| {
@@ -454,14 +637,22 @@ impl VisibilityGrid {
             }
         };
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
-            let r = a.walk_r.get(i).copied().unwrap_or(0.0);
-            if r <= 0.0 || (e.pos.distance_to(from) - r).abs() > a.window_m {
-                continue;
-            }
-            let n = ((std::f32::consts::TAU * r / self.cell).ceil() as usize).max(8);
-            for j in 0..n {
-                let t = std::f32::consts::TAU * j as f32 / n as f32;
-                add(e.pos + Vector2::new(t.sin(), t.cos()) * r, &mut cand);
+            for r in [a.walk_r.get(i).copied().unwrap_or(0.0), a.torp_walk_r.get(i).copied().unwrap_or(0.0)] {
+                let c = a.ahead_by(i, e, from, r);
+                if r <= 0.0 || (c.distance_to(from) - r).abs() > a.window_m {
+                    continue;
+                }
+                let n = ((std::f32::consts::TAU * r / self.cell).ceil() as usize).max(8);
+                for j in 0..n {
+                    let t = std::f32::consts::TAU * j as f32 / n as f32;
+                    let dir = Vector2::new(t.sin(), t.cos()) * r;
+                    // Round where the target is when we get there, as fight_cell rings and values it.
+                    let mut p = c + dir;
+                    for _ in 0..AHEAD_ITERS {
+                        p = a.ahead(i, e, p) + dir;
+                    }
+                    add(p, &mut cand);
+                }
             }
         }
         if let Some((i, t)) = chase {

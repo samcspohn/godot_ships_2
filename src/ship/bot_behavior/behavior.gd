@@ -723,8 +723,9 @@ func update_priorities(server: GameServer) -> void:
 		var d := here.distance_to(b.pos)
 		var shoot: bool = d <= _ship.artillery_controller.get_params()._range and _aimable(b.ship) and can_hit_target(b.ship)
 		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
+		var sc: float = priority_score(b.ship, b.pos, sail, shoot, _team_help(server, b.ship, b.pos), _team_threat(server, b.ship, b.pos))
 		fresh.append({"ship": b.ship, "pos": b.pos, "d": d if shoot else PRIORITY_ROUTE_W * sail,
-			"score": priority_score(b.ship, b.pos, sail, shoot, _team_help(server, b.ship, b.pos))})
+			"score": sc * _lone_boost(server, b.ship, b.pos)})
 	for r in server.anonymous_refs(team_id):
 		var proxy := _ref_proxy(server, int(r.id))
 		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
@@ -770,6 +771,16 @@ func update_priorities(server: GameServer) -> void:
 	priorities = fresh
 	priority = priorities[0] if not priorities.is_empty() else {}
 
+## 0..1, how well a chase can run `e` down: our speed over its, times how near we see it (its concealment, our hydro
+## or radar) over how near it sees us; 1 for a slower ship we see first. A faster or stealthier one keeps away.
+func catchable(e: Ship) -> float:
+	if e.concealment == null or e.concealment.params == null or e.movement_controller == null:
+		return 1.0
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
+	var we_see: float = maxf((e.concealment.params.p() as ConcealmentParams).radius, server._latent_force_spot_reach(_ship) if server != null else 0.0)
+	var speed: float = _ship.movement_controller.max_speed / maxf(e.movement_controller.max_speed, 1.0)
+	return minf(speed, 1.0) * minf(we_see / maxf(NavigationMapManager.reach_conceal_radius(_ship), 1.0), 1.0)
+
 ## What `enemy` (believed `at`) is worth attending to now, in (%HP/s)²: the
 ## damage its guns would do to us, by its danger_curve, times how fast ours kill
 ## it, from where we stand or our gun range: shooting first what does most harm
@@ -779,11 +790,47 @@ func update_priorities(server: GameServer) -> void:
 ## One we cannot shoot now (out of range, behind land, or dark) fades by e per
 ## PRIORITY_SAIL_S of PRIORITY_COVER_S plus the route past our guns.
 ## `help`: our friends' dps on it (_team_help).
-func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, help: float = 0.0) -> float:
+## `team_threat`: the most of a friend's HP per second it takes (_team_threat), weighed at PRIORITY_TEAM_THREAT_W against ours.
+func priority_score(enemy: Ship, at: Vector2, sail_m: float, shootable: bool, help: float = 0.0, team_threat: float = 0.0) -> float:
 	if not is_instance_valid(enemy) or enemy.artillery_controller == null or _ship.artillery_controller == null:
 		return 0.0
 	var r: float = at.distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-	return priority_value(priority_parts(enemy, r, sail_m, shootable, help), aptitude.focus_w)
+	var p := priority_parts(enemy, r, sail_m, shootable, help)
+	p.x = maxf(p.x, PRIORITY_TEAM_THREAT_W * 100.0 * team_threat)
+	return priority_value(p, aptitude.focus_w)
+
+## A torpedo boat on our battleships is as urgent as one on us, at this weight.
+const PRIORITY_TEAM_THREAT_W: float = 0.5
+## Late in the match, an enemy none of its friends can cover is worth up to 1 + this as much.
+const PRIORITY_LONE_W: float = 1.0
+static var _team_threats: Dictionary = {}
+
+## Of our friends but us, the most HP share per second `e` (believed `at`) would take from one: its guns and tubes.
+func _team_threat(server: GameServer, e: Ship, at: Vector2) -> float:
+	var row: Dictionary = _team_threats.get_or_add(_ship.team.team_id, {})
+	var v = row.get(e.get_instance_id())
+	var now: float = SimClock.now()
+	if v != null and now - float(v[0]) < AGGRO_TTL_S:
+		return float(v[1])
+	var best := 0.0
+	for f: Ship in server.get_team_ships(_ship.team.team_id):
+		if f == _ship or not is_instance_valid(f) or not f.is_alive():
+			continue
+		var d: float = at.distance_to(Vector2(f.global_position.x, f.global_position.z))
+		best = maxf(best, _curve_at(danger_curve(e, f), d) / maxf(f.health_controller.current_hp, 1.0) + _curve_at(torpedo_danger(e, f), d))
+	row[e.get_instance_id()] = [now, best]
+	return best
+
+## 1 + PRIORITY_LONE_W x the match's elapsed share / (1 + its friends believed within gun range of it).
+func _lone_boost(server: GameServer, e: Ship, at: Vector2) -> float:
+	var helpers := 0
+	for b in server._team_belief(_ship.team.team_id):
+		var o: Ship = b.ship
+		if o != e and is_instance_valid(o) and o.artillery_controller != null \
+				and (b.pos as Vector2).distance_to(at) <= o.artillery_controller.get_params()._range:
+			helpers += 1
+	var late: float = clampf(server.match_elapsed / GameServer.MATCH_DURATION, 0.0, 1.0)
+	return 1.0 + PRIORITY_LONE_W * late / (1.0 + helpers)
 
 static func priority_value(p: Vector4, focus_w: float = PRIORITY_FOCUS_W) -> float:
 	return p.x * p.y * p.z * (1.0 + focus_w * p.w)
@@ -794,7 +841,7 @@ func priority_parts(enemy: Ship, r: float, sail_m: float, shootable: bool, allie
 	var p := score_parts(_ship, enemy, r, allied_dps)
 	if not shootable:
 		var past: float = maxf(sail_m - _ship.artillery_controller.get_params()._range, 0.0) / maxf(_ship.movement_controller.max_speed, 1.0)
-		p.z = exp(-(PRIORITY_COVER_S + past) / PRIORITY_SAIL_S)
+		p.z = exp(-(PRIORITY_COVER_S + past) / PRIORITY_SAIL_S) * catchable(enemy)
 	return p
 
 ## priority_parts as `scorer` would rank `target` `r` off, shootable.
@@ -1397,7 +1444,7 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 
 func can_hit_target(target: Ship) -> bool:
 	"""Check if we can actually hit the target (not blocked by terrain/islands).
-	Uses sim_can_shoot_over_terrain_static from ship center at deck height."""
+	Uses sim_can_shoot_over_terrain_static from the ship's centre at mean muzzle height."""
 	var contact := get_contact_solution(target)
 	if not contact.get("valid", false):
 		return false
@@ -1433,9 +1480,9 @@ func _can_hit_target(target: Ship, contact: Dictionary) -> bool:
 	if lead_pos == null:
 		return false
 
-	# Fire from ship center at deck height (draft / 2 above waterline)
+	# From the guns' mean muzzle height, as the guns themselves and the reach tables check.
 	var fire_pos = _ship.global_position
-	fire_pos.y = _ship.movement_controller.ship_draft / 2.0
+	fire_pos.y = float(NavigationMapManager.reach_gun(_ship).get("gun_h", _ship.movement_controller.ship_draft / 2.0))
 
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(fire_pos, lead_pos, shell_params)
 	if sol[0] == null:
@@ -3040,6 +3087,24 @@ func _committed_intent(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 func _has_shootable_contact(ctx: SkillContext) -> bool:
 	return ctx.target != null and is_instance_valid(ctx.target)
 
+## A lit enemy within our gun range, now or where the forecast has it within THREAT_FORECAST_S: closing in is not what reaches it.
+func lit_in_range(ctx: SkillContext) -> bool:
+	var g: Dictionary = NavigationMapManager.reach_gun(_ship)
+	if g.is_empty() or _ship.team == null:
+		return false
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var now: float = SimClock.now()
+	for e in ctx.server.get_valid_targets(_ship.team.team_id):
+		if not is_instance_valid(e) or not e.is_alive():
+			continue
+		var fc: PackedVector2Array = ctx.server._forecast.of(e, now)
+		for k in fc.size():
+			if EnemyForecast.TIMES[k] > THREAT_FORECAST_S:
+				break
+			if fc[k].distance_to(here) <= float(g.range):
+				return true
+	return false
+
 ## Arms 3 and 4. The close arm is shared; the engaged arm is the hook.
 func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var d := _doc()
@@ -3064,6 +3129,37 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if (sit.threat < d.force_below or sit.threat >= d.force_above) and not _fighting(SkillFight.Mode.COVER) and _active_skill_name != &"Disengage":
 		sit["forced"] = true
 	return intent
+
+## Island cover leads Fight while open water is a fight we lose: an enemy holding us in its gun range out-trades
+## us at the range between us, or this many we cannot beat do (guesses included), or we sit under REENGAGE_THREAT
+## not out-trading our priority. Else we fight, running the priority down.
+const COVER_FIRST_SHOOTERS := 2
+
+## The last cover_first answer, for the trace.
+var cover_first_last := false
+
+func cover_first(ctx: SkillContext, sit: Dictionary) -> bool:
+	cover_first_last = _cover_first(ctx, sit)
+	return cover_first_last
+
+func _cover_first(ctx: SkillContext, sit: Dictionary) -> bool:
+	var winning: bool = _trade_now.y >= 0.0 and _trade_now.x >= _trade_now.y * STAY_MARGIN
+	if float(sit.threat) >= REENGAGE_THREAT and not winning:
+		return true
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var n := 0
+	for b in ctx.server._team_belief(_ship.team.team_id):
+		var e: Ship = b.ship
+		if not is_instance_valid(e) or e.artillery_controller == null:
+			continue
+		var d: float = (b.pos as Vector2).distance_to(here)
+		if d > e.artillery_controller.get_params()._range:
+			continue
+		if kill_rate(e, _ship, d) > kill_rate(_ship, e, d):
+			return true
+		if dangerous(e):
+			n += 1
+	return n >= COVER_FIRST_SHOOTERS
 
 ## Lit, a ship gets out once it would die before beating its priority (time_to_win), and stays
 ## out until it would outlive that by STAY_MARGIN; with no priority to beat, above DISENGAGE_THREAT until below REENGAGE_THREAT.
@@ -3154,7 +3250,9 @@ func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if not brawler() or not priority_point().is_finite():
 		return null
 	sit["arm"] = &"brawl"
-	var push := {"desired_range": BRAWL_RANGE_M, "only": SkillFight.Mode.STATION}
+	var t: Ship = priority_target()
+	var push := {"desired_range": minf(BRAWL_RANGE_M, desired(t).x) if t != null else BRAWL_RANGE_M,
+		"only": SkillFight.Mode.STATION, "push": true}
 	var intent := _run_skill(&"Fight", ctx, push)
 	if intent == null:
 		return null
@@ -3241,8 +3339,8 @@ func _disengage(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 
 ## What to do when the odds look good. Base pushes; CA prefers to run down a
 ## closer unseen contact rather than cross the map to a distant visible one.
-func _select_low_threat_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _fight(ctx)
+func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	return _fight(ctx, {"prefer_cover": cover_first(ctx, sit)})
 
 ## Per-class hook: the engaged arm. Base falls back to pushing.
 func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
@@ -3556,17 +3654,48 @@ func _threat_from(ctx: SkillContext, contacts: Array[Dictionary], shift: float, 
 		if not stats.is_empty():
 			raw_threat *= 1.0 - _unknown_threat(stats, dist, hp_ratio, max_hp) * threat_scale * float(contact.certainty)
 			continue
+		var coming: float = _forecast_share(ctx, enemy, my_hp, friends) if shift == 0.0 and float(contact.certainty) >= 1.0 else 0.0
 		if dist > enemy.artillery_controller.get_params()._range:
+			raw_threat *= exp(-horizon * coming)
 			continue
 		# Share of our remaining HP its guns take per second at this range, off
 		# our real aspect to it, after dispersion against our hull and our dodge.
 		var share: float = incoming_dps(enemy, dist, BotGunnery.aspect_from(_ship, believed)) / maxf(my_hp, 1.0)
 		if reach.get(enemy.get_instance_id(), true) == false:
 			share *= UNREACHABLE_THREAT
-		share *= _aim_share(enemy, Vector2(believed.x, believed.z), dist, friends)
+		share = maxf(share * _aim_share(enemy, Vector2(believed.x, believed.z), dist, friends), coming)
 		# Dying before finishing our target (time to die < its time to kill) would be a second trigger here.
 		raw_threat *= exp(-horizon * share * float(contact.certainty))
 	return clampf(1.0 - raw_threat, 0.0, 1.0)
+
+## Staying put, fire the forecast brings within this long counts as fire now.
+const THREAT_FORECAST_S := 30.0
+const THREAT_FORECAST_REFRESH_S := 1.0
+var _coming: Dictionary = {}  # Ship -> [until, share]
+
+## The most of our HP per second `enemy`'s guns take, if we stay here, from where the forecast has it within THREAT_FORECAST_S.
+func _forecast_share(ctx: SkillContext, enemy: Ship, my_hp: float, friends: Array) -> float:
+	var now: float = SimClock.now()
+	var held: Array = _coming.get(enemy, [])
+	if not held.is_empty() and now < float(held[0]):
+		return float(held[1])
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var best := 0.0
+	if field != null and field.is_built() and _ship.team != null:
+		var fc: PackedVector2Array = ctx.server._forecast.of(enemy, now)
+		var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+		var reach: float = enemy.artillery_controller.get_params()._range
+		for k in range(1, fc.size()):
+			if EnemyForecast.TIMES[k] > THREAT_FORECAST_S:
+				break
+			var q: Vector2 = fc[k]
+			var d: float = q.distance_to(here)
+			if d > reach or not field.fire_hits_from(_ship.team.team_id, enemy.get_instance_id(), q, here):
+				continue
+			best = maxf(best, incoming_dps(enemy, d, BotGunnery.aspect_from(_ship, Vector3(q.x, 0.0, q.y))) / maxf(my_hp, 1.0)
+				* _aim_share(enemy, q, d, friends))
+	_coming[enemy] = [now + THREAT_FORECAST_REFRESH_S, best]
+	return best
 
 ## The share of `enemy`'s guns (believed `at`, `dist` from us) we expect on us:
 ## all while it shoots us; else our pull against every lit friend its guns
@@ -3826,14 +3955,27 @@ func hide_range(enemy: Ship) -> float:
 	var server: GameServer = _ship.get_node_or_null("/root/Server")
 	if server != null:
 		seen = maxf(seen, server._force_spot_reach(enemy))
-	return seen + HIDE_MARGIN_M
+	# Tubes that fall short of where it sees us cannot be fired unseen.
+	return seen + HIDE_MARGIN_M if tc.get_max_range() > seen + HIDE_MARGIN_M else 0.0
+
+## How far off we can hold `enemy` to shoot it: INF while a friend spots it, else its concealment or our hydro or radar.
+func sight_of(enemy: Ship) -> float:
+	if enemy.concealment == null or enemy.concealment.params == null:
+		return INF
+	for s in enemy.concealment.spotters:
+		if s != _ship and is_instance_valid(s):
+			return INF
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
+	var sensor: float = server._latent_force_spot_reach(_ship) if server != null else 0.0
+	return maxf((enemy.concealment.params.p() as ConcealmentParams).radius, sensor)
 
 func _desired_by_trade(enemy: Ship) -> Vector2:
-	var our_gun: float = _ship.artillery_controller.get_params()._range
+	var sight: float = sight_of(enemy)
+	var our_gun: float = minf(_ship.artillery_controller.get_params()._range, sight)
 	var their_gun: float = enemy.artillery_controller.get_params()._range
 	var our_hp: float = maxf(trade_hp(), 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
-	var our_reach: float = reach_m(_ship)
+	var our_reach: float = minf(reach_m(_ship), sight)
 	var their_reach: float = reach_m(enemy)
 	var best_r := -1.0
 	var best := 0.0
@@ -6138,6 +6280,9 @@ func _should_use_hydro() -> bool:
 		if (controller.tracked_torpedo_count as int) > 0:
 			return true
 
+	if _spot_wants_sensor(HydroacousticSearch):
+		return true
+
 	# --- Trigger 2: spotted enemy DD within torpedo-threat range ---
 	var spotted := server_node.get_valid_targets(my_team)
 	for enemy in spotted:
@@ -6193,6 +6338,41 @@ func _should_use_hydro() -> bool:
 	return false
 
 
+## Holding a Spot station that lights an enemy a friend has in gun range, and not under threat: keep it.
+func spot_holding(ctx: SkillContext) -> bool:
+	if _skill_fight.mode != SkillFight.Mode.SPOT or not _skill_fight.spot.has_station() or ctx.server == null:
+		return false
+	if get_threat_score(ctx) >= DISENGAGE_THREAT:
+		return false
+	for e in ctx.server.get_valid_targets(_ship.team.team_id):
+		if not is_instance_valid(e) or e.concealment == null or not e.concealment.spotters.has(_ship):
+			continue
+		for f: Ship in ctx.server.get_team_ships(_ship.team.team_id):
+			if f != _ship and is_instance_valid(f) and f.is_alive() and f.artillery_controller != null \
+					and f.global_position.distance_to(e.global_position) <= f.artillery_controller.get_params()._range:
+				return true
+	return false
+
+## On a Spot station whose look-from distance counted this sensor: a dark priority is inside its reach.
+const SPOT_ARRIVED_M: float = 600.0
+func _spot_wants_sensor(kind) -> bool:
+	if _skill_fight.mode != SkillFight.Mode.SPOT or not _skill_fight.spot.has_station():
+		return false
+	var st: Vector3 = _skill_fight.spot.station_position()
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	if Vector2(st.x, st.z).distance_to(here) > SPOT_ARRIVED_M:
+		return false
+	var reach := 0.0
+	for c in _ship.consumable_manager.equipped_consumables:
+		if is_instance_of(c, kind):
+			reach = c.p().spotting_range
+	for k in mini(priorities.size(), PRIORITY_COUNT):
+		var c: Dictionary = priorities[k]
+		var dark: bool = c.ship == null or (is_instance_valid(c.ship) and not c.ship.visible_to_enemy)
+		if dark and (c.pos as Vector2).distance_to(here) < reach:
+			return true
+	return false
+
 func _should_use_radar() -> bool:
 	# Only information legitimately available to this bot. Triggers: (1)
 	# detected with no visible enemy within radar range (~8km) to account for
@@ -6207,6 +6387,8 @@ func _should_use_radar() -> bool:
 	const RADAR_RANGE: float = 8000.0
 
 	var spotted := server_node.get_valid_targets(my_team)
+	if _spot_wants_sensor(Radar):
+		return true
 
 	# --- Trigger 1: detected but no visible enemy within radar range ---
 	# A ping counts: hydro reaches ~4 km and radar ~8 km, so whoever is lighting

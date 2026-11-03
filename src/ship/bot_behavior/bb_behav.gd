@@ -53,6 +53,6 @@ func _opening(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var intent := _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.STATION, "presumed": true})
 	return intent if intent != null else _select_engaged_skill(ctx, sit)
 
-## The engaged arm: island cover toward the priority first, as a cruiser; open water failing it.
-func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _fight(ctx, {"prefer_cover": true})
+## The engaged arm: island cover toward the priority first when cover_first, as a cruiser; open water failing it.
+func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	return _fight(ctx, {"prefer_cover": cover_first(ctx, sit)})

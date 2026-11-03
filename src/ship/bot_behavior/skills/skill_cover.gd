@@ -60,6 +60,8 @@ var last_sweep: Dictionary = {}
 var _resume := Vector2.INF
 var _blocked: Array = []  # [Vector2, expiry]
 var _blocked_since: float = INF
+## Why the last held station was given up, for the trace.
+var lost := ""
 
 func reset() -> void:
 	super()
@@ -69,9 +71,9 @@ func reset() -> void:
 	_targets = {}
 	_resume = Vector2.INF
 
-## Whether the held station keeps us unseen, rather than only out of the fire.
+## Whether the held station keeps us unseen, rather than only out of the fire. Offense cover is chosen to fire from.
 func wants_concealment() -> bool:
-	return _has_station and not _seen
+	return _has_station and not _seen and mode == Mode.DEFENSE
 
 ## Whether the held station hides us by distance alone, in open water.
 func is_dark() -> bool:
@@ -79,7 +81,7 @@ func is_dark() -> bool:
 
 func debug_text() -> String:
 	if not _has_station:
-		return "Cover: none | %d cells" % _cells
+		return "Cover: none (%s) | %d cells" % [lost, _cells]
 	return "Cover %s%s | %d cells" % ["off" if mode == Mode.OFFENSE else "def",
 		" dark" if _dark else (" shielded" if _seen else " hidden"), _cells]
 
@@ -106,16 +108,18 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_blocked = _blocked.filter(func(b: Array) -> bool: return now < float(b[1]))
 	opts["exclude"] = PackedVector2Array(_blocked.map(func(b: Array) -> Vector2: return b[0]))
 	opts["exclude_r"] = COVER_HOLD_M
-	var want: int = _aim_bits(field, team_id, opts) if mode == Mode.OFFENSE else 0
-	if _has_station and want != 0:
+	var aim: PackedInt32Array = _aimed(field, team_id, opts) if mode == Mode.OFFENSE else PackedInt32Array()
+	var want: bool = not aim.is_empty()
+	if _has_station and want:
 		var st := Vector2(_station.x, _station.z)
-		if here.distance_to(st) > ARRIVED_M or field.reach_mask_exact(team_id, opts.hull_key, here) & want != 0:
+		if here.distance_to(st) > ARRIVED_M or _reaches_lead(ship, opts, aim, here):
 			_blocked_since = INF
 		else:
 			_blocked_since = minf(_blocked_since, now)
 			if now - _blocked_since >= BLOCKED_S:
 				_block(st, now)
 				_drop()
+				lost = "no_shot_here"
 	if not _has_station and carry.is_finite():
 		var why := "kept"
 		var ev: Dictionary = {"ok": false, "count": 0}
@@ -136,9 +140,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var ev: Dictionary = vis.cover_eval(Vector2(_station.x, _station.z), opts.pos, opts)
 		if not _in_clip(here, Vector2(_station.x, _station.z), opts.clip_pos):
 			_drop()
+			lost = "clip"
 		elif not bool(ev.ok):
 			_resume = Vector2(_station.x, _station.z)
 			_drop()
+			lost = String(ev.get("why", "?"))
 		else:
 			_dark = bool(ev.dark)
 			_seen = bool(ev.seen)
@@ -147,6 +153,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 				_note_targets(opts.ids, int(ev.mask))
 			elif mode == Mode.OFFENSE and now - _target_at >= COVER_BLIND_S and not _spotted_for(ctx, team_id, belief):
 				_drop()
+				lost = "blind"
 	var now_ms: int = SimClock.now_ms()
 	if not _has_station and now_ms - _searched_ms >= RESEARCH_MS:
 		_searched_ms = now_ms
@@ -161,7 +168,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var r: Dictionary = {}
 		for i in VERIFY_TRIES:
 			r = vis.cover_search(from, axis, opts.pos, opts)
-			if not bool(r.found) or want == 0 or field.reach_mask_exact(team_id, opts.hull_key, r.pos) & want != 0:
+			if not bool(r.found) or not want or _reaches_lead(ship, opts, aim, r.pos):
 				break
 			_block(r.pos, now)
 			opts.exclude.append(r.pos)
@@ -214,15 +221,30 @@ static func _hidden_exact(p: Vector2, opts: Dictionary) -> bool:
 			return false
 	return true
 
-## Bits, in the reach field's enemy order, of the targets opts counts as shootable.
-func _aim_bits(field: ReachField, team_id: int, opts: Dictionary) -> int:
+## Indices in opts of the shootable targets the reach field holds (references it does not).
+static func _aimed(field: ReachField, team_id: int, opts: Dictionary) -> PackedInt32Array:
 	var order: PackedInt64Array = field.get_team_enemy_ids(team_id)
-	var bits := 0
+	var out := PackedInt32Array()
 	for i in (opts.ids as PackedInt64Array).size():
-		var b: int = order.find(opts.ids[i])
-		if opts.shootable[i] == 1 and b >= 0 and b < 63:
-			bits |= 1 << b
-	return bits
+		if opts.shootable[i] == 1 and order.has(opts.ids[i]):
+			out.append(i)
+	return out
+
+## Whether our shell from `p` clears the terrain, as the guns check it, onto one of `aim` where the forecast has it
+## when we reach `p`. The search's reach tables approximate the island; this is the shot the guns would allow.
+static func _reaches_lead(ship: Ship, opts: Dictionary, aim: PackedInt32Array, p: Vector2) -> bool:
+	var fc: PackedVector2Array = opts.fc
+	var eta: float = minf((opts.from as Vector2).distance_to(p) / maxf(float(opts.speed), 1.0), EnemyForecast.TIMES[-1])
+	var shell: ShellParams = ship.artillery_controller.get_shell_params()
+	if shell == null:
+		return false
+	var from := Vector3(p.x, float(NavigationMapManager.reach_gun(ship).get("gun_h", 5.0)), p.y)
+	for i in aim:
+		var q: Vector2 = EnemyForecast.at(fc, i, eta)
+		var sol: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(from, Vector3(q.x, 0.0, q.y), shell)
+		if sol[0] != null and Gun.sim_can_shoot_over_terrain_static(from, sol[0], sol[1], shell, ship).can_shoot_over_terrain:
+			return true
+	return false
 
 func _block(p: Vector2, now: float) -> void:
 	_blocked.append([p, now + BLOCKED_TTL_S])
@@ -243,12 +265,13 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		params: Dictionary, all_targets: bool = false) -> Dictionary:
 	var ship: Ship = ctx.ship
 	var conceal: float = NavigationMapManager.reach_conceal_radius(ship)
-	# Firing on the way, the bloom is what they see us from.
-	var seen_from: float = maxf(conceal, float(g.get("range", 0.0))) if params.get("fire_en_route", false) else conceal
+	# Firing, from offense cover or on the way, the bloom is what they see us from.
+	var seen_from: float = maxf(conceal, float(g.get("range", 0.0))) \
+		if mode == Mode.OFFENSE or params.get("fire_en_route", false) else conceal
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var opts := {"pos": PackedVector2Array(), "det_r": PackedFloat32Array(), "dark_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
 		"spot_r": PackedFloat32Array(), "heavy": PackedByteArray(), "shells": PackedByteArray(), "shootable": PackedByteArray(),
-		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array(), "lead": PackedVector2Array()}
+		"ids": PackedInt64Array(), "clip_pos": PackedVector2Array()}
 	var lit: bool = ship.is_detected()
 	# The cover_kind dial: a ship that can afford being seen ignores guns that would take longer to sink it.
 	var kind: float = float(ctx.behavior.dials.eased.get("cover_kind", 0.0))
@@ -266,7 +289,6 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.shells.append(1 if BotBehavior.heavy_guns(e, ship, ttk) else 0)
 		opts.shootable.append(1 if all_targets or ctx.behavior._aimable(e) else 0)
 		opts.ids.append(e.get_instance_id())
-		opts.lead.append(Vector2(e.linear_velocity.x, e.linear_velocity.z) if int(b.source) == 0 else Vector2.ZERO)
 		if lit and here.distance_to(b.pos) <= maxf(seen_from, force):
 			opts.clip_pos.append(b.pos)
 	for r in params.get("refs", []):
@@ -279,7 +301,6 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		opts.shells.append(0)
 		opts.shootable.append(1 if all_targets else 0)
 		opts.ids.append(int(r.id))
-		opts.lead.append(Vector2.ZERO)
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "reach_m": REACH_M, "away_ratio": float(params.get("away_ratio", AWAY_RATIO)),
 		"cone_half": float(params.get("cone_half", CONE_HALF)), "need": 1 if mode == Mode.OFFENSE else 0,
@@ -288,10 +309,9 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		"allow_dark": mode == Mode.DEFENSE and bool(params.get("allow_dark", not params.get("fire_en_route", false))),
 		"near_pos": params.get("near_pos", Vector2.ZERO), "near_d": float(params.get("near_d", INF)),
 		"clip_half": CLIP_HALF, "from": here,
-		"speed": maxf(ship.linear_velocity.length(), ship.movement_controller.max_speed * LEAD_SPEED_FRAC)}, true)
-	# Offense stations are fought from, not run to ahead of a pursuer.
-	if mode != Mode.DEFENSE:
-		opts.lead = PackedVector2Array()
+		"speed": maxf(ship.linear_velocity.length(), ship.movement_controller.max_speed * LEAD_SPEED_FRAC),
+		"fc": EnemyForecast.pack(belief, PackedVector2Array(params.get("refs", []).map(func(r): return r.pos))),
+		"fc_t": EnemyForecast.TIMES, "fc_hold_s": EnemyForecast.HOLD_S}, true)
 	return opts
 
 ## Whether `p` is within CLIP_HALF of each seeing enemy's bearing to `from`, as cover_search clips.

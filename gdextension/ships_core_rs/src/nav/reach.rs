@@ -722,6 +722,35 @@ impl ReachLookup {
         i < 64 && self.mask(p) & (1 << i) != 0
     }
 
+    /// `hits` with enemy i's believed position moved to `q`; `seen`: line of sight from `p` to `q`.
+    /// Nothing is kept: forecasts move every second.
+    pub(crate) fn hits_at(&self, i: usize, q: Vector2, cq: Option<usize>, p: Vector2, kp: Option<usize>, seen: bool) -> bool {
+        let Some(Some((ray, _))) = self.rays.get(i) else { return false };
+        let dist = p.distance_to(q);
+        if dist > ray.range {
+            return false;
+        }
+        if dist < 1.0 || seen {
+            return true;
+        }
+        // Always the exact ray: the gun matrix snaps both ends to its cells, and whether its row is built yet
+        // would otherwise change the answer.
+        let _ = (cq, kp);
+        self.ray_at(i, q, p)
+    }
+
+    /// One exact ray between `p` and enemy i moved to `q`, as mask_exact casts.
+    pub(crate) fn ray_at(&self, i: usize, q: Vector2, p: Vector2) -> bool {
+        let Some(Some((ray, _))) = self.rays.get(i) else { return false };
+        let dist = p.distance_to(q);
+        if dist > ray.range || dist < 1.0 {
+            return dist < 1.0;
+        }
+        let (from, to) = if self.outbound { (q, p) } else { (p, q) };
+        let d = to - from;
+        segment_clear(&self.terrain, &ray.table, from, d.x / dist, d.y / dist, dist, ray.gun_h)
+    }
+
     /// Bit i set when enemy i has guns to answer for.
     pub(crate) fn known_mask(&self) -> u64 {
         self.rays.iter().enumerate().take(64).fold(0, |m, (i, r)| m | ((r.is_some() as u64) << i))
@@ -1341,6 +1370,12 @@ impl ReachField {
         out
     }
 
+    /// No gun tables at all: every reach and fire query traces its rays.
+    #[func]
+    fn disable_gun_matrix(&mut self) {
+        self.matrix = None;
+    }
+
     /// Cache gun tables in `dir` (an OS path) for map `map`: read with `load`, written with `save`.
     #[func]
     fn set_gun_matrix_cache(&self, dir: GString, map: i64, load: bool, save: bool) {
@@ -1362,11 +1397,43 @@ impl ReachField {
         Self::mask(self.fire_lookup(team, ids.as_slice()), ids.len(), point)
     }
 
+    /// Whether a `hull_key` hull at `point` lands a shell on enemy `enemy_id` moved to `at`, by an exact ray.
+    #[func]
+    fn reach_hits_exact(&self, team: i32, hull_key: i64, enemy_id: i64, point: Vector2, at: Vector2) -> bool {
+        self.reach_lookup(team, hull_key, &[enemy_id]).is_some_and(|f| f.ray_at(0, at, point))
+    }
+
+    /// Whether enemy `enemy_id`'s guns, moved to `from`, land a shell on `point`.
+    #[func]
+    fn fire_hits_from(&self, team: i32, enemy_id: i64, from: Vector2, point: Vector2) -> bool {
+        let Some(f) = self.fire_lookup(team, &[enemy_id]) else { return false };
+        let vis = self.vis.as_ref().map(|v| v.bind());
+        let (cq, kp) = vis.as_ref().map_or((None, None), |v| (v.cell_of(from), v.cell_of(point)));
+        let seen = vis.as_ref().is_some_and(|v| cq.zip(kp).is_some_and(|(a, b)| v.visible_idx(b, a)));
+        drop(vis);
+        f.hits_at(0, from, cq, point, kp, seen)
+    }
+
     /// Bit i set when a `hull_key` hull at `point` can hit enemy i.
     #[func]
     fn reach_mask(&self, team: i32, hull_key: i64, point: Vector2) -> i64 {
         let ids = self.get_team_enemy_ids(team);
         Self::mask(self.reach_lookup(team, hull_key, ids.as_slice()), ids.len(), point)
+    }
+
+    /// Debug: whether a `hull_key` hull at `point` hits enemy `enemy_id` by the gun matrix alone, the exact ray, and
+    /// the ray with line of sight counting as a hit; matrix -1 while its row is unbuilt or without one.
+    #[func]
+    fn reach_compare(&self, team: i32, hull_key: i64, enemy_id: i64, point: Vector2) -> PackedInt32Array {
+        let mut out = PackedInt32Array::from(&[-1, 0][..]);
+        let Some(l) = self.reach_lookup(team, hull_key, &[enemy_id]) else { return out };
+        let Some(Some((ray, _))) = l.rays.first() else { return out };
+        let k = self.vis.as_ref().and_then(|v| v.bind().cell_of(point)).map_or(-1, |c| c as i32);
+        if let Some(hit) = ray.matrix.as_ref().and_then(|g| g.answer(&ray.origins, &ray.cells, k, point, ray.range, false)) {
+            out[0] = hit as i32;
+        }
+        out[1] = ray.hits(&l.terrain, point, false, |_| false) as i32;
+        out
     }
 
     /// reach_mask from exactly `point`, one ray per enemy.

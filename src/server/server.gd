@@ -1011,12 +1011,50 @@ func _deal_ref_classes(team_id: int) -> Dictionary:
 		dealt[ref_id(spawns[i])] = keyed[mini(i * keyed.size() / spawns.size(), keyed.size() - 1)][2]
 	return dealt
 
-## Anonymous references to the enemies `team_id` has never seen: [{id, pos}], marching.
+## Anonymous references to the enemies `team_id` has never seen: [{id, pos}], marching, off water it has searched.
 func anonymous_refs(team_id: int) -> Array[Dictionary]:
+	var frame: int = Engine.get_physics_frames()
+	var held: Array = _refs_cache.get(team_id, [])
+	if not held.is_empty() and int(held[0]) == frame:
+		return held[1]
 	var out: Array[Dictionary] = []
 	for spawn in spawn_refs.get(1 - team_id, PackedVector2Array()):
-		out.append({"id": ref_id(spawn), "pos": _ref_pos(1 - team_id, spawn)})
+		var id := ref_id(spawn)
+		var pos := _ref_pos(1 - team_id, spawn)
+		out.append({"id": id, "pos": _searched(team_id).relocate(pos, _class_conceal(1 - team_id, ref_class(team_id, id)), -INF, SimClock.now())})
+	_refs_cache[team_id] = [frame, out]
 	return out
+
+var _refs_cache: Dictionary = {}
+
+## team_id -> SearchedWater, stamped as belief is read.
+var _water: Dictionary = {}
+
+func _searched(team_id: int) -> SearchedWater:
+	var w: SearchedWater = _water.get(team_id)
+	if w == null:
+		w = SearchedWater.new()
+		_water[team_id] = w
+	var reach := 0.0
+	for e in _get_team_ships(1 - team_id):
+		if e.concealment != null and e.concealment.params != null:
+			reach = maxf(reach, (e.concealment.params.p() as ConcealmentParams).radius)
+	w.update(get_team_ships(team_id), reach, SimClock.now(), NavigationMapManager.get_visibility())
+	return w
+
+## The smallest concealment among `team_id`'s ships of `cls`: the lobby knows their line-up, so the most a dark one can hide.
+var _class_conceal_cache: Dictionary = {}
+func _class_conceal(team_id: int, cls: int) -> float:
+	var key := Vector2i(team_id, cls)
+	if _class_conceal_cache.has(key):
+		return _class_conceal_cache[key]
+	var r := INF
+	for s in _get_team_ships(team_id):
+		if s.ship_class == cls and s.concealment != null and s.concealment.params != null:
+			r = minf(r, (s.concealment.params.p() as ConcealmentParams).radius)
+	r = r if is_finite(r) else 0.0
+	_class_conceal_cache[key] = r
+	return r
 
 
 func get_all_ships() -> Array:
@@ -1226,6 +1264,7 @@ func _on_consumable_changed(_item: ConsumableItem, ship: Ship) -> void:
 func _on_ship_sunk(ship: Ship) -> void:
 	sunk_toggled[ship] = true
 	_sunk_at[ship] = match_elapsed
+	_forecast.forget(ship)
 
 # Connect after @onready vars are initialized (called via call_deferred)
 func _connect_consumable_signals(player: Ship) -> void:
@@ -1893,7 +1932,7 @@ func _sync_clients() -> void:
 
 ## Gun tables (ReachField) cached per map and gun kind by the table thread
 ## itself: read and written only with --gun-matrix-cache (sims); without it,
-## as in production and editor play, every match builds them at runtime.
+## as in production and editor play, every match builds them at runtime. --no-gun-matrix: none, rays only.
 const GUN_MATRIX_DIR := "user://gun_matrix"
 var _gun_matrix_cache_set: bool = false
 var _gun_matrix_reported: Dictionary = {}
@@ -1901,6 +1940,8 @@ var _gun_matrix_reported: Dictionary = {}
 func _sync_gun_matrices(field: ReachField) -> void:
 	if not _gun_matrix_cache_set:
 		_gun_matrix_cache_set = true
+		if CmdArgs.has("--no-gun-matrix"):
+			field.disable_gun_matrix()
 		field.set_gun_matrix_cache(ProjectSettings.globalize_path(GUN_MATRIX_DIR),
 			NavigationMapManager.get_visibility_signature(), CmdArgs.has("--gun-matrix-cache"), CmdArgs.has("--gun-matrix-cache"))
 	for st in field.gun_matrix_status():
@@ -2001,6 +2042,7 @@ func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:
 
 ## Team id -> [physics frame, belief]. Callers must not mutate the entries.
 var _belief_cache: Dictionary = {}
+var _forecast := EnemyForecast.new()
 
 ## What `team_id` believes about the enemy, one entry per hull it has any
 ## opinion on: {ship, pos: Vector2, weight, spread, force_spot, source}.
@@ -2019,13 +2061,14 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var published: Dictionary = {}
 	var t := teams[team_id]
+	var now: float = SimClock.now()
 	for enemy in t.valid_targets:
 		if is_instance_valid(enemy) and enemy.is_alive():
 			published[enemy] = true
 			out.append({"ship": enemy, "pos": Vector2(enemy.global_position.x, enemy.global_position.z),
-				"weight": 1.0, "spread": 0.0, "force_spot": _force_spot_reach(enemy), "source": 0})
+				"weight": 1.0, "spread": 0.0, "force_spot": _force_spot_reach(enemy), "source": 0,
+				"fc": _forecast.of(enemy, now)})
 	var contacts := t.contacts
-	var now: float = SimClock.now()
 	# A spotter deduced from being detected is newer evidence than an older
 	# sighting of the same ship, and says for certain that it has eyes on us.
 	var inferred: Dictionary = get_inferred_contacts(team_id)
@@ -2042,7 +2085,7 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 		published[enemy_ship] = true
 		var ip: Vector3 = inf.position
 		out.append({"ship": enemy_ship, "pos": Vector2(ip.x, ip.z), "weight": maxf(certainty, 0.05),
-			"spread": float(inf.get("radius", 0.0)), "force_spot": 0.0, "source": 3})
+			"spread": float(inf.get("radius", 0.0)), "force_spot": 0.0, "source": 3, "since": inf_t})
 	for enemy_ship in contacts:
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
 			continue
@@ -2055,8 +2098,12 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 			continue
 		published[enemy_ship] = true
 		var lp: Vector3 = c.pos
-		out.append({"ship": enemy_ship, "pos": Vector2(lp.x, lp.z), "weight": maxf(decay, 0.05),
-			"spread": EnemyPresumption.lead_spread(age), "force_spot": force_spot, "source": 1})
+		var entry := {"ship": enemy_ship, "pos": Vector2(lp.x, lp.z), "weight": maxf(decay, 0.05),
+			"spread": EnemyPresumption.lead_spread(age), "force_spot": force_spot, "source": 1, "since": c.time}
+		var fc := _forecast.of_sighting(enemy_ship, Vector2(lp.x, lp.z), Vector2(c.vel.x, c.vel.z), c.rot, c.time, now)
+		if not fc.is_empty():
+			entry["fc"] = fc
+		out.append(entry)
 	for guess in teams[team_id].presumption.contacts(team_id, self):
 		var enemy_ship: Ship = guess.ship
 		if not is_instance_valid(enemy_ship) or published.has(enemy_ship):
@@ -2066,6 +2113,13 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 		var at: Vector3 = guess.position
 		out.append({"ship": enemy_ship, "pos": Vector2(at.x, at.z), "weight": weight,
 			"spread": EnemyPresumption.guess_spread(guess), "force_spot": 0.0, "source": 2})
+	var water := _searched(team_id)
+	for b in out:
+		if int(b.source) != 0:
+			var e: Ship = b.ship
+			var hide: float = (e.concealment.params.p() as ConcealmentParams).radius if e.concealment != null and e.concealment.params != null else 0.0
+			b.pos = water.relocate(b.pos, hide, float(b.get("since", -INF)), now)
+		b.erase("since")
 	return out
 
 

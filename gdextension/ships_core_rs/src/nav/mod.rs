@@ -1,5 +1,6 @@
 pub mod cover_search;
 pub mod fight_search;
+pub mod forecast;
 pub mod gun_matrix;
 pub mod hpa;
 pub mod map;

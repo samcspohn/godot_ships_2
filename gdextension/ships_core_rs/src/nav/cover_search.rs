@@ -1,5 +1,6 @@
 use godot::prelude::*;
 
+use crate::nav::forecast::Forecast;
 use crate::nav::spot_walk::SpotInputs;
 use crate::nav::visibility::VisibilityGrid;
 
@@ -27,11 +28,8 @@ pub(crate) struct CoverArgs {
     /// Cells within exclude_r of one of these are not searched.
     pub exclude: Vec<Vector2>,
     pub exclude_r: f32,
-    /// Where we set out from, INF for no lead: a cell must also be safe from each
-    /// enemy moved along `lead` (its velocity) for as long as we take to reach the cell at `speed`.
-    pub from: Vector2,
-    pub lead: Vec<Vector2>,
-    pub speed: f32,
+    /// A cell must also stay safe from each enemy's forecast from our arrival through the hold.
+    pub forecast: Forecast,
 }
 
 impl CoverArgs {
@@ -52,16 +50,13 @@ impl CoverArgs {
             clip_half: f("clip_half", 35f32.to_radians()),
             exclude: o.get("exclude").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
             exclude_r: f("exclude_r", 0.0),
-            from: o.get("from").map_or(Vector2::INF, |v| v.to::<Vector2>()),
-            lead: o.get("lead").map_or(Vec::new(), |v| v.to::<PackedVector2Array>().to_vec()),
-            speed: f("speed", 0.0),
+            forecast: Forecast::from_opts(o),
         }
     }
 
-    /// What reaching `p` from `from` costs: its distance, times away_ratio in
+    /// What reaching `p` from `from`, `d` metres of route, costs: `d`, times away_ratio in
     /// the away cone; None outside both cones or past reach.
-    pub(crate) fn cost(&self, from: Vector2, p: Vector2) -> Option<f32> {
-        let d = from.distance_to(p);
+    pub(crate) fn cost(&self, from: Vector2, p: Vector2, d: f32) -> Option<f32> {
         if self.near_d.is_finite() && p.distance_to(self.near_pos) >= self.near_d {
             return None;
         }
@@ -95,38 +90,34 @@ impl CoverArgs {
 
 /// An enemy this far past its gun range is taken to close it before we leave.
 const ADVANCE_M: f32 = 2000.0;
-const LEAD_MAX_S: f32 = 90.0;
-const LEAD_MIN_SPEED: f32 = 1.0;
-/// Shares of the lead tried, longest first, until one ends on water.
-const LEAD_FRACS: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
-
-/// Whether some `shells` threat, moved on by its lead for our time to reach `k`,
-/// would see `k` (as `safety` reckons seeing) from within its gun range.
-pub(crate) fn lead_exposed(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &CoverArgs) -> bool {
-    if !a.from.is_finite() || a.speed <= 0.0 || a.lead.is_empty() {
+/// Whether, from our arrival at `k` through the hold, some heavy enemy at its forecast
+/// position sees `k` (as `safety` reckons seeing) while a `shells` one's guns from there land on it.
+pub(crate) fn forecast_exposed(g: &VisibilityGrid, k: usize, inp: &SpotInputs, a: &CoverArgs) -> bool {
+    let fc = &a.forecast;
+    let Some(fire) = inp.fire.as_ref() else { return false };
+    if fc.is_empty() {
         return false;
     }
     let p = g.centres[k];
-    let eta = (a.from.distance_to(p) / a.speed).min(LEAD_MAX_S);
-    for (i, e) in inp.enemies.iter().enumerate() {
-        let v = a.lead.get(i).copied().unwrap_or(Vector2::ZERO);
-        if !e.heavy || !e.shells || v.length() < LEAD_MIN_SPEED {
-            continue;
+    let n = inp.enemies.len().min(64);
+    let mut at = vec![(Vector2::ZERO, None, false); n];
+    for s in fc.window_k(k, p) {
+        let mut seen = false;
+        for (i, e) in inp.enemies.iter().enumerate().take(n) {
+            let q = fc.at(i, s).unwrap_or(e.pos);
+            let cq = g.cell_of(q);
+            let los = cq.is_none_or(|c| g.visible_idx(k, c));
+            at[i] = (q, cq, los);
+            let d = p.distance_to(q);
+            if !e.heavy || (a.allow_dark && d >= e.det_r.max(e.dark_r)) {
+                continue;
+            }
+            seen = seen || d < e.los_r || los;
         }
-        let Some((q, cq)) = LEAD_FRACS.iter().find_map(|&f| {
-            let q = e.pos + v * (eta * f);
-            let (ix, iz) = g.grid_of(q);
-            g.water(ix, iz).map(|c| (q, c))
-        }) else { continue };
-        let d = p.distance_to(q);
-        if a.allow_dark && d >= e.det_r.max(e.dark_r) {
-            continue;
-        }
-        if d >= e.los_r && !g.visible_idx(k, cq) {
-            continue;
-        }
-        let range = inp.fire.as_ref().filter(|f| i < 64 && f.known(i)).map_or(f32::INFINITY, |f| f.range(i));
-        if d < range {
+        if seen && inp.enemies.iter().enumerate().take(n).any(|(i, e)| {
+            let (q, cq, los) = at[i];
+            e.heavy && e.shells && fire.hits_at(i, q, cq, p, Some(k), los && cq.is_some())
+        }) {
             return true;
         }
     }
@@ -188,25 +179,109 @@ impl VisibilityGrid {
         if why.1 && !a.shield_ok {
             return None;
         }
-        if lead_exposed(self, k, inp, a) {
+        if forecast_exposed(self, k, inp, a) {
             return None;
         }
-        let mask = if a.need > 0 { self.spotted_mask(k, inp) } else { 0 };
+        let mask = if a.need > 0 { self.lead_mask(k, inp, &a.forecast) } else { 0 };
         (mask.count_ones() >= a.need).then_some((why, mask))
     }
 
-    /// The cheapest safe cell from `from` (CoverArgs::cost) and every cell weighed, by cost.
+    /// Which of cover_ok's tests `k` fails first, for the trace: shallow, fired_on, shielded, forecast, no_target, ok.
+    pub(crate) fn cover_why(&self, k: usize, inp: &SpotInputs, a: &CoverArgs) -> GString {
+        let why = if self.sdf_c[k] < inp.clearance {
+            "shallow"
+        } else if let Some(s) = safety(self, k, inp, a.allow_dark) {
+            if s.1 && !a.shield_ok {
+                "shielded"
+            } else if forecast_exposed(self, k, inp, a) {
+                "forecast"
+            } else if a.need > 0 && self.lead_mask(k, inp, &a.forecast).count_ones() < a.need {
+                "no_target"
+            } else {
+                "ok"
+            }
+        } else {
+            "fired_on"
+        };
+        GString::from(why)
+    }
+
+    /// spotted_mask with each target where the forecast has it when we arrive.
+    pub(crate) fn lead_mask(&self, k: usize, inp: &SpotInputs, fc: &Forecast) -> u64 {
+        let Some(reach) = inp.reach.as_ref().filter(|_| !fc.is_empty()) else { return self.spotted_mask(k, inp) };
+        let p = self.centres[k];
+        let eta = fc.eta_k(k, p);
+        let mut mask = 0u64;
+        for (i, e) in inp.enemies.iter().enumerate().take(64) {
+            if !e.shootable {
+                continue;
+            }
+            let q = fc.at(i, eta).unwrap_or(e.pos);
+            let cq = self.cell_of(q);
+            let los = cq.is_some_and(|c| self.visible_idx(k, c));
+            if reach.hits_at(i, q, cq, p, Some(k), los) && (!inp.reach_needs_los || los) {
+                mask |= 1u64 << i;
+            }
+        }
+        mask
+    }
+
+    /// Metres of water route at our clearance from `from` to each grid water cell within `max_m`, INF beyond.
+    pub(crate) fn water_route(&self, from: Vector2, clearance: f32, max_m: f32) -> Vec<f32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let mut dist = vec![f32::INFINITY; self.centres.len()];
+        let (ox, oz) = self.grid_of(from);
+        let Some(start) = self.water(ox, oz) else { return dist };
+        dist[start] = 0.0;
+        let mut heap = BinaryHeap::new();
+        heap.push(Reverse((0u32, start)));
+        while let Some(Reverse((bits, k))) = heap.pop() {
+            let d = f32::from_bits(bits);
+            if d > dist[k] {
+                continue;
+            }
+            let (ix, iz) = self.grid_of(self.centres[k]);
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let Some(n) = self.water(ix + dx, iz + dz) else { continue };
+                if self.sdf_c[n] < clearance {
+                    continue;
+                }
+                let nd = d + self.cell * if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+                if nd < dist[n] && nd <= max_m {
+                    dist[n] = nd;
+                    heap.push(Reverse((nd.to_bits(), n)));
+                }
+            }
+        }
+        dist
+    }
+
+    /// `a` timed along the water route from its forecast's origin, so a cell is judged as we would reach it.
+    pub(crate) fn routed(&self, a: &CoverArgs, clearance: f32) -> CoverArgs {
+        let mut a = a.clone();
+        if a.forecast.from.is_finite() {
+            a.forecast.route = self.water_route(a.forecast.from, clearance, a.reach_m);
+        }
+        a
+    }
+
+    /// The cheapest safe cell from `from` by water route (CoverArgs::cost) and every cell weighed, by cost.
     pub(crate) fn cover_search_impl(&self, from: Vector2, inp: &SpotInputs, a: &CoverArgs)
         -> (Option<(usize, (bool, bool), u64)>, Vec<(f32, usize)>) {
-        let r = (a.reach_m / self.cell).ceil() as i32 + 1;
-        let (cx, cz) = self.grid_of(from);
+        let mut a = a.clone();
+        let route = self.water_route(from, inp.clearance, a.reach_m);
+        if !a.forecast.from.is_finite() || a.forecast.from.distance_to(from) < self.cell {
+            a.forecast.route = route.clone();
+        } else {
+            a.forecast.route = self.water_route(a.forecast.from, inp.clearance, a.reach_m * 2.0);
+        }
+        let a = &a;
         let mut cells: Vec<(f32, usize)> = Vec::new();
-        for iz in (cz - r).max(0)..=(cz + r).min(self.h - 1) {
-            for ix in (cx - r).max(0)..=(cx + r).min(self.w - 1) {
-                if let Some(k) = self.water(ix, iz) {
-                    if let Some(c) = a.cost(from, self.centres[k]) {
-                        cells.push((c, k));
-                    }
+        for (k, &d) in route.iter().enumerate() {
+            if d.is_finite() {
+                if let Some(c) = a.cost(from, self.centres[k], d) {
+                    cells.push((c, k));
                 }
             }
         }

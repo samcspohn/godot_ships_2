@@ -1,0 +1,94 @@
+{
+ "scenario": {
+  "duration_s": 600,
+  "elapsed_s": 600,
+  "trace": [
+   "Wotan",
+   "Des Moines"
+  ],
+  "log_dt": 2.0,
+  "source": "built: DM north-west of the big centre island off its north-west tip, Wotan (bot) south-east on the far side; fixed Shimakaze spotters far off light each for the other; DM radar and hydro spent."
+ },
+ "team": {
+  "wotan": {
+   "team": "0",
+   "player_id": "wotan",
+   "ship": "res://assets/Ships/H44/H44.2.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    5500,
+    300
+   ],
+   "heading_deg": 180,
+   "speed": 28,
+   "identified": true
+  },
+  "spot0": {
+   "team": "0",
+   "player_id": "spot0",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 1,
+   "pos": [
+    5000,
+    -7000
+   ],
+   "heading_deg": 90,
+   "speed": 0,
+   "fixed": {
+    "throttle": 0,
+    "rudder": 0
+   },
+   "identified": true
+  },
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    900,
+    -2500
+   ],
+   "heading_deg": 175,
+   "speed": 10,
+   "identified": true,
+   "consumables": [
+    {
+     "slot": 2,
+     "used": 99,
+     "last_s": 999
+    },
+    {
+     "slot": 3,
+     "used": 99,
+     "last_s": 999
+    }
+   ]
+  },
+  "spot1": {
+   "team": "1",
+   "player_id": "spot1",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 1,
+   "pos": [
+    12500,
+    1000
+   ],
+   "heading_deg": 0,
+   "speed": 0,
+   "fixed": {
+    "throttle": 0,
+    "rudder": 0
+   },
+   "identified": true
+  }
+ }
+}

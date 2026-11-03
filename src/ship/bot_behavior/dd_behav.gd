@@ -265,7 +265,9 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# on offer, and the odds are good. Push, but only to the range our weapons
 	# actually want - for a boat with tubes that is torpedo range, and closing
 	# further would just walk it into gun range for nothing.
-	if sit.threat < d.push_threat and sit.has_spotted and ctx.target != null \
+	if spot_holding(ctx):
+		intent = _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.SPOT, "launch_range": _torpedo_reach(ship)})
+	if intent == null and sit.threat < d.push_threat and sit.has_spotted and ctx.target != null \
 			and not _has_better_unspotted_torp_target(ship, ctx.target, ctx.server):
 		intent = _fight(ctx, {"desired_range": smoothed_engagement_range(ctx)})
 		if intent != null:
@@ -307,6 +309,8 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if _ship.is_detected() and hurt:
 		churn.dis_why = "dd_gunboat_hurt"
 		intent = _run_skill(&"Disengage", ctx)
+	if intent == null and not hurt and spot_holding(ctx):
+		intent = _run_skill(&"Fight", ctx, {"only": SkillFight.Mode.SPOT})
 	if intent == null and not hurt and _has_shootable_contact(ctx):
 		intent = _fight(ctx, _gunboat_params(ctx), false)
 	if intent == null:

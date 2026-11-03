@@ -31,7 +31,7 @@ sim:
 S ?= tools/scenarios/yamato_dm_close.json
 scenario:
 	mkdir -p build/scenario
-	"$(GODOT)" --headless --path . --fixed-fps 16 --server --port 30480 --botmatch res://$(S) --no-replay --gun-matrix-cache \
+	"$(GODOT)" --headless --path . --fixed-fps 12 --server --port 30480 --botmatch res://$(S) --no-replay --gun-matrix-cache \
 		--no-live-mods --metrics build/scenario/$(notdir $(basename $(S))).json 2>&1 | tee build/scenario/$(notdir $(basename $(S))).log \
 		| grep -E "^(SCN|DUEL)|SCRIPT ERROR"
 
@@ -39,7 +39,7 @@ scenario:
 scenarios:
 	mkdir -p build/scenario
 	i=0; for f in tools/scenarios/*.json; do n=$$(basename $$f .json); i=$$((i+1)); \
-		"$(GODOT)" --headless --path . --fixed-fps 16 --server --port $$((30480+i)) --botmatch res://$$f --no-replay \
+		"$(GODOT)" --headless --path . --fixed-fps 12 --server --port $$((30480+i)) --botmatch res://$$f --no-replay \
 		--gun-matrix-cache --no-live-mods --metrics build/scenario/$$n.json 2>&1 | cat > build/scenario/$$n.log & done; wait
 	python3 tools/botmatch/scenario_report.py build/scenario tools/scenarios
 
@@ -51,10 +51,14 @@ snap:
 	"$(GODOT)" --headless --path . -s res://tools/replay_scenario.gd -- --at $(AT) $(if $(REPLAY),--replay $(REPLAY)) \
 		$(if $(TRACE),--trace $(TRACE)) 2>&1 | grep -A40 "^replay_scenario"
 
+# Watch a scenario (any tools/scenarios/*.json) as `make watch` does: make spectate S=tools/scenarios/snap_x_930.json
+spectate:
+	$(MAKE) watch WATCH_LINEUP=res://$(S)
+
 snap-run:
 	d=build/snap/$(notdir $(basename $(S))); rm -rf $$d; mkdir -p $$d; \
 	for i in $$(seq 1 $(SNAP_N)); do \
-		"$(GODOT)" --headless --path . --fixed-fps 16 --server --port $$((30600+i)) --botmatch res://$(S) --no-replay \
+		"$(GODOT)" --headless --path . --fixed-fps 12 --server --port $$((30600+i)) --botmatch res://$(S) --no-replay \
 		--gun-matrix-cache --no-live-mods --metrics $$d/run_$$i.json > $$d/run_$$i.log 2>&1 & done; wait; \
 	grep -c "SCRIPT ERROR" $$d/*.log | grep -v ":0$$"; \
 	python3 tools/botmatch/snap_report.py $(S) $$d

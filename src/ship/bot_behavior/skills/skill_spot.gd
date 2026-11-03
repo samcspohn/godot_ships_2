@@ -15,6 +15,8 @@ const SPOT_CLAIM_TTL_MS := 6000
 const HURT_MARGIN := 0.25
 ## A dark contact counts as looked at from this far outside the ring it would see us from.
 const LOOK_M := 1000.0
+## A hider is looked for from this far inside the ring it is found in: on the ring, a grid cell's width decides it.
+const FIND_INSIDE_M := 500.0
 ## team_id -> enemy instance id -> [spotter instance id, ms].
 static var _spot_claims: Dictionary = {}
 var stealth_corridor: bool = true
@@ -84,6 +86,11 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 	# Hurt, the spotter keeps further out: one more detection is worth less than the hull.
 	var hp_frac: float = clampf(ship.health_controller.current_hp / maxf(ship.health_controller.max_hp, 1.0), 0.0, 1.0)
 	var margin: float = 1.0 + HURT_MARGIN * (1.0 - hp_frac)
+	# Hydro or radar with a charge left sees a hider from further out than its concealment lets us.
+	var ocp: ConcealmentParams = ship.concealment.params.p() if ship.concealment != null and ship.concealment.params != null else null
+	var sensor: float = ctx.server._latent_force_spot_reach(ship)
+	if ocp != null:
+		sensor = maxf(sensor, maxf(ocp.spotting_range_override, ocp.radar_spotting_range_override))
 	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "always": PackedFloat32Array(),
 		"spot": PackedFloat32Array(), "shoot": PackedByteArray()}
 	var mine := {}
@@ -105,7 +112,7 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 		out.det.append(maxf(maxf(maxf(sight, float(b.force_spot)) * margin, BotBehavior.secondary_reach(e)) - float(b.spread), 0.0))
 		# Radar and hydro see through islands.
 		out.always.append(maxf(float(b.force_spot) * margin - float(b.spread), 0.0) if float(b.force_spot) > 0.0 else 0.0)
-		var sr: float = cp.radius if cp != null else 0.0
+		var sr: float = maxf(maxf(cp.radius if cp != null else 0.0, sensor) - FIND_INSIDE_M, 0.0)
 		# It may be anywhere in its spread: only this near the guess is sure to see it.
 		if not e.visible_to_enemy:
 			sr = maxf(sr - float(b.spread), out.det[out.det.size() - 1] + LOOK_M)
@@ -113,9 +120,16 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 		out.shoot.append(1 if mine.has(e) else 0)
 	for r in refs:
 		out.pos.append(r.pos)
-		out.det.append(conceal * margin)
+		# Only inside the most a dark one of its class could hide in is it found; out-spotted, we are seen there too.
+		var hide: float = ctx.server._class_conceal(1 - team_id, ctx.server.ref_class(team_id, int(r.id)))
+		if hide <= 0.0:
+			out.det.append(conceal * margin)
+			out.spot.append(conceal * margin + LOOK_M)
+		else:
+			var sight: float = conceal * margin if conceal <= hide else 0.0
+			out.det.append(sight)
+			out.spot.append(maxf(maxf(hide, sensor) - FIND_INSIDE_M, sight + LOOK_M))
 		out.always.append(0.0)
-		out.spot.append(conceal * margin + LOOK_M)
 		out.shoot.append(1 if mine.has(r.id) else 0)
 	out.mine = not mine.is_empty()
 	if not out.mine:

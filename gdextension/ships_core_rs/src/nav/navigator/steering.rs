@@ -455,12 +455,11 @@ impl ShipNavigator {
                     continue;
                 }
 
-                // Nav score: time until bow (forward) or stern (reverse) aligns with target.heading.
-                // For reverse candidates the effective heading is bow + pi - the direction
-                // the ship will present when it switches back to forward drive.
-                // At the point only stance's heading counts; without it, hold the bow.
+                // Nav score: time until the bow aligns with target.heading. Stance's heading is always the bow's,
+                // astern too (rudder_to_heading reads it so); without one, a reverse candidate is held to
+                // bow + pi - the direction the ship will present when it switches back to forward drive.
                 let hold_h = if has_heading_weight { self.target.heading } else { self.state.heading };
-                let effective_target_h = if cand_throttle < 0 {
+                let effective_target_h = if cand_throttle < 0 && !has_heading_weight {
                     normalize_angle(hold_h + (PI as f32))
                 } else {
                     hold_h

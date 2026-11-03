@@ -149,7 +149,9 @@ impl Pass {
         let (flag, src, kind) = if hydro { (HYDRO, Source::Hydro, Lkp::Hydro) } else { (RADAR, Source::Radar, Lkp::Radar) };
         self.ships[d].flags[flag] = true;
         if smoke {
-            self.spot(d, t, dist);
+            self.ships[t].vis = true;
+            self.ships[t].flags[flag] = true;
+            self.propose(t, d, src, dist);
             return;
         }
         self.ships[t].flags[flag] = true;
@@ -269,7 +271,7 @@ impl SpotPass {
             let mut ray = PhysicsRayQueryParameters3D::new_gd();
             ray.set_collide_with_areas(true);
             ray.set_collide_with_bodies(true);
-            ray.set_hit_from_inside(false);
+            ray.set_hit_from_inside(true);
             ray.set_collision_mask(mask);
             let mut pass = Pass { ships, space, ray, events: VarArray::new() };
             let count = pass.ships.len();

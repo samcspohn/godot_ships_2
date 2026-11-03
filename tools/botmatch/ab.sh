@@ -51,13 +51,18 @@ prepare a "$CA" & pa=$!
 prepare b "$CB" & pb=$!
 wait $pa && wait $pb
 
+# Each match's wall, user and system seconds land beside its metrics as <metrics>.time.
 cat > "$OUT/godot.sh" <<EOF
 #!/usr/bin/env bash
-exec taskset -c $CPUS timeout -k 30 $TIMEOUT "$GODOT" "\$@"
+m=/dev/null; prev=
+for a in "\$@"; do [ "\$prev" = --metrics ] && m="\$a.time"; prev=\$a; done
+exec /usr/bin/time -f "%e %U %S" -o "\$m" taskset -c $CPUS timeout -k 30 $TIMEOUT "$GODOT" "\$@"
 EOF
 chmod +x "$OUT/godot.sh"
-(cd "$SIM_ROOT/worktrees/wt_ab_a" && tools/botmatch/run.sh "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/a" 31000) > "$OUT/a.runlog" 2>&1 & ra=$!
-(cd "$SIM_ROOT/worktrees/wt_ab_b" && tools/botmatch/run.sh "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/b" 32000) > "$OUT/b.runlog" 2>&1 & rb=$!
+# Both arms through this tree's runner: an old arm's own would run its own tick rate and flags.
+(cd "$SIM_ROOT/worktrees/wt_ab_a" && "$SRC/tools/botmatch/run.sh" "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/a" 31000) > "$OUT/a.runlog" 2>&1 & ra=$!
+(cd "$SIM_ROOT/worktrees/wt_ab_b" && "$SRC/tools/botmatch/run.sh" "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/b" 32000) > "$OUT/b.runlog" 2>&1 & rb=$!
 wait $ra || true
 wait $rb || true
 python3 tools/botmatch/compare.py "a=$OUT/a" "b=$OUT/b" | tee "$OUT/compare.txt"
+python3 tools/botmatch/cpu_report.py "a=$OUT/a" "b=$OUT/b" | tee -a "$OUT/compare.txt"

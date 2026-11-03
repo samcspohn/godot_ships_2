@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
-use crate::nav::cover_search::{lead_exposed, safety, CoverArgs};
+use crate::nav::cover_search::{forecast_exposed, safety, CoverArgs};
 use crate::nav::fight_search::FightArgs;
 use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
 use crate::variant_cast::VariantCast;
@@ -420,7 +420,7 @@ impl VisibilityGrid {
     /// shootable targets. Only the cones toward `axis` and away from it are
     /// searched, away cells costing `away_ratio` times their distance, out to
     /// `reach_m`. hold_walk's opts plus reach_m, away_ratio, cone_half,
-    /// allow_dark, need, lead (per enemy velocity) and speed. {found, pos, dark, seen, mask, count, cells}.
+    /// allow_dark, need, and Forecast's fc, fc_t, fc_hold_s, from, speed. {found, pos, dark, seen, mask, count, cells}.
     #[func]
     fn cover_search(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -429,7 +429,7 @@ impl VisibilityGrid {
             return d;
         }
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = CoverArgs { from, ..CoverArgs::from_opts(axis, &opts) };
+        let a = CoverArgs::from_opts(axis, &opts);
         let (found, cells) = self.cover_search_impl(from, &inp, &a);
         d.set("cells", cells.len() as i64);
         if let Some((k, (dark, seen), mask)) = found {
@@ -524,7 +524,8 @@ impl VisibilityGrid {
         // A station tucked against the rock may sit in a cell whose centre is land.
         let Some(k) = self.cell_of(pos) else { return d };
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = CoverArgs::from_opts(f32::INFINITY, &opts);
+        let a = self.routed(&CoverArgs::from_opts(f32::INFINITY, &opts), inp.clearance);
+        d.set("why", &self.cover_why(k, &inp, &a));
         if let Some(((dark, seen), mask)) = self.cover_ok(k, &inp, &a) {
             d.set("ok", true);
             d.set("dark", dark);
@@ -544,7 +545,7 @@ impl VisibilityGrid {
             return PackedByteArray::new();
         }
         let inp = self.hold_inputs(&enemies, &opts);
-        let a = CoverArgs { from, ..CoverArgs::from_opts(axis, &opts) };
+        let a = self.routed(&CoverArgs::from_opts(axis, &opts), inp.clearance);
         // Every weighed cell: a search no cell can satisfy returns them all.
         let (_, cells) = self.cover_search_impl(from, &inp, &CoverArgs { need: u32::MAX, ..a.clone() });
         for (_, k) in cells {
@@ -552,10 +553,10 @@ impl VisibilityGrid {
             let (ix, iz) = self.grid_of(c);
             out[(iz * self.w + ix) as usize] = match safety(self, k, &inp, a.allow_dark) {
                 None => 1,
-                Some(_) if lead_exposed(self, k, &inp, &a) => 1,
+                Some(_) if forecast_exposed(self, k, &inp, &a) => 1,
                 Some((true, _)) => 3,
                 Some((false, true)) => 6,
-                Some((false, false)) if a.need > 0 && self.spotted_mask(k, &inp).count_ones() >= a.need => 5,
+                Some((false, false)) if a.need > 0 && self.lead_mask(k, &inp, &a.forecast).count_ones() >= a.need => 5,
                 Some((false, false)) => 4,
             };
         }

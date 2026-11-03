@@ -62,6 +62,8 @@ const HARM_PRIOR_LIFE_S := 900.0
 const HARM_PRIOR_S := 300.0
 
 var _presumed := false
+## The push's {push_i, push_away} for fight_search, or empty.
+var _push := {}
 ## Per belief entry, 1 while a brawler may ignore that enemy's ring: it is shooting a friend.
 var _busy := PackedByteArray()
 var _checkpoints := 0
@@ -151,7 +153,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	var gun_range: float = float(g.range)
 	_presumed = bool(params.get("presumed", false))
-	var sig := "%s|%s|%s|%s" % [params.get("band_m", ""), params.get("desired_range", ""), _presumed, params.get("away", false)]
+	_push = _push_opts(ctx, belief) if bool(params.get("push", false)) else {}
+	var sig := "%s|%s|%s|%s|%s" % [params.get("band_m", ""), params.get("desired_range", ""), _presumed, params.get("away", false), _push.has("push_i")]
 	_params_moved = _params_moved or (sig != _sig and _sig != "")
 	_sig = sig
 	var pos := PackedVector2Array()
@@ -342,6 +345,7 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 	var ins := PackedFloat32Array()
 	var value := PackedFloat32Array()
 	var det := PackedFloat32Array()
+	var sensor := PackedFloat32Array()
 	var threat := PackedByteArray()
 	var aggro := PackedFloat32Array()
 	var front := PackedFloat32Array()
@@ -371,7 +375,8 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		ins.append_array(n)
 		value.append(0.0 if live[i] == 0 else float(belief[i].weight) if guess
 			else 1.0 if rank.has(e) else MARCH_OTHER_VALUE)
-		det.append(maxf(maxf(conceal, float(belief[i].force_spot)) - float(belief[i].spread), 0.0))
+		det.append(maxf(conceal - float(belief[i].spread), 0.0))
+		sensor.append(maxf(float(belief[i].force_spot) - float(belief[i].spread), 0.0))
 		threat.append(1 if threatens(e) else 0)
 		var busy := _engaged_elsewhere(ctx, e)
 		_busy.append(1 if busy and brawl else 0)
@@ -385,7 +390,7 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		front_hp.append(f.y)
 		chase_ring.append(maxf(conceal - float(belief[i].spread), 0.0) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
 		walk_r.append(rings[i] + WALK_MARGIN_M if rings[i] > 0.0 else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
-	return _walk_opts(ctx, ship, float(g.range)).merged({"det_r": det, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
+	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal)).merged(_push).merged({"det_r": det, "los_r": sensor, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
 		"reach_field": NavigationMapManager.get_reach_field(), "team": ship.team.team_id,
 		"hull_key": NavigationMapManager.reach_hull_key(g), "ids": PackedInt64Array(belief.map(func(b): return b.ship.get_instance_id())),
 		"clearance": ctx.behavior._get_ship_clearance(), "curve_out": outs, "curve_in": ins, "curve_steps": steps,
@@ -399,7 +404,60 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		"walk_slack": WALK_SLACK_M,
 		"claims": _other_claims(ship.team.team_id, ship.get_instance_id(), SimClock.now_ms()), "claim_r": SPACING_M,
 		"claim_cost": SPACING_COST * maxf(_march_score, MOVE_COST_FLOOR),
+		"fc": EnemyForecast.pack(belief), "fc_t": EnemyForecast.TIMES, "fc_hold_s": EnemyForecast.HOLD_S,
+		"from": Vector2(ship.global_position.x, ship.global_position.z),
 		"busy": _busy, "checkpoint": CHECKPOINT_SHARE * clampf(2.0 * _dial(ctx, "advance", 0.5), 0.0, 2.0) if brawl else 0.0, "goal": _goal(ctx, ship, float(g.range), belief)})
+
+## Our priority's index in `belief`, and the friend nearest it among those spotting it (else INF): the push walks away from that friend.
+static func _push_opts(ctx: SkillContext, belief: Array[Dictionary]) -> Dictionary:
+	var t: Ship = ctx.behavior.priority_target()
+	var i: int = belief.find_custom(func(b): return b.ship == t) if t != null else -1
+	if i < 0:
+		return {}
+	var away := Vector2.INF
+	var best := INF
+	if t.concealment != null:
+		for f in t.concealment.spotters:
+			if f != ctx.ship and is_instance_valid(f) and f.is_alive():
+				var d: float = f.global_position.distance_to(t.global_position)
+				if d < best:
+					best = d
+					away = Vector2(f.global_position.x, f.global_position.z)
+	return {"push_i": i, "push_away": away}
+
+## Torpedo stations walk this far outside the target's sight of us, radar and hydro included, so the launch goes unseen.
+const TORP_WALK_MARGIN_M := 500.0
+
+## fight_search's tubes: per enemy, the torpedo_rate curve on the gun curves' spacing, its lead, and a walk circle
+## just outside its sight of us or its radar or hydro (inside tube range); when the first tube loads and the reload.
+static func _torp_opts(ship: Ship, belief: Array[Dictionary], live: PackedByteArray, conceal: float) -> Dictionary:
+	var tc: TorpedoController = ship.torpedo_controller if is_instance_valid(ship.torpedo_controller) else null
+	if tc == null or tc.launchers.is_empty():
+		return {}
+	var reach: float = tc.get_max_range()
+	var steps: int = int((reach - BotBehavior.POINT_BLANK_M) / BotBehavior.RADIUS_STEP_M) + 1
+	var curves := PackedFloat32Array()
+	var vel := PackedVector2Array()
+	var walk := PackedFloat32Array()
+	for i in belief.size():
+		var e: Ship = belief[i].ship
+		var peak := 0.0
+		for k in steps:
+			var v: float = BotBehavior.torpedo_rate(ship, e, BotBehavior.POINT_BLANK_M + k * BotBehavior.RADIUS_STEP_M)
+			curves.append(v)
+			peak = maxf(peak, v)
+		vel.append(Vector2(e.linear_velocity.x, e.linear_velocity.z) if int(belief[i].source) == 0 else Vector2.ZERO)
+		var seen: float = maxf(conceal, float(belief[i].force_spot))
+		walk.append(clampf(seen + TORP_WALK_MARGIN_M, BotBehavior.POINT_BLANK_M, reach * 0.9) if peak > 0.0 and live[i] != 0 else 0.0)
+	var lp: TorpedoLauncherParams = tc.get_params()
+	var ready := INF
+	for l in tc.launchers:
+		if not l.disabled:
+			ready = minf(ready, (1.0 - clampf(l.reload, 0.0, 1.0)) * lp.reload_time)
+	return {"torp": curves, "torp_steps": steps, "torp_vel": vel, "torp_walk_r": walk,
+		"torp_speed": tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER,
+		"torp_ready_s": ready if is_finite(ready) else 1e6, "torp_reload_s": lp.reload_time,
+		"origin": Vector2(ship.global_position.x, ship.global_position.z)}
 
 ## Where a brawler's checkpoints lead: the lit enemy within reach of the window that is
 ## most worn and most busy with our ships (a falling flank), else its priority, else the local enemy centre.

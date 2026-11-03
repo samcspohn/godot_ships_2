@@ -5,7 +5,7 @@ extends RefCounted
 ##   "scenario": {"duration_s": 60, "elapsed_s": 568, "trace": ["Yamato"], "log_dt": 1.0}
 ##   per ship: "pos": [x, z], "heading_deg" (0 = +Z, 90 = +X), "speed" (m/s, ahead), "hp" (absolute),
 ##   "reload": [main guns 0..1] (default all loaded, tubes too), "bloom_m": seen out to this, as if just fired, all scenario,
-##   "fixed": {"throttle": -1..4, "rudder": -1..1}: no bot, this helm the whole scenario,
+##   "fixed": {"throttle": -1..4, "rudder": -1..1}: no bot, this helm the whole scenario; with "path": [[x, z], ...] it steers through those,
 ##   "consumables": [{slot, used, last_s}]: charges spent and seconds since the last went off,
 ##   "torp_last_s": {launcher index: seconds since it launched}, "throttle": -1..4, "identified": its enemies have seen it, "lkp": {pos, age_s, vel, rot}: their last sighting
 ## "sunk": [{team, class}] already gone: the points stand as the clock and those sinks left them.
@@ -19,6 +19,9 @@ var _started: float = -1.0
 var _next_log: float = 0.0
 var _bloom: Dictionary = {}
 var _fixed: Dictionary = {}
+var _paths: Dictionary = {}  # Ship -> [waypoints, next]
+const PATH_REACHED_M := 400.0
+const PATH_GAIN := 2.0
 var _sunk: Array = []
 
 func _init(cfg: Dictionary) -> void:
@@ -69,6 +72,8 @@ func start(server: GameServer) -> void:
 			if bc != null:
 				bc.process_mode = Node.PROCESS_MODE_DISABLED
 			_fixed[ship] = [int(e.fixed.get("throttle", 4)), float(e.fixed.get("rudder", 0.0))]
+			if e.fixed.has("path"):
+				_paths[ship] = [PackedVector2Array(e.fixed.path.map(func(w): return Vector2(float(w[0]), float(w[1])))), 0]
 	SkillStance.duel_trace = trace
 	server.match_elapsed = elapsed_s
 	_know(server)
@@ -87,6 +92,8 @@ func tick(server: GameServer) -> bool:
 			ship.concealment.bloom(_bloom[ship])
 	for ship in _fixed:
 		if is_instance_valid(ship):
+			if _paths.has(ship):
+				_fixed[ship][1] = _steer(ship, _paths[ship])
 			ship.movement_controller.set_movement_input(_fixed[ship])
 	if t >= _next_log:
 		_next_log = t + log_dt
@@ -95,6 +102,16 @@ func tick(server: GameServer) -> bool:
 			if trace.has(ship.ship_name) and is_instance_valid(ship):
 				_log(ship, t)
 	return t >= duration_s
+
+## Rudder toward the next waypoint not yet within PATH_REACHED_M; the last is held.
+static func _steer(ship: Ship, path: Array) -> float:
+	var wps: PackedVector2Array = path[0]
+	var at := Vector2(ship.global_position.x, ship.global_position.z)
+	while int(path[1]) < wps.size() - 1 and at.distance_to(wps[path[1]]) < PATH_REACHED_M:
+		path[1] = int(path[1]) + 1
+	var to: Vector2 = wps[path[1]] - at
+	var fwd := -ship.global_transform.basis.z
+	return clampf(-angle_difference(atan2(fwd.x, fwd.z), atan2(to.x, to.y)) * PATH_GAIN, -1.0, 1.0)
 
 func _log(ship: Ship, t: float) -> void:
 	var fwd := -ship.global_transform.basis.z
@@ -115,8 +132,12 @@ func _log(ship: Ship, t: float) -> void:
 		if bc._last_intent != null:
 			var dst: Vector3 = bc._last_intent.target_position
 			line += " dest=(%.0f,%.0f) dd=%.0f" % [dst.x, dst.z, ship.global_position.distance_to(dst)]
-		line += " fight=[%s] gb=%s" % [b._skill_fight.debug_text(), b._is_gunboat(ship) if b.has_method("_is_gunboat") else "-"]
-		line += " seen=%s prio=%s" % [ship.is_detected(), b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
+		line += " fight=[%s] cov1=%s lost=%s gb=%s" % [b._skill_fight.debug_text(), b.cover_first_last, b._skill_fight.cover.lost,
+			b._is_gunboat(ship) if b.has_method("_is_gunboat") else "-"]
+		line += " thr=%.2f dis=%s seen=%s prio=%s" % [b._threat_score_cache, b.churn.dis_why, ship.is_detected(), b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
+		if not b.priority.is_empty():
+			var pp: Vector2 = b.priority.pos
+			line += " ppos=(%.0f,%.0f) pd=%.0f" % [pp.x, pp.y, pp.distance_to(Vector2(ship.global_position.x, ship.global_position.z))]
 		line += " | " + b._skill_stance.debug_text()
 	print(line)
 
