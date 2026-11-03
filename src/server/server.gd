@@ -1426,6 +1426,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		var bc := ship.get_node_or_null("Modules/BotController")
 		if bc != null and bc.behavior != null:
 			row["skill_time"] = bc.behavior.skill_time
+			row["skill_exp"] = bc.behavior.skill_exp
 		row["spawn_position"] = team_info["team"].get(entry["player_name"], {}).get("spawn_position", -1)
 		row["team_size"] = team_info["team"].values().filter(func(v): return int(v["team"]) == ship.team.team_id).size()
 		ships.append(row)
@@ -1936,6 +1937,7 @@ func _sync_clients() -> void:
 const GUN_MATRIX_DIR := "user://gun_matrix"
 var _gun_matrix_cache_set: bool = false
 var _gun_matrix_reported: Dictionary = {}
+var _edge_sim_next: float = 0.0
 
 func _sync_gun_matrices(field: ReachField) -> void:
 	if not _gun_matrix_cache_set:
@@ -1944,6 +1946,10 @@ func _sync_gun_matrices(field: ReachField) -> void:
 			field.disable_gun_matrix()
 		field.set_gun_matrix_cache(ProjectSettings.globalize_path(GUN_MATRIX_DIR),
 			NavigationMapManager.get_visibility_signature(), CmdArgs.has("--gun-matrix-cache"), CmdArgs.has("--gun-matrix-cache"))
+	if match_elapsed >= _edge_sim_next:
+		_edge_sim_next = match_elapsed + 60.0
+		var es: PackedInt64Array = field.edge_sim_stats()
+		print("[EdgeSim] at %.0f s: %d sims, %d cached, %.1f ms" % [match_elapsed, es[0], es[1], es[2] / 1e6])
 	for st in field.gun_matrix_status():
 		var state := "loaded" if int(st.file) == 1 else "saved" if int(st.file) == 3 \
 			else "complete" if int(st.done) == int(st.rows) else ""

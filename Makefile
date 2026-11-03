@@ -70,8 +70,8 @@ smoke:
 
 # A/B: AB_N 12v12 matches per arm, both arms at once, each in its own worktree
 # under ~/Documents/ships_sim. B defaults to a snapshot of this working tree.
-# make ab A=HEAD~1 B=HEAD AB_N=50
-AB_N ?= 50
+# make ab A=HEAD~1 B=HEAD AB_N=100
+AB_N ?= 100
 A ?= HEAD
 B ?= WORKTREE
 AB_OUT ?= $(HOME)/Documents/ships_sim/ab_$(shell date +%Y%m%d_%H%M%S)

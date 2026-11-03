@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# usage: ab.sh <out_dir> [matches=50] [a_ref=HEAD] [b_ref=WORKTREE]
+# usage: ab.sh <out_dir> [matches=100] [a_ref=HEAD] [b_ref=WORKTREE]
 # Both arms build in their own worktree under $SIM_ROOT and run concurrently.
 # WORKTREE snapshots tracked + untracked changes so later edits here can't leak into a run.
 set -euo pipefail
-OUT=$(realpath -m "$1") N=${2:-50} A=${3:-HEAD} B=${4:-WORKTREE}
+OUT=$(realpath -m "$1") N=${2:-100} A=${3:-HEAD} B=${4:-WORKTREE}
 GODOT=${GODOT:-$HOME/.local/share/godot/app_userdata/Godots/versions/Godot_v4_7_1-stable_linux_x86_64/Godot_v4.7.1-stable_linux.x86_64}
 SIM_ROOT=${SIM_ROOT:-$HOME/Documents/ships_sim}
 LINEUP=${LINEUP:-res://tools/botmatch/lineup_12v12_t10.json}

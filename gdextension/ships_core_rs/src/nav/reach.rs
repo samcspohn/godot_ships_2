@@ -48,6 +48,9 @@ const DEBUG_STRIDE: i32 = 3;
 
 static STAT_MISSES: AtomicU64 = AtomicU64::new(0);
 static STAT_LOS: AtomicU64 = AtomicU64::new(0);
+/// Matrix answers refined on a reach edge, and all matrix answers asked.
+pub(crate) static STAT_EDGE: AtomicU64 = AtomicU64::new(0);
+pub(crate) static STAT_MATRIX: AtomicU64 = AtomicU64::new(0);
 static STAT_RAYS: AtomicU64 = AtomicU64::new(0);
 static STAT_DETECT: AtomicU64 = AtomicU64::new(0);
 static PIN_IDS: AtomicU64 = AtomicU64::new(0);
@@ -668,6 +671,41 @@ pub(crate) struct ReachLookup {
 }
 
 impl ReachLookup {
+    /// Debug (reach_compare): the gun matrix's answer for `ray` at vis cell `k` (`p` in it), and whether it was refined:
+    /// on the matrix's reach edge (a neighbouring cell answers otherwise) it is the ray from the centre of `k`'s 2x2
+    /// quarter holding `p`. None while a needed row is unbuilt.
+    fn matrix_refined(&self, ray: &Ray, v: &VisibilityGrid, k: i32, p: Vector2) -> Option<(bool, bool)> {
+        let g = ray.matrix.as_ref()?;
+        let base = g.answer(&ray.origins, &ray.cells, k, p, ray.range, self.outbound)?;
+        STAT_MATRIX.fetch_add(1, Relaxed);
+        let c = v.centres[k as usize];
+        let (ix, iz) = v.grid_of(c);
+        let edge = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)].iter().any(|&(dx, dz)| {
+            v.water(ix + dx, iz + dz)
+                .and_then(|n| g.answer(&ray.origins, &ray.cells, n as i32, v.centres[n], ray.range, self.outbound))
+                .is_some_and(|b| b != base)
+        });
+        if !edge {
+            return Some((base, false));
+        }
+        STAT_EDGE.fetch_add(1, Relaxed);
+        let q = c + Vector2::new(if p.x >= c.x { 1.0 } else { -1.0 }, if p.y >= c.y { 1.0 } else { -1.0 }) * (v.cell * 0.25);
+        Some((ray.hits(&self.terrain, q, self.outbound, |_| false), true))
+    }
+
+    /// The gun matrix's answer for enemy i moved to vis cell `cq` (`q`) at vis cell `k`, and whether one of `k`'s
+    /// neighbouring cells answers otherwise (the reach edge); None while a needed row is unbuilt.
+    pub(crate) fn matrix_edge(&self, i: usize, v: &VisibilityGrid, k: usize, q: Vector2, cq: usize) -> Option<(bool, bool)> {
+        let Some(Some((ray, _))) = self.rays.get(i) else { return None };
+        let g = ray.matrix.as_ref()?;
+        let at = |n: usize| g.answer(&[q], &[cq as i32], n as i32, v.centres[n], ray.range, self.outbound);
+        let base = at(k)?;
+        let (ix, iz) = v.grid_of(v.centres[k]);
+        let edge = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)].iter()
+            .any(|&(dx, dz)| v.water(ix + dx, iz + dz).and_then(at).is_some_and(|b| b != base));
+        Some((base, edge))
+    }
+
     /// Bit i set when enemy i's ray answers yes at `p`.
     pub(crate) fn mask(&self, p: Vector2) -> u64 {
         let Some(idx) = self.field.index(p.x, p.y) else { return 0 };
@@ -1421,19 +1459,44 @@ impl ReachField {
         Self::mask(self.reach_lookup(team, hull_key, ids.as_slice()), ids.len(), point)
     }
 
-    /// Debug: whether a `hull_key` hull at `point` hits enemy `enemy_id` by the gun matrix alone, the exact ray, and
-    /// the ray with line of sight counting as a hit; matrix -1 while its row is unbuilt or without one.
+    /// Debug: a `hull_key` hull at `point` against enemy `enemy_id`: [gun matrix alone, exact ray, on the matrix's
+    /// reach edge, matrix refined there, refining quarter's centre x, z]; matrix answers -1 while a row is unbuilt.
     #[func]
-    fn reach_compare(&self, team: i32, hull_key: i64, enemy_id: i64, point: Vector2) -> PackedInt32Array {
-        let mut out = PackedInt32Array::from(&[-1, 0][..]);
+    fn reach_compare(&self, team: i32, hull_key: i64, enemy_id: i64, point: Vector2) -> PackedFloat32Array {
+        let mut out = PackedFloat32Array::from(&[-1.0, 0.0, 0.0, -1.0, point.x, point.y][..]);
         let Some(l) = self.reach_lookup(team, hull_key, &[enemy_id]) else { return out };
         let Some(Some((ray, _))) = l.rays.first() else { return out };
-        let k = self.vis.as_ref().and_then(|v| v.bind().cell_of(point)).map_or(-1, |c| c as i32);
-        if let Some(hit) = ray.matrix.as_ref().and_then(|g| g.answer(&ray.origins, &ray.cells, k, point, ray.range, false)) {
-            out[0] = hit as i32;
+        out[1] = ray.hits(&l.terrain, point, false, |_| false) as i32 as f32;
+        let Some(vg) = self.vis.as_ref() else { return out };
+        let v = vg.bind();
+        let Some(k) = v.cell_of(point) else { return out };
+        if let Some(hit) = ray.matrix.as_ref().and_then(|g| g.answer(&ray.origins, &ray.cells, k as i32, point, ray.range, false)) {
+            out[0] = hit as i32 as f32;
         }
-        out[1] = ray.hits(&l.terrain, point, false, |_| false) as i32;
+        if let Some((hit, edge)) = l.matrix_refined(ray, &v, k as i32, point) {
+            out[2] = edge as i32 as f32;
+            out[3] = hit as i32 as f32;
+            if edge {
+                let c = v.centres[k];
+                let q = c + Vector2::new(if point.x >= c.x { 1.0 } else { -1.0 }, if point.y >= c.y { 1.0 } else { -1.0 }) * (v.cell * 0.25);
+                out[4] = q.x;
+                out[5] = q.y;
+            }
+        }
         out
+    }
+
+    /// Matrix answers asked and refined on a reach edge since the last call.
+    #[func]
+    fn matrix_edge_stats(&self) -> PackedInt64Array {
+        PackedInt64Array::from(&[STAT_MATRIX.swap(0, Relaxed) as i64, STAT_EDGE.swap(0, Relaxed) as i64][..])
+    }
+
+    /// Edge shot sims run, answered from the cache, and nanoseconds spent, since the last call.
+    #[func]
+    fn edge_sim_stats(&self) -> PackedInt64Array {
+        use crate::nav::edge_sim::{SIMS, SIM_HITS, SIM_NS};
+        PackedInt64Array::from(&[SIMS.swap(0, Relaxed) as i64, SIM_HITS.swap(0, Relaxed) as i64, SIM_NS.swap(0, Relaxed) as i64][..])
     }
 
     /// reach_mask from exactly `point`, one ray per enemy.

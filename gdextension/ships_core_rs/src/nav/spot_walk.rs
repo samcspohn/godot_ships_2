@@ -51,6 +51,8 @@ pub(crate) struct SpotInputs {
     /// what it costs us while its fire plane covers the cell (same units).
     pub value: Vec<f32>,
     pub harm: Vec<f32>,
+    /// Our guns' own shot check, for reach on the matrix's edge; None to keep the tables' answer.
+    pub sim: Option<crate::nav::edge_sim::EdgeSim>,
 }
 
 pub(crate) struct WalkResult {

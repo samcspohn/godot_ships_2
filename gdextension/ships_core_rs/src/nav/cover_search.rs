@@ -172,18 +172,55 @@ pub(crate) fn safety(g: &VisibilityGrid, k: usize, inp: &SpotInputs, allow_dark:
 impl VisibilityGrid {
     /// Water deep enough for the hull, safe (see `safety`), and in reach of `need` targets.
     pub(crate) fn cover_ok(&self, k: usize, inp: &SpotInputs, a: &CoverArgs) -> Option<((bool, bool), u64)> {
+        self.cover_ok_at(k, self.centres[k], inp, a)
+    }
+
+    /// cover_ok with the shot taken from `p` in cell `k`.
+    pub(crate) fn cover_ok_at(&self, k: usize, p: Vector2, inp: &SpotInputs, a: &CoverArgs) -> Option<((bool, bool), u64)> {
+        let why = self.cover_safe(k, inp, a)?;
+        let mask = if a.need > 0 { self.lead_mask_at(k, p, inp, &a.forecast) } else { 0 };
+        (mask.count_ones() >= a.need).then_some((why, mask))
+    }
+
+    /// Water deep enough for the hull and safe (see `safety`), now and over the forecast hold.
+    fn cover_safe(&self, k: usize, inp: &SpotInputs, a: &CoverArgs) -> Option<(bool, bool)> {
         if self.sdf_c[k] < inp.clearance {
             return None;
         }
         let why = safety(self, k, inp, a.allow_dark)?;
-        if why.1 && !a.shield_ok {
+        if (why.1 && !a.shield_ok) || forecast_exposed(self, k, inp, a) {
             return None;
         }
-        if forecast_exposed(self, k, inp, a) {
+        Some(why)
+    }
+
+    /// Whether every water neighbour of `k` deep enough for the hull is safe too: a margin against drift and
+    /// the edge errors of the LOS grid and reach model.
+    pub(crate) fn cover_deep(&self, k: usize, inp: &SpotInputs, a: &CoverArgs) -> bool {
+        let (ix, iz) = self.grid_of(self.centres[k]);
+        (-1..=1).all(|dz| (-1..=1).all(|dx| {
+            (dx == 0 && dz == 0) || self.water(ix + dx, iz + dz)
+                .is_none_or(|n| self.sdf_c[n] < inp.clearance || self.cover_safe(n, inp, a).is_some())
+        }))
+    }
+
+    /// The nearest of `k`'s safe 2x2 quarters with a shot, by our guns' own check, where the cell has none:
+    /// the reach edge is drawn finer than the cells.
+    fn cover_quarter(&self, k: usize, inp: &SpotInputs, a: &CoverArgs) -> Option<(Vector2, (bool, bool), u64)> {
+        if inp.sim.is_none() || a.need == 0 {
             return None;
         }
-        let mask = if a.need > 0 { self.lead_mask(k, inp, &a.forecast) } else { 0 };
-        (mask.count_ones() >= a.need).then_some((why, mask))
+        let why = self.cover_safe(k, inp, a)?;
+        let c = self.centres[k];
+        let off = self.cell * 0.25;
+        let mut quarters = [Vector2::new(-off, -off), Vector2::new(off, -off), Vector2::new(-off, off), Vector2::new(off, off)]
+            .map(|o| c + o);
+        let from = if a.forecast.from.is_finite() { a.forecast.from } else { c };
+        quarters.sort_by(|x, y| from.distance_to(*x).total_cmp(&from.distance_to(*y)));
+        quarters.into_iter().find_map(|q| {
+            let mask = self.lead_mask_at(k, q, inp, &a.forecast);
+            (mask.count_ones() >= a.need).then_some((q, why, mask))
+        })
     }
 
     /// Which of cover_ok's tests `k` fails first, for the trace: shallow, fired_on, shielded, forecast, no_target, ok.
@@ -208,8 +245,12 @@ impl VisibilityGrid {
 
     /// spotted_mask with each target where the forecast has it when we arrive.
     pub(crate) fn lead_mask(&self, k: usize, inp: &SpotInputs, fc: &Forecast) -> u64 {
+        self.lead_mask_at(k, self.centres[k], inp, fc)
+    }
+
+    /// lead_mask with the shot taken from `p` in cell `k`: over land on the matrix's reach edge, by our guns' own check.
+    pub(crate) fn lead_mask_at(&self, k: usize, p: Vector2, inp: &SpotInputs, fc: &Forecast) -> u64 {
         let Some(reach) = inp.reach.as_ref().filter(|_| !fc.is_empty()) else { return self.spotted_mask(k, inp) };
-        let p = self.centres[k];
         let eta = fc.eta_k(k, p);
         let mut mask = 0u64;
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
@@ -219,7 +260,13 @@ impl VisibilityGrid {
             let q = fc.at(i, eta).unwrap_or(e.pos);
             let cq = self.cell_of(q);
             let los = cq.is_some_and(|c| self.visible_idx(k, c));
-            if reach.hits_at(i, q, cq, p, Some(k), los) && (!inp.reach_needs_los || los) {
+            let edge = !los && inp.sim.is_some()
+                && cq.is_some_and(|c| reach.matrix_edge(i, self, k, q, c).is_some_and(|(_, edge)| edge));
+            let hit = match (edge, inp.sim.as_ref(), cq) {
+                (true, Some(sim), Some(c)) => sim.hits(p, self.centres[c], c),
+                _ => reach.hits_at(i, q, cq, p, Some(k), los),
+            };
+            if hit && (!inp.reach_needs_los || los) {
                 mask |= 1u64 << i;
             }
         }
@@ -266,9 +313,10 @@ impl VisibilityGrid {
         a
     }
 
-    /// The cheapest safe cell from `from` by water route (CoverArgs::cost) and every cell weighed, by cost.
+    /// The cheapest deep (cover_deep) safe cell from `from` by water route (CoverArgs::cost), else the cheapest
+    /// safe cell or quarter, else a dark one; with whether it is deep, and every cell weighed, by cost.
     pub(crate) fn cover_search_impl(&self, from: Vector2, inp: &SpotInputs, a: &CoverArgs)
-        -> (Option<(usize, (bool, bool), u64)>, Vec<(f32, usize)>) {
+        -> (Option<(Vector2, (bool, bool), u64, bool)>, Vec<(f32, usize)>) {
         let mut a = a.clone();
         let route = self.water_route(from, inp.clearance, a.reach_m);
         if !a.forecast.from.is_finite() || a.forecast.from.distance_to(from) < self.cell {
@@ -286,17 +334,23 @@ impl VisibilityGrid {
             }
         }
         cells.sort_by(|x, y| x.0.total_cmp(&y.0));
-        let mut found = None;
+        let mut deep = None;
+        let mut edge = None;
         let mut dark = None;
         for &(_, k) in &cells {
-            if let Some((why, m)) = self.cover_ok(k, inp, a) {
-                if !(a.dark_last && why.0) {
-                    found = Some((k, why, m));
-                    break;
-                }
-                dark = dark.or(Some((k, why, m)));
+            let whole = self.cover_ok(k, inp, a);
+            let hit = whole.map(|(why, m)| (self.centres[k], why, m)).or_else(|| self.cover_quarter(k, inp, a));
+            let Some((p, why, m)) = hit else { continue };
+            if a.dark_last && why.0 {
+                dark = dark.or(Some((p, why, m, false)));
+                continue;
             }
+            if whole.is_some() && self.cover_deep(k, inp, a) {
+                deep = Some((p, why, m, true));
+                break;
+            }
+            edge = edge.or(Some((p, why, m, false)));
         }
-        (found.or(dark), cells)
+        (deep.or(edge).or(dark), cells)
     }
 }

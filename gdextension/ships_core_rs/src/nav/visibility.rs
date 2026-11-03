@@ -372,6 +372,7 @@ impl VisibilityGrid {
             reach_needs_los: o.get("reach_needs_los").is_some_and(|v| v.to_bool()),
             value: f32s("value").to_vec(),
             harm: f32s("harm").to_vec(),
+            sim: crate::nav::edge_sim::EdgeSim::from_opts(o),
         }
     }
 
@@ -420,7 +421,7 @@ impl VisibilityGrid {
     /// shootable targets. Only the cones toward `axis` and away from it are
     /// searched, away cells costing `away_ratio` times their distance, out to
     /// `reach_m`. hold_walk's opts plus reach_m, away_ratio, cone_half,
-    /// allow_dark, need, and Forecast's fc, fc_t, fc_hold_s, from, speed. {found, pos, dark, seen, mask, count, cells}.
+    /// allow_dark, need, and Forecast's fc, fc_t, fc_hold_s, from, speed. {found, pos, deep, dark, seen, mask, count, cells}.
     #[func]
     fn cover_search(&self, from: Vector2, axis: f32, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -432,9 +433,10 @@ impl VisibilityGrid {
         let a = CoverArgs::from_opts(axis, &opts);
         let (found, cells) = self.cover_search_impl(from, &inp, &a);
         d.set("cells", cells.len() as i64);
-        if let Some((k, (dark, seen), mask)) = found {
+        if let Some((pos, (dark, seen), mask, deep)) = found {
             d.set("found", true);
-            d.set("pos", self.centres[k]);
+            d.set("deep", deep);
+            d.set("pos", pos);
             d.set("dark", dark);
             d.set("seen", seen);
             d.set("mask", mask as i64);
@@ -526,8 +528,9 @@ impl VisibilityGrid {
         let inp = self.hold_inputs(&enemies, &opts);
         let a = self.routed(&CoverArgs::from_opts(f32::INFINITY, &opts), inp.clearance);
         d.set("why", &self.cover_why(k, &inp, &a));
-        if let Some(((dark, seen), mask)) = self.cover_ok(k, &inp, &a) {
+        if let Some(((dark, seen), mask)) = self.cover_ok_at(k, pos, &inp, &a) {
             d.set("ok", true);
+            d.set("deep", self.cover_deep(k, &inp, &a));
             d.set("dark", dark);
             d.set("seen", seen);
             d.set("mask", mask as i64);

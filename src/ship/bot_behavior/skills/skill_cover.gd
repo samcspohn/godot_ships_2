@@ -31,6 +31,8 @@ const COVER_BLIND_S := 10.0
 ## A friend counts as on a target within this many of its concealment radii.
 const SPOTTER_REACH := 1.3
 const RESEARCH_MS := 1000
+## Holding edge cover, how often to look for deep cover instead.
+const DEEP_RESEARCH_MS := 5000
 const DARK_MARGIN_M := 500.0
 ## A station a shell cannot leave for any target, by an exact ray from where the hull is (the
 ## search reads 300 m cells), is not taken again for BLOCKED_TTL_S: at once when found, after BLOCKED_S on arrival.
@@ -51,6 +53,8 @@ var mode: int = Mode.OFFENSE
 var _dark: bool = false
 ## Some threat sees the station and only cannot shell it.
 var _seen: bool = false
+## Every neighbour of the station is safe too.
+var _deep: bool = false
 var _target_at: float = -INF
 var _searched_ms: int = -100000
 var _cells: int = 0
@@ -82,8 +86,8 @@ func is_dark() -> bool:
 func debug_text() -> String:
 	if not _has_station:
 		return "Cover: none (%s) | %d cells" % [lost, _cells]
-	return "Cover %s%s | %d cells" % ["off" if mode == Mode.OFFENSE else "def",
-		" dark" if _dark else (" shielded" if _seen else " hidden"), _cells]
+	return "Cover %s%s%s | %d cells" % ["off" if mode == Mode.OFFENSE else "def",
+		" dark" if _dark else (" shielded" if _seen else " hidden"), " deep" if _deep else " edge", _cells]
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var m: int = params.get("mode", mode)
@@ -133,6 +137,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		DestChurn.handoff("to_cover", why)
 		if why == "kept":
 			_adopt(Vector3(carry.x, 0.0, carry.y), float(ev.count), {})
+			_deep = bool(ev.get("deep", false))
 			_target_at = now
 			_targets = {}
 	carry = Vector2.INF
@@ -148,6 +153,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		else:
 			_dark = bool(ev.dark)
 			_seen = bool(ev.seen)
+			_deep = bool(ev.get("deep", false))
 			if int(ev.count) > 0:
 				_target_at = now
 				_note_targets(opts.ids, int(ev.mask))
@@ -155,7 +161,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 				_drop()
 				lost = "blind"
 	var now_ms: int = SimClock.now_ms()
-	if not _has_station and now_ms - _searched_ms >= RESEARCH_MS:
+	var upgrade: bool = _has_station and not _deep
+	if now_ms - _searched_ms >= (DEEP_RESEARCH_MS if upgrade else RESEARCH_MS) and (upgrade or not _has_station):
 		_searched_ms = now_ms
 		var from := _resume if _resume.is_finite() else here
 		_resume = Vector2.INF
@@ -174,13 +181,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			opts.exclude.append(r.pos)
 			r = {}
 		_cells = int(r.get("cells", 0))
-		if bool(r.get("found", false)):
+		if bool(r.get("found", false)) and (not upgrade or bool(r.get("deep", false))):
 			var p: Vector2 = r.pos
 			if mode == Mode.DEFENSE and not bool(r.dark):
 				p = _tuck(p, opts)
 			_adopt(Vector3(p.x, 0.0, p.y), float(r.count), {})
 			_dark = bool(r.dark)
 			_seen = bool(r.seen)
+			_deep = bool(r.get("deep", false))
 			_target_at = now
 			_targets = {}
 			_note_targets(opts.ids, int(r.mask))
@@ -312,7 +320,15 @@ func search_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arr
 		"speed": maxf(ship.linear_velocity.length(), ship.movement_controller.max_speed * LEAD_SPEED_FRAC),
 		"fc": EnemyForecast.pack(belief, PackedVector2Array(params.get("refs", []).map(func(r): return r.pos))),
 		"fc_t": EnemyForecast.TIMES, "fc_hold_s": EnemyForecast.HOLD_S}, true)
+	opts.merge(edge_sim_opts(ship, g), true)
 	return opts
+
+## The guns' own shot check for reach on the matrix's edge (EdgeSim); none with --no-edge-sim.
+static func edge_sim_opts(ship: Ship, g: Dictionary) -> Dictionary:
+	if CmdArgs.has("--no-edge-sim") or ship.artillery_controller == null:
+		return {}
+	return {"sim_shell": ship.artillery_controller.get_shell_params(), "sim_nav": NavigationMapManager.get_map(),
+		"sim_space": ship.get_world_3d().direct_space_state, "sim_gun_h": float(g.get("gun_h", 5.0))}
 
 ## Whether `p` is within CLIP_HALF of each seeing enemy's bearing to `from`, as cover_search clips.
 static func _in_clip(from: Vector2, p: Vector2, clip_pos: PackedVector2Array) -> bool:

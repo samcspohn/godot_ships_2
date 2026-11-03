@@ -174,10 +174,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			break
 		if c.ship != null and is_instance_valid(c.ship):
 			top[c.ship] = true
+	var chased: Ship = ctx.behavior.priority_target() if _chasing else null
 	for b in belief:
 		var e: Ship = b.ship
 		pos.append(b.pos)
-		band.append(maxf(_ring_for(ctx, b, params, gun_range, conceal) - float(b.spread), 0.0) if threatens(e) else 0.0)
+		var ring: float = _ring_for(ctx, b, params, gun_range, conceal)
+		if e == chased:
+			ring = minf(ring, ctx.behavior.sight_of(e))
+		band.append(maxf(ring - float(b.spread), 0.0) if threatens(e) else 0.0)
 		reach.append(gun_range)
 		# Lit, only this flank's enemies make a station; remembered and presumed
 		# ones are kept out of, except when fighting the presumed, at any range.
@@ -390,7 +394,8 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		front_hp.append(f.y)
 		chase_ring.append(maxf(conceal - float(belief[i].spread), 0.0) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
 		walk_r.append(rings[i] + WALK_MARGIN_M if rings[i] > 0.0 else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
-	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal)).merged(_push).merged({"det_r": det, "los_r": sensor, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
+	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal)).merged(_push) \
+		.merged(SkillCover.edge_sim_opts(ship, g)).merged({"det_r": det, "los_r": sensor, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
 		"reach_field": NavigationMapManager.get_reach_field(), "team": ship.team.team_id,
 		"hull_key": NavigationMapManager.reach_hull_key(g), "ids": PackedInt64Array(belief.map(func(b): return b.ship.get_instance_id())),
 		"clearance": ctx.behavior._get_ship_clearance(), "curve_out": outs, "curve_in": ins, "curve_steps": steps,

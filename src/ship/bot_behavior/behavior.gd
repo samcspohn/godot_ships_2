@@ -3251,7 +3251,7 @@ func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		return null
 	sit["arm"] = &"brawl"
 	var t: Ship = priority_target()
-	var push := {"desired_range": minf(BRAWL_RANGE_M, desired(t).x) if t != null else BRAWL_RANGE_M,
+	var push := {"desired_range": minf(minf(BRAWL_RANGE_M, desired(t).x), sight_of(t)) if t != null else BRAWL_RANGE_M,
 		"only": SkillFight.Mode.STATION, "push": true}
 	var intent := _run_skill(&"Fight", ctx, push)
 	if intent == null:
@@ -3433,10 +3433,35 @@ func _log_skill_time(intent: NavIntent) -> void:
 	var now: float = SimClock.now()
 	if _skill_since >= 0.0:
 		skill_time[_skill_key] = float(skill_time.get(_skill_key, 0.0)) + now - _skill_since
+		_log_exposure(now - _skill_since)
 	_skill_since = now
 	_skill_key = "none" if intent == null else String(_active_skill_name)
 	if intent != null and _active_skill_name == &"Fight":
 		_skill_key += ":" + SkillFight.Mode.keys()[_skill_fight.mode]
+
+## Per skill: [seconds, detected s, within EXP_LAND_M of land s, potential damage, hp lost].
+var skill_exp: Dictionary = {}
+var _exp_pot: float = 0.0
+var _exp_hp: float = -1.0
+const EXP_LAND_M := 1500.0
+
+func _log_exposure(dt: float) -> void:
+	var ship: Ship = _ship
+	if ship == null:
+		return
+	var e: Array = skill_exp.get(_skill_key, [0.0, 0.0, 0.0, 0.0, 0.0])
+	var hp: float = ship.health_controller.current_hp
+	e[0] += dt
+	if ship.is_detected():
+		e[1] += dt
+	if NavigationMapManager.get_distance(ship.global_position) < EXP_LAND_M:
+		e[2] += dt
+	e[3] += ship.stats.potential_damage - _exp_pot
+	if _exp_hp >= 0.0:
+		e[4] += maxf(_exp_hp - hp, 0.0)
+	skill_exp[_skill_key] = e
+	_exp_pot = ship.stats.potential_damage
+	_exp_hp = hp
 
 var _trace_at: float = -INF
 func _trace(intent: NavIntent, ctx: SkillContext, sit: Dictionary) -> void:
@@ -3958,7 +3983,7 @@ func hide_range(enemy: Ship) -> float:
 	# Tubes that fall short of where it sees us cannot be fired unseen.
 	return seen + HIDE_MARGIN_M if tc.get_max_range() > seen + HIDE_MARGIN_M else 0.0
 
-## How far off we can hold `enemy` to shoot it: INF while a friend spots it, else its concealment or our hydro or radar.
+## How far off a push or chase can hold `enemy` to shoot it: INF while a friend spots it, else its concealment or our hydro or radar.
 func sight_of(enemy: Ship) -> float:
 	if enemy.concealment == null or enemy.concealment.params == null:
 		return INF
@@ -3970,12 +3995,11 @@ func sight_of(enemy: Ship) -> float:
 	return maxf((enemy.concealment.params.p() as ConcealmentParams).radius, sensor)
 
 func _desired_by_trade(enemy: Ship) -> Vector2:
-	var sight: float = sight_of(enemy)
-	var our_gun: float = minf(_ship.artillery_controller.get_params()._range, sight)
+	var our_gun: float = _ship.artillery_controller.get_params()._range
 	var their_gun: float = enemy.artillery_controller.get_params()._range
 	var our_hp: float = maxf(trade_hp(), 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
-	var our_reach: float = minf(reach_m(_ship), sight)
+	var our_reach: float = reach_m(_ship)
 	var their_reach: float = reach_m(enemy)
 	var best_r := -1.0
 	var best := 0.0
