@@ -4,7 +4,7 @@ extends RefCounted
 ## A botmatch lineup with a top-level "scenario" block and per-ship state, set once every ship has spawned:
 ##   "scenario": {"duration_s": 60, "elapsed_s": 568, "trace": ["Yamato"], "log_dt": 1.0}
 ##   per ship: "pos": [x, z], "heading_deg" (0 = +Z, 90 = +X), "speed" (m/s, ahead), "hp" (absolute),
-##   "reload": [main guns 0..1] (default all loaded, tubes too), "bloom_m": seen out to this, as if just fired, all scenario,
+##   "reload": [main guns 0..1] (default all loaded, tubes too), "bloom_m": seen out to this, as if just fired, for "bloom_s" (default all scenario),
 ##   "fixed": {"throttle": -1..4, "rudder": -1..1}: no bot, this helm the whole scenario; with "path": [[x, z], ...] it steers through those,
 ##   "consumables": [{slot, used, last_s}]: charges spent and seconds since the last went off,
 ##   "torp_last_s": {launcher index: seconds since it launched}, "throttle": -1..4, "identified": its enemies have seen it, "lkp": {pos, age_s, vel, rot}: their last sighting
@@ -68,7 +68,7 @@ func start(server: GameServer) -> void:
 		for c in e.get("consumables", []):
 			_consumable(ship, int(c.slot), int(c.used), float(c.last_s))
 		if e.has("bloom_m"):
-			_bloom[ship] = float(e.bloom_m)
+			_bloom[ship] = [float(e.bloom_m), float(e.get("bloom_s", INF))]
 		if e.has("fixed"):
 			var bc := ship.get_node_or_null("Modules/BotController")
 			if bc != null:
@@ -90,8 +90,8 @@ func tick(server: GameServer) -> bool:
 		return false
 	var t: float = SimClock.now() - _started
 	for ship in _bloom:
-		if is_instance_valid(ship) and ship.concealment != null:
-			ship.concealment.bloom(_bloom[ship])
+		if is_instance_valid(ship) and ship.concealment != null and t < _bloom[ship][1]:
+			ship.concealment.bloom(_bloom[ship][0])
 	for ship in _fixed:
 		if is_instance_valid(ship):
 			if _paths.has(ship):
@@ -120,6 +120,8 @@ func _log(ship: Ship, t: float) -> void:
 	var line := "SCN t=%5.1f %s hp=%.0f at=(%.0f,%.0f) hdg=%.0f spd=%.1f" % [t, ship.ship_name, ship.health_controller.current_hp,
 		ship.global_position.x, ship.global_position.z, rad_to_deg(atan2(fwd.x, fwd.z)), ship.linear_velocity.length()]
 	var bc := ship.get_node_or_null("Modules/BotController")
+	var shots: PackedInt32Array = bc.behavior.shots_by_ammo if bc != null and bc.behavior != null else PackedInt32Array([0, 0])
+	line += " seen=%s shots=%d" % [ship.is_detected(), shots[0] + shots[1]]
 	if bc != null and bc.behavior != null and bc.process_mode != Node.PROCESS_MODE_DISABLED:
 		var b: BotBehavior = bc.behavior
 		var tgt: Ship = bc.target
@@ -136,7 +138,7 @@ func _log(ship: Ship, t: float) -> void:
 			line += " dest=(%.0f,%.0f) dd=%.0f" % [dst.x, dst.z, ship.global_position.distance_to(dst)]
 		line += " fight=[%s] cov1=%s lost=%s gb=%s" % [b._skill_fight.debug_text(), b.cover_first_last, b._skill_fight.cover.lost,
 			b._is_gunboat(ship) if b.has_method("_is_gunboat") else "-"]
-		line += " thr=%.2f dis=%s seen=%s prio=%s" % [b._threat_score_cache, b.churn.dis_why, ship.is_detected(), b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
+		line += " thr=%.2f dis=%s prio=%s" % [b._threat_score_cache, b.churn.dis_why, b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
 		if not b.priority.is_empty():
 			var pp: Vector2 = b.priority.pos
 			line += " ppos=(%.0f,%.0f) pd=%.0f" % [pp.x, pp.y, pp.distance_to(Vector2(ship.global_position.x, ship.global_position.z))]

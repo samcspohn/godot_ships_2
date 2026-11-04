@@ -7,7 +7,15 @@
    "Yamato"
   ],
   "log_dt": 0.25,
-  "expect": "Shimakaze torpedoes Yamato running straight at full speed: most of the spread crosses its track."
+  "expect": "Shimakaze torpedoes Yamato running straight at full speed: most of the spread crosses its track.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedo_count",
+    "op": ">=",
+    "value": 2
+   }
+  ]
  },
  "team": {
   "yamato": {

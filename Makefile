@@ -35,13 +35,16 @@ scenario:
 		--no-live-mods --metrics build/scenario/$(notdir $(basename $(S))).json 2>&1 | tee build/scenario/$(notdir $(basename $(S))).log \
 		| grep -E "^(SCN|DUEL)|SCRIPT ERROR"
 
-# Every scenario in tools/scenarios at once; per traced hull, the duel options it took.
+# Every scenario's checks over SCN_N seeds: make scenarios [ONLY=dd_*] [SCN_N=4] [TRACE=1]
+SCN_N ?= 4
+ONLY ?= *
 scenarios:
-	mkdir -p build/scenario
-	i=0; for f in tools/scenarios/*.json; do n=$$(basename $$f .json); i=$$((i+1)); \
-		"$(GODOT)" --headless --path . --fixed-fps 12 --server --port $$((30480+i)) --botmatch res://$$f --no-replay \
-		--gun-matrix-cache --no-live-mods --metrics build/scenario/$$n.json 2>&1 | cat > build/scenario/$$n.log & done; wait
-	python3 tools/botmatch/scenario_report.py build/scenario tools/scenarios
+	rm -rf build/scenarios; mkdir -p build/scenarios
+	i=0; for f in tools/scenarios/$(ONLY).json; do n=$$(basename $$f .json); \
+		for s in $$(seq 1 $(SCN_N)); do i=$$((i+1)); \
+		"$(GODOT)" --headless --path . --fixed-fps 12 --server --port $$((30480+i)) --botmatch res://$$f --seed $$s --no-replay \
+		--gun-matrix-cache --no-live-mods --metrics build/scenarios/$$n.s$$s.json > build/scenarios/$$n.s$$s.log 2>&1 & done; done; wait
+	python3 tools/botmatch/scenario_report.py build/scenarios tools/scenarios --only "$(ONLY)" $(if $(TRACE),--trace)
 
 # A scenario from a replay snapshot (default: newest replay, 9:30), then SNAP_N runs of it against the recorded ending.
 # make snap [REPLAY=user://replays/x.replay] [AT=9:30] [TRACE=SP1,Shimakaze];  make snap-run S=tools/scenarios/snap_x_930.json

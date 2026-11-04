@@ -17,6 +17,10 @@ const HURT_MARGIN := 0.25
 const LOOK_M := 1000.0
 ## A hider is looked for from this far inside the ring it is found in: on the ring, a grid cell's width decides it.
 const FIND_INSIDE_M := 500.0
+## A lit enemy's rings are placed where it will be this many seconds on: the station keeps ahead of it.
+const LEAD_S := 10.0
+## The destination is run out past the station this many seconds of a lit enemy's closing speed: near it, the boat would slow to arrive.
+const RUN_OUT_S := 30.0
 ## Kept this far outside an enemy's radar or hydro, charged or not; its secondaries are open-water gun stations' concern.
 const SENSOR_MARGIN_M := 500.0
 ## team_id -> enemy instance id -> [spotter instance id, ms].
@@ -75,7 +79,27 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
 	_claim_spots(team_id, ship, belief)
 	# Bow out: lit, the boat sprints straight away; torpedoes from the threat meet its stern.
-	return _intent(ctx, field, team_id, params.merged({"away_from": danger}))
+	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}))
+	var run := _run_out(belief, Vector2(_station.x, _station.z))
+	if run != Vector2.ZERO:
+		var to: Vector3 = intent.target_position + Vector3(run.x, 0.0, run.y)
+		intent.target_position = ctx.behavior._get_valid_nav_point(to)
+	return intent
+
+## Past the station, away from the lit enemy closing on it fastest.
+static func _run_out(belief: Array[Dictionary], st: Vector2) -> Vector2:
+	var out := Vector2.ZERO
+	for b in belief:
+		if int(b.source) != 0:
+			continue
+		var e: Ship = b.ship
+		var away: Vector2 = (st - b.pos).normalized()
+		var closing: float = Vector2(e.linear_velocity.x, e.linear_velocity.z).dot(away)
+		if closing > 0.0 and away.length_squared() > 0.0:
+			var v: Vector2 = away * closing * RUN_OUT_S
+			if v.length() > out.length():
+				out = v
+	return out
 
 func _decline() -> NavIntent:
 	_drop()
@@ -106,7 +130,7 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 			mine[pe] = true
 	for b in belief:
 		var e: Ship = b.ship
-		out.pos.append(b.pos)
+		out.pos.append(b.pos + Vector2(e.linear_velocity.x, e.linear_velocity.z) * LEAD_S if int(b.source) == 0 else b.pos)
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
 		# Not out-concealing it, we are seen wherever we spot it from: only its radar and hydro keep us off.
 		var sight: float = conceal if cp == null or conceal <= cp.radius else 0.0

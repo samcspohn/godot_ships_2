@@ -1,0 +1,70 @@
+{
+ "scenario": {
+  "duration_s": 60,
+  "elapsed_s": 300,
+  "trace": [
+   "Shimakaze",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Shimakaze just fired and is lit by its bloom 9 km from Yamato: it holds fire, waits out the bloom and is dark again.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "scn": "seen",
+    "op": "==",
+    "value": false,
+    "within_s": 25,
+    "from_s": {
+     "ship": "Shimakaze",
+     "scn": "seen",
+     "op": "==",
+     "value": true
+    }
+   },
+   {
+    "ship": "Shimakaze",
+    "scn": "shots",
+    "delta": true,
+    "op": "==",
+    "value": 0,
+    "from_s": 2,
+    "to_s": 25
+   }
+  ]
+ },
+ "team": {
+  "shima": {
+   "team": "0",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -2000,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 20,
+   "identified": true,
+   "bloom_m": 20000,
+   "bloom_s": 0.5
+  },
+  "yamato": {
+   "team": "1",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    7000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 20,
+   "identified": true
+  }
+ }
+}

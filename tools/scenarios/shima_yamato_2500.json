@@ -7,7 +7,21 @@
    "Yamato"
   ],
   "log_dt": 1.0,
-  "expect": "Shimakaze stays angled (no broadside: a Yamato salvo can sink it), waits for the salvo, then turns to launch."
+  "expect": "Shimakaze stays angled (no broadside: a Yamato salvo can sink it), waits for the salvo, then turns to launch.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedoes_fired",
+    "op": ">=",
+    "value": 1
+   },
+   {
+    "ship": "Shimakaze",
+    "end": "alive",
+    "op": "==",
+    "value": true
+   }
+  ]
  },
  "team": {
   "yamato": {

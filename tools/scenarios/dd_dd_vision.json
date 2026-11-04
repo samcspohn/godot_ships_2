@@ -1,0 +1,90 @@
+{
+ "scenario": {
+  "duration_s": 90,
+  "elapsed_s": 300,
+  "trace": [
+   "SP1",
+   "Shimakaze",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "SP1 (4.65 km concealment, hydro spent) is lit at 4.3 km by a Shimakaze (3.0 km) it cannot see, with a Yamato shooting on that spotting: SP1 disengages out of the Shimakaze's sight.",
+  "check": [
+   {
+    "ship": "SP1",
+    "scn": "skill",
+    "op": "==",
+    "value": "Disengage",
+    "within_s": 20
+   },
+   {
+    "ship": "SP1",
+    "scn": "dist:Shimakaze",
+    "op": ">=",
+    "value": 4700,
+    "share": 0.5,
+    "from_s": 20
+   },
+   {
+    "ship": "SP1",
+    "end": "hp_frac",
+    "op": ">=",
+    "value": 0.8
+   }
+  ]
+ },
+ "team": {
+  "sp1": {
+   "team": "0",
+   "player_id": "sp1",
+   "ship": "res://assets/Ships/SP1/SP1.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -1800,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 15,
+   "identified": true,
+   "consumables": [
+    {
+     "slot": 2,
+     "used": 99,
+     "last_s": 999
+    }
+   ]
+  },
+  "shima": {
+   "team": "1",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    2500,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 15,
+   "identified": true
+  },
+  "yamato": {
+   "team": "1",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    13000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 20,
+   "identified": true
+  }
+ }
+}

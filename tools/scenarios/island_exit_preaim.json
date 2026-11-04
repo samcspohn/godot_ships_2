@@ -1,0 +1,76 @@
+{
+ "scenario": {
+  "duration_s": 150,
+  "elapsed_s": 300,
+  "trace": [
+   "Montana",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Yamato steams south out from behind the west centre island; Montana, holding its believed track, has turrets on it and fires as it clears.",
+  "check": [
+   {
+    "ship": "Montana",
+    "scn": "shots",
+    "delta": true,
+    "op": ">",
+    "value": 0,
+    "within_s": 8,
+    "from_s": {
+     "ship": "Yamato",
+     "scn": "seen",
+     "op": "==",
+     "value": true
+    }
+   }
+  ]
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -1500
+   ],
+   "heading_deg": 180,
+   "speed": 27,
+   "identified": true,
+   "fixed": {
+    "throttle": 4,
+    "rudder": 0.0
+   }
+  },
+  "montana": {
+   "team": "1",
+   "player_id": "montana",
+   "ship": "res://assets/Ships/Montana/Montana.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -10500,
+    0
+   ],
+   "heading_deg": 90,
+   "speed": 5,
+   "identified": true,
+   "lkp": {
+    "pos": [
+     0,
+     -1500
+    ],
+    "age_s": 2,
+    "vel": [
+     0,
+     -27
+    ],
+    "rot": 0.0
+   }
+  }
+ }
+}

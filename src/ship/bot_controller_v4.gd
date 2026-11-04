@@ -561,11 +561,6 @@ func _register_torpedo_obstacles() -> void:
 		if torp == null:
 			continue
 
-		# Only track armed torpedoes — unarmed ones are still inside their safe
-		# arming distance and cannot detonate yet.
-		if not torp.armed:
-			continue
-
 		# Ignore friendly torpedoes.
 		if torp.owner != null and torp.owner.team != null and torp.owner.team.team_id == my_team_id:
 			continue
@@ -574,17 +569,21 @@ func _register_torpedo_obstacles() -> void:
 		if not torp.visible_to_enemy:
 			continue
 
-		var dist: float = _ship.global_position.distance_to(torp.position)
-		if dist > torpedo_track_range:
-			continue
-
 		# Detected enemy torpedo — update the shooter's last known position to
 		# where it was launched from (start_position is set at fire time).
 		# Air-dropped torpedoes carry no launcher (see TorpedoManager.fireTorpedo),
 		# and their launch point is over the target rather than over the carrier
 		# that owns them, so they say nothing about where that carrier is.
+		# Any wake the team sees places the launcher; only a near, armed one is aimed at us.
+		var dist: float = _ship.global_position.distance_to(torp.position)
+		var near: bool = torp.armed and dist <= torpedo_track_range
 		if torp.launcher != null:
-			_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t, true)
+			_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t, true, near)
+
+		# Only track armed torpedoes — unarmed ones are still inside their safe
+		# arming distance and cannot detonate yet.
+		if not near:
+			continue
 
 		var obs_id: int = TORPEDO_ID_OFFSET - i
 		var pos_2d := Vector2(torp.position.x, torp.position.z)
@@ -660,7 +659,7 @@ const TORPEDO_INFER_RADIUS_GROWTH: float = 25.0
 ## - launch_time : ProjectileManager time when the projectile was fired (used to
 ##                 reject stale updates — we only keep the most recent launch's intel)
 ## - is_torpedo  : route the intel to the inferred-contact table instead of the LKP tables
-func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time: float, is_torpedo: bool = false) -> void:
+func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time: float, is_torpedo: bool = false, at_me: bool = true) -> void:
 	if not is_instance_valid(shooter):
 		return
 	if not shooter is Ship:
@@ -682,7 +681,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# when no shells are currently in the air (reload window gap).
 	# This runs before the launch_time gate so every in-flight shell keeps refreshing
 	# the window, not just the first detection per salvo.
-	if behavior != null and s.artillery_controller != null:
+	if at_me and behavior != null and s.artillery_controller != null:
 		var reload_sec: float = s.artillery_controller.get_params().reload_time
 		# 1.5 reload cycles, as the comment above has always said.  This was
 		# hardcoded to 60.0 -- reload_sec was computed and thrown away -- which
@@ -876,7 +875,8 @@ const AVIATION_INTERVAL: float = 0.25
 var _aviation_t: float = randf() * AVIATION_INTERVAL
 
 func _engage_target() -> void:
-	if target != null and target.is_alive() \
+	# No intent yet means no gun policy yet: aim only.
+	if _last_intent != null and target != null and target.is_alive() \
 			and (target.visible_to_enemy or behavior.is_engageable_contact(behavior.get_contact_solution(target))):
 		behavior.engage_target(target)
 	else:

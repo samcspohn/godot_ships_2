@@ -24,6 +24,13 @@ pub(crate) struct Enemy {
     pub shootable: bool,
 }
 
+impl Enemy {
+    /// With a reach field, spot_r > 0 still caps the shot: a hider we must see ourselves.
+    pub(crate) fn within_spot(&self, from: Vector2, at: Vector2) -> bool {
+        self.spot_r <= 0.0 || from.distance_squared_to(at) <= self.spot_r * self.spot_r
+    }
+}
+
 /// Forbidden ground a walk keeps out of, besides land and shallows.
 pub(crate) const AVOID_DET: u8 = 1;
 pub(crate) const AVOID_LOS: u8 = 2;
@@ -154,7 +161,8 @@ impl VisibilityGrid {
                 continue;
             }
             let hit = match &inp.reach {
-                Some(_) => reach & (1 << i) != 0 && (!inp.reach_needs_los || e.cell.is_some_and(|ec| self.visible_idx(k, ec))),
+                Some(_) => reach & (1 << i) != 0 && e.within_spot(c, e.pos)
+                    && (!inp.reach_needs_los || e.cell.is_some_and(|ec| self.visible_idx(k, ec))),
                 None => e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.spot_r * e.spot_r && self.visible_idx(k, ec)),
             };
             if hit {

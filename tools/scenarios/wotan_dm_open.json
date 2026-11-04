@@ -7,7 +7,24 @@
    "Des Moines"
   ],
   "log_dt": 1.0,
-  "expect": "DM self-spotting in open water against Wotan dodges its salvos and outdamages it; survives."
+  "expect": "DM self-spotting in open water against Wotan dodges its salvos and outdamages it; survives.",
+  "check": [
+   {
+    "ship": "Des Moines",
+    "end": "alive",
+    "op": "==",
+    "value": true
+   },
+   {
+    "ship": "Des Moines",
+    "end": "total_damage",
+    "op": ">",
+    "value": {
+     "ship": "Wotan",
+     "end": "total_damage"
+    }
+   }
+  ]
  },
  "team": {
   "wotan": {

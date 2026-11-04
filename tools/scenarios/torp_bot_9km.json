@@ -7,7 +7,15 @@
    "Yamato"
   ],
   "log_dt": 0.5,
-  "expect": "Yamato under its own bot (weaving, dodging spotted torpedoes): the spread covers where it can be."
+  "expect": "Yamato under its own bot (weaving, dodging spotted torpedoes): the spread covers where it can be.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedo_count",
+    "op": ">=",
+    "value": 1
+   }
+  ]
  },
  "team": {
   "yamato": {

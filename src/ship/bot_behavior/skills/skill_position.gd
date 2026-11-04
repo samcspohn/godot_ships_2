@@ -114,6 +114,14 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 			_drop()
 	var r: Dictionary
 	if _has_station:
+		# Re-snapped onto the edge each pass: the rings move with their enemies, a held cell does not.
+		opts.need = _count
+		opts.budget_m = REFINE_BUDGET_M
+		var snap: Dictionary = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
+		if bool(snap.get("found", false)) and int(snap.count) >= _count:
+			var sp: Vector2 = snap.pos
+			_mask = int(snap.get("mask", 0))
+			_adopt(Vector3(sp.x, 0.0, sp.y), _count, {})
 		opts.need = _count + 1
 		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
 		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)

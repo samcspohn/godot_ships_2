@@ -7,7 +7,15 @@
    "Yamato"
   ],
   "log_dt": 0.5,
-  "expect": "Yamato in a steady turn: the lead follows the arc."
+  "expect": "Yamato in a steady turn: the lead follows the arc.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedo_count",
+    "op": ">=",
+    "value": 1
+   }
+  ]
  },
  "team": {
   "yamato": {

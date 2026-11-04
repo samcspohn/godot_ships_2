@@ -7,7 +7,15 @@
    "Shimakaze"
   ],
   "log_dt": 5.0,
-  "expect": "Late game, SP1 alone vs a dark Shimakaze: SP1 hunts and spots it, closes and kills it."
+  "expect": "Late game, SP1 alone vs a dark Shimakaze: SP1 hunts and spots it, closes and kills it.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "alive",
+    "op": "==",
+    "value": false
+   }
+  ]
  },
  "team": {
   "sp1": {

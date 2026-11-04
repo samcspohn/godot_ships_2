@@ -1,0 +1,82 @@
+{
+ "scenario": {
+  "duration_s": 120,
+  "elapsed_s": 300,
+  "trace": [
+   "Des Moines",
+   "Wotan",
+   "Yamato"
+  ],
+  "log_dt": 1.0,
+  "expect": "Des Moines meets Wotan and Yamato at 11 km: it turns stern-in and kites with its rear turrets firing.",
+  "check": [
+   {
+    "ship": "Des Moines",
+    "scn": "off_bow:Wotan",
+    "op": ">=",
+    "value": 120,
+    "share": 0.6,
+    "from_s": 30
+   },
+   {
+    "ship": "Des Moines",
+    "end": "gun_shots_ap+gun_shots_he",
+    "op": ">=",
+    "value": 5
+   },
+   {
+    "ship": "Des Moines",
+    "end": "alive",
+    "op": "==",
+    "value": true
+   }
+  ]
+ },
+ "team": {
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -2000,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 25,
+   "identified": true
+  },
+  "wotan": {
+   "team": "0",
+   "player_id": "wotan",
+   "ship": "res://assets/Ships/H44/H44.2.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    9000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 25,
+   "identified": true
+  },
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    9000,
+    -10500
+   ],
+   "heading_deg": 270,
+   "speed": 25,
+   "identified": true
+  }
+ }
+}

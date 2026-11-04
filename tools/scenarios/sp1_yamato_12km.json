@@ -7,7 +7,15 @@
    "Yamato"
   ],
   "log_dt": 1.0,
-  "expect": "SP1 turns away (stern to Yamato) and launches; does not broadside for its guns."
+  "expect": "SP1 turns away (stern to Yamato) and launches; does not broadside for its guns.",
+  "check": [
+   {
+    "ship": "SP1",
+    "end": "torpedoes_fired",
+    "op": ">=",
+    "value": 1
+   }
+  ]
  },
  "team": {
   "yamato": {

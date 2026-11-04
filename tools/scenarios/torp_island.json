@@ -7,7 +7,15 @@
    "Yamato"
   ],
   "log_dt": 0.5,
-  "expect": "Yamato runs north behind the island from Shimakaze: no spread is launched that the island would catch."
+  "expect": "Yamato runs north behind the island from Shimakaze: no spread is launched that the island would catch.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedoes_grounded",
+    "op": "==",
+    "value": 0
+   }
+  ]
  },
  "team": {
   "yamato": {

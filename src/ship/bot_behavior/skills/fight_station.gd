@@ -162,6 +162,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var pos := PackedVector2Array()
 	var band := PackedFloat32Array()
 	var reach := PackedFloat32Array()
+	var find := PackedFloat32Array()
 	var live := PackedByteArray()
 	var prio := PackedByteArray()
 	var ids := PackedInt64Array()
@@ -182,14 +183,21 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var e: Ship = b.ship
 		pos.append(b.pos)
 		var ring: float = _ring_for(ctx, b, params, gun_range, conceal)
+		var shoot_r: float = gun_range
 		if e == chased or e == spotted:
 			ring = minf(ring, ctx.behavior.sight_of(e))
+		# Only a hider inside our gun range has to be found to be shot.
+		var hider: bool = e == spotted and ctx.behavior.sight_of(e) - SkillSpot.FIND_INSIDE_M < gun_range
+		if hider:
+			shoot_r = minf(gun_range, _find_r(ctx, b))
+			ring = minf(ring, shoot_r)
 		band.append(maxf(ring - float(b.spread), 0.0) if threatens(e) else 0.0)
-		reach.append(gun_range)
+		reach.append(shoot_r)
+		find.append(shoot_r if hider else 0.0)
 		# Lit, only this flank's enemies make a station; remembered and presumed
 		# ones are kept out of, except when fighting the presumed, at any range.
 		var is_live: bool = (int(b.source) == 0 and (b.pos.distance_to(flank) <= gun_range or b.pos.distance_to(here) <= gun_range)) \
-			or (_presumed and int(b.source) != 0)
+			or (_presumed and int(b.source) != 0) or hider
 		live.append(1 if is_live else 0)
 		prio.append(1 if is_live and top.has(e) else 0)
 		ids.append(e.get_instance_id())
@@ -203,7 +211,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"hull_key": _hull_key, "ids": ids, "reach_needs_los": bool(params.get("needs_los", false)),
 		"clearance": ctx.behavior._get_ship_clearance(), "flank": _flank_dir(ctx),
 		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SHOT, "heavy": heavy}
-	_march(ctx, vis, here, pos, band, prio, live, belief)
+	_march(ctx, vis, here, pos, band, prio, live, belief, find)
 	if _has_station and _chasing and (_route_hp >= SURVIVE_SHARE or not _chase_to.is_finite()
 			or here.distance_to(_chase_to) - Vector2(_station.x, _station.z).distance_to(_chase_to) < CHASE_MIN_PROGRESS_M):
 		_chase_failed_at = SimClock.now()
@@ -264,8 +272,8 @@ func _kite(ctx: SkillContext, intent: NavIntent, here: Vector2, enemy: Vector2) 
 ## Holds the station while it still has a target outside the rings and nothing
 ## in the window scores better by the switch margin; searches at most every MARCH_MS.
 func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, rings: PackedFloat32Array,
-		prio: PackedByteArray, live: PackedByteArray, belief: Array[Dictionary]) -> void:
-	var mo := _march_opts(ctx, belief, live, rings)
+		prio: PackedByteArray, live: PackedByteArray, belief: Array[Dictionary], find: PackedFloat32Array) -> void:
+	var mo := _march_opts(ctx, belief, live, rings, find)
 	_prio_lit = _ids_in(belief, _bits(prio)).size()
 	if not _has_station and carry.is_finite():
 		var ok: bool = bool(vis.fight_eval(carry, pos, mo).ok)
@@ -376,7 +384,8 @@ static func harm_price(ctx: SkillContext) -> float:
 	return maxf(by_hp * by_time, HARM_PRICE_MIN)
 
 ## fight_search's opts: the trade curves per contact from BotBehavior._trade, padded to one length.
-func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteArray, rings: PackedFloat32Array) -> Dictionary:
+func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteArray, rings: PackedFloat32Array,
+		find := PackedFloat32Array()) -> Dictionary:
 	var ship: Ship = ctx.ship
 	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	var rank := {}
@@ -437,9 +446,11 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		front.append(f.x)
 		front_hp.append(f.y)
 		chase_ring.append(maxf(conceal - float(belief[i].spread), 0.0) if threatens(e) and float(trades[i].push) < 0.0 else 0.0)
-		walk_r.append(rings[i] + WALK_MARGIN_M if rings[i] > 0.0 else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
-	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal)).merged(_push) \
-		.merged(SkillCover.edge_sim_opts(ship, g)).merged({"det_r": det, "los_r": sensor, "spot_r": PackedFloat32Array(), "shootable": live, "heavy": threat,
+		var find_i: float = find[i] if i < find.size() else 0.0
+		walk_r.append(maxf(find_i - WALK_MARGIN_M, 0.0) if find_i > 0.0 else rings[i] + WALK_MARGIN_M if rings[i] > 0.0
+			else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
+	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal, find)).merged(_push) \
+		.merged(SkillCover.edge_sim_opts(ship, g)).merged({"det_r": det, "los_r": sensor, "spot_r": find, "shootable": live, "heavy": threat,
 		"reach_field": NavigationMapManager.get_reach_field(), "team": ship.team.team_id,
 		"hull_key": NavigationMapManager.reach_hull_key(g), "ids": PackedInt64Array(belief.map(func(b): return b.ship.get_instance_id())),
 		"clearance": ctx.behavior._get_ship_clearance(), "curve_out": outs, "curve_in": ins, "curve_steps": steps,
@@ -479,7 +490,9 @@ const TORP_WALK_MARGIN_M := 500.0
 
 ## fight_search's tubes: per enemy, the torpedo_rate curve on the gun curves' spacing, its lead, and a walk circle
 ## just outside its sight of us or its radar or hydro (inside tube range); when the first tube loads and the reload.
-static func _torp_opts(ship: Ship, belief: Array[Dictionary], live: PackedByteArray, conceal: float) -> Dictionary:
+## Not at a hider we must find first: its spread is a spread of tubes wasted.
+static func _torp_opts(ship: Ship, belief: Array[Dictionary], live: PackedByteArray, conceal: float,
+		find := PackedFloat32Array()) -> Dictionary:
 	var tc: TorpedoController = ship.torpedo_controller if is_instance_valid(ship.torpedo_controller) else null
 	if tc == null or tc.launchers.is_empty():
 		return {}
@@ -491,8 +504,9 @@ static func _torp_opts(ship: Ship, belief: Array[Dictionary], live: PackedByteAr
 	for i in belief.size():
 		var e: Ship = belief[i].ship
 		var peak := 0.0
+		var finding: bool = i < find.size() and find[i] > 0.0
 		for k in steps:
-			var v: float = BotBehavior.torpedo_rate(ship, e, BotBehavior.POINT_BLANK_M + k * BotBehavior.RADIUS_STEP_M)
+			var v: float = 0.0 if finding else BotBehavior.torpedo_rate(ship, e, BotBehavior.POINT_BLANK_M + k * BotBehavior.RADIUS_STEP_M)
 			curves.append(v)
 			peak = maxf(peak, v)
 		vel.append(Vector2(e.linear_velocity.x, e.linear_velocity.z) if int(belief[i].source) == 0 else Vector2.ZERO)
@@ -649,6 +663,12 @@ func _tag_jump(p: Vector2, why: String) -> void:
 static func radius_for(ctx: SkillContext, e: Ship, at: Vector2, params: Dictionary) -> float:
 	var r: float = float(params.get("band_m", params.get("desired_range", 0.0)))
 	return r if r > 0.0 else ctx.behavior.ring(ctx, e, at)
+
+## As Spot finds a hider: inside our sight of it, and unseen anywhere in its spread.
+static func _find_r(ctx: SkillContext, b: Dictionary) -> float:
+	var e: Ship = b.ship
+	var r: float = ctx.behavior.sight_of(e) - SkillSpot.FIND_INSIDE_M
+	return maxf(r if e.visible_to_enemy else r - float(b.spread), 0.0)
 
 ## `b`'s ring, never past our own guns.
 static func _ring_for(ctx: SkillContext, b: Dictionary, params: Dictionary, gun_range: float, _conceal: float) -> float:

@@ -266,7 +266,7 @@ impl VisibilityGrid {
                 (true, Some(sim), Some(c)) => sim.hits(p, self.centres[c], c),
                 _ => reach.hits_at(i, q, cq, p, Some(k), los),
             };
-            if hit && (!inp.reach_needs_los || los) {
+            if hit && e.within_spot(p, q) && (!inp.reach_needs_los || los) {
                 mask |= 1u64 << i;
             }
         }
