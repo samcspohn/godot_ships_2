@@ -3998,14 +3998,14 @@ func kites() -> bool:
 	return false
 
 ## A kiter dropping under HEAL_HOLD_HP with repair charges left holds its guns until HEAL_RESUME_HP or the
-## charges run out, while every enemy is beyond our concealment: dark, it heals unseen.
+## charges run out, while every enemy is beyond our concealment: dark, it heals unseen. Never as our team's last ship.
 const HEAL_HOLD_HP: float = 0.3
-const HEAL_RESUME_HP: float = 0.5
+const HEAL_RESUME_HP: float = 0.4
 var _healing_dark := false
 
 func heal_hold(ctx: SkillContext) -> bool:
 	var hc = _ship.health_controller
-	if not kites() or repair < 0:
+	if not kites() or repair < 0 or _last_alive(ctx):
 		return false
 	var rp: ConsumableItem = _ship.consumable_manager.equipped_consumables[repair]
 	var max_stack: int = (rp.p() as ConsumableItem).max_stack
@@ -4016,14 +4016,19 @@ func heal_hold(ctx: SkillContext) -> bool:
 		_healing_dark = true
 	if frac >= HEAL_RESUME_HP or not charges:
 		_healing_dark = false
-	if OS.has_environment("HEAL_HOLD_OLD"): # TEMP
-		_healing_dark = frac < HEAL_HOLD_HP and _ship.consumable_manager.is_using(ConsumableItem.ConsumableType.REPAIR_PARTY)
 	if not _healing_dark:
 		return false
 	var conceal: float = NavigationMapManager.reach_conceal_radius(_ship)
 	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
 	for b in ctx.server._team_belief(_ship.team.team_id):
 		if (b.pos as Vector2).distance_to(here) <= conceal:
+			return false
+	return true
+
+## The last of our team afloat: only our guns can still win before the clock runs out.
+func _last_alive(ctx: SkillContext) -> bool:
+	for s in ctx.server.get_team_ships(_ship.team.team_id):
+		if s != _ship and is_instance_valid(s) and s.is_alive():
 			return false
 	return true
 

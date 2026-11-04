@@ -1473,7 +1473,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"dials": BotDials.summary(),
 		"duels": SkillStance.duel_stats,
 		"duel_cal": SkillStance.duel_cal,
-		"jink": SkillStance.jink_stats,
+		"dodge": SkillStance.dodge_stats,
 		"disengage_why": DestChurn.dis_summary(),
 		"calibration": GunneryCalibration.summary(),
 		"manoeuvres": GunneryCalibration.probe_summary(),
@@ -1513,7 +1513,7 @@ static func _clear_match_metrics() -> void:
 	SkillStance.duel_stats.clear()
 	SkillStance.duel_cal.clear()
 	SkillStance._probes.clear()
-	SkillStance.jink_stats.clear()
+	SkillStance.dodge_stats.clear()
 
 func _reset_server():
 	"""Reset the server by reloading the scene. The new instance's _ready()
