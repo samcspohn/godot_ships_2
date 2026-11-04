@@ -7,7 +7,8 @@ extends SkillPosition
 ## toward the most valued target's. The route is walled out of the rings. Params:
 ## band_m (else desired_range, else each enemy's own ring), away (bow away from
 ## the danger on arrival), presumed (fight where unseen enemies are guessed to
-## be, worth and threatening by their belief weight: the opening).
+## be, worth and threatening by their belief weight: the opening), need_spot (our priority's ring
+## within our own sight of it), kite (never arrive: the destination runs ahead, round the station's ring).
 
 ## A station in an island's shadow pulls that enemy's route wall in to this short of it.
 const SHADOW_MARGIN_M := 200.0
@@ -123,6 +124,7 @@ var _params_moved := false
 
 func reset() -> void:
 	super()
+	_kite_in = false
 	_lost = "reset"
 	_held = {}
 	_chasing = false
@@ -175,11 +177,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if c.ship != null and is_instance_valid(c.ship):
 			top[c.ship] = true
 	var chased: Ship = ctx.behavior.priority_target() if _chasing else null
+	var spotted: Ship = ctx.behavior.priority_target() if bool(params.get("need_spot", false)) else null
 	for b in belief:
 		var e: Ship = b.ship
 		pos.append(b.pos)
 		var ring: float = _ring_for(ctx, b, params, gun_range, conceal)
-		if e == chased:
+		if e == chased or e == spotted:
 			ring = minf(ring, ctx.behavior.sight_of(e))
 		band.append(maxf(ring - float(b.spread), 0.0) if threatens(e) else 0.0)
 		reach.append(gun_range)
@@ -215,7 +218,48 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}) if bool(params.get("away", false)) else params)
 	intent.target_position = ctx.behavior._get_valid_nav_point(intent.target_position)
 	_shape(intent, ctx, here, pos, opts)
+	if bool(params.get("kite", false)) and pp.is_finite() and not _chasing:
+		_kite(ctx, intent, here, Vector2(pp.x, pp.z))
 	return intent
+
+## Kiting runs a cycle, the destination always KITE_LEAD_M ahead: out, KITE_OUT_ANGLE off straight away the way we
+## are moving, until unseen beyond our concealment and not holding for a heal (out of our range, or quiet to heal);
+## then in on the enemy, guns held, to KITE_FLOOR_M outside its secondaries; then out again.
+const KITE_LEAD_M := 3000.0
+const KITE_OUT_ANGLE := deg_to_rad(30.0)
+const KITE_FLOOR_M := 1000.0
+var _kite_in := false
+
+## Closing in on the kite's enemy, unseen: Disengage waits for the turn.
+func kiting_in() -> bool:
+	return _kite_in
+
+func _kite(ctx: SkillContext, intent: NavIntent, here: Vector2, enemy: Vector2) -> void:
+	var d: float = here.distance_to(enemy)
+	var t: Ship = ctx.behavior.priority_target()
+	var floor_m: float = BotBehavior.secondary_reach(t) + KITE_FLOOR_M if t != null else 0.0
+	if not _kite_in and d > NavigationMapManager.reach_conceal_radius(ctx.ship) and not ctx.ship.is_detected() \
+			and not ctx.behavior.heal_hold(ctx):
+		_kite_in = true
+	elif _kite_in and d <= floor_m:
+		_kite_in = false
+	var out: Vector2 = (here - enemy).normalized()
+	var dir: Vector2
+	if _kite_in:
+		dir = -out
+		ctx.behavior.wants_stealth = true
+	else:
+		var tan := Vector2(-out.y, out.x)
+		var v := Vector2(ctx.ship.linear_velocity.x, ctx.ship.linear_velocity.z)
+		var h: float = ctx.behavior._get_ship_heading()
+		var moving: Vector2 = v if v.length() > 2.0 else Vector2(sin(h), cos(h))
+		if tan.dot(moving) < 0.0:
+			tan = -tan
+		dir = out * cos(KITE_OUT_ANGLE) + tan * sin(KITE_OUT_ANGLE)
+	var dest: Vector2 = here + dir * KITE_LEAD_M
+	intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(dest.x, 0.0, dest.y))
+	intent.target_heading = atan2(dir.x, dir.y)
+	intent.directional = true
 
 ## Holds the station while it still has a target outside the rings and nothing
 ## in the window scores better by the switch margin; searches at most every MARCH_MS.

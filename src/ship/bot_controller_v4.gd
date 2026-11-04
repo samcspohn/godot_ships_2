@@ -101,6 +101,7 @@ const PATH_SIGNIFICANT_MOVE: float = 1000.0
 ## - MIN: normal stagger cadence target (roughly one slot cycle at 20 fps)
 ## - MAX: safety fallback so intent is never stale for too long
 const MIN_BEHAVIOR_INTERVAL: float = 0.3
+const DODGE_CHECK_FRAMES: int = 3
 const MAX_BEHAVIOR_INTERVAL: float = 2.0
 var _behavior_timer: float = 0.0
 var bot_id: int = 0
@@ -349,6 +350,11 @@ func _physics_process(delta: float) -> void:
 		_behavior_timer = 0.0
 		_update_nav_intent()
 	_was_detected = detected
+	# A salvo's flight is only seconds: the dodge cannot wait for the slot.
+	if behavior != null and Engine.get_physics_frames() % DODGE_CHECK_FRAMES == bot_id % DODGE_CHECK_FRAMES \
+			and _behavior_timer > 0.0 and behavior._skill_stance.shells_fresh(_ship):
+		_behavior_timer = 0.0
+		_update_nav_intent()
 
 	# =========================================================================
 	# TIER 3 — path update (every PATH_UPDATE_INTERVAL frames, or immediately

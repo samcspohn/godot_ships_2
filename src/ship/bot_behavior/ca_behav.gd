@@ -67,6 +67,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_suppress_guns = false
 	_ensure_safe_dir(ship, server)
 	var ctx := SkillContext.create(ship, target, server, self)
+	wants_stealth = heal_hold(ctx)
 	_sync_cover_debug(ctx)
 	return _nav_core(ctx)
 
@@ -84,9 +85,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 # 	# if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
 # 	# 	intent.heading_weight = 1.0
 
+func kites() -> bool:
+	return true
+
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# Good odds release the cover, unless what it faces has yet to be seen: then wait for it.
-	if not _fighting(SkillFight.Mode.COVER) or not _skill_fight.cover.has_station() \
+	# Hidden, cover cannot spot a priority nobody else does.
+	if not _fighting(SkillFight.Mode.COVER) or not _skill_fight.cover.has_station() or needs_spot() \
 			or (sit.threat < _doc().cover_release_threat and not priority_dark()):
 		return null
 	var p := SkillFight.advance_cover_params(ctx) if _skill_fight.cover.mode == SkillCover.Mode.OFFENSE \

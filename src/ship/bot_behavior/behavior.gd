@@ -3143,6 +3143,8 @@ func cover_first(ctx: SkillContext, sit: Dictionary) -> bool:
 	return cover_first_last
 
 func _cover_first(ctx: SkillContext, sit: Dictionary) -> bool:
+	if needs_spot():
+		return false
 	var winning: bool = _trade_now.y >= 0.0 and _trade_now.x >= _trade_now.y * STAY_MARGIN
 	if float(sit.threat) >= REENGAGE_THREAT and not winning:
 		return true
@@ -3189,7 +3191,7 @@ func _may_disengage(threat: float) -> bool:
 
 ## Lit inside DISENGAGE_MIN_S of starting a disengage: keep it.
 func _held_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if _active_skill_name != &"Disengage" or not ctx.ship.is_detected() or _skill_stance.dueling() \
+	if _active_skill_name != &"Disengage" or not ctx.ship.is_detected() or _skill_stance.dueling() or _skill_fight.station.kiting_in() \
 			or SimClock.now() - _dis_since >= DISENGAGE_MIN_S:
 		return null
 	churn.dis_why = "held"
@@ -3221,7 +3223,7 @@ func _smoothed_trade(ctx: SkillContext) -> Vector2:
 
 func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var leaving: bool = _active_skill_name == &"Disengage"
-	if not ctx.ship.is_detected():
+	if not ctx.ship.is_detected() or _skill_fight.station.kiting_in():
 		return null
 	var trade := _trade_now
 	if leaving:
@@ -3357,6 +3359,8 @@ const PUSH_MAX_THREAT: float = 0.6
 ## Fight; a station that cannot be reached alive at DISENGAGE_THREAT disengages
 ## instead, toward it. With nothing to fight, Fight holds where we are (unless `stand` is false).
 func _fight(ctx: SkillContext, params: Dictionary = {}, stand: bool = true) -> NavIntent:
+	var t: Ship = priority_target()
+	params = params.merged({"need_spot": needs_spot(), "kite": kites() and t != null and dangerous(t)})
 	var intent := _run_skill(&"Fight", ctx, params)
 	if intent != null and _fighting(SkillFight.Mode.STATION) and _skill_fight.station.doomed() \
 			and _may_disengage(get_threat_score(ctx)):
@@ -3984,6 +3988,45 @@ func hide_range(enemy: Ship) -> float:
 	return seen + HIDE_MARGIN_M if tc.get_max_range() > seen + HIDE_MARGIN_M else 0.0
 
 ## How far off a push or chase can hold `enemy` to shoot it: INF while a friend spots it, else its concealment or our hydro or radar.
+## No friend spots our priority: we must see it ourselves to shoot it.
+func needs_spot() -> bool:
+	var t: Ship = priority_target()
+	return t != null and is_finite(sight_of(t))
+
+## Per-class hook: Fight kites a dangerous priority (FightStation's kite) instead of sailing onto its station.
+func kites() -> bool:
+	return false
+
+## A kiter dropping under HEAL_HOLD_HP with repair charges left holds its guns until HEAL_RESUME_HP or the
+## charges run out, while every enemy is beyond our concealment: dark, it heals unseen.
+const HEAL_HOLD_HP: float = 0.3
+const HEAL_RESUME_HP: float = 0.5
+var _healing_dark := false
+
+func heal_hold(ctx: SkillContext) -> bool:
+	var hc = _ship.health_controller
+	if not kites() or repair < 0:
+		return false
+	var rp: ConsumableItem = _ship.consumable_manager.equipped_consumables[repair]
+	var max_stack: int = (rp.p() as ConsumableItem).max_stack
+	var charges: bool = max_stack == -1 or max_stack - rp.used > 0 \
+		or _ship.consumable_manager.is_using(ConsumableItem.ConsumableType.REPAIR_PARTY)
+	var frac: float = hc.current_hp / maxf(hc.max_hp, 1.0)
+	if frac < HEAL_HOLD_HP:
+		_healing_dark = true
+	if frac >= HEAL_RESUME_HP or not charges:
+		_healing_dark = false
+	if OS.has_environment("HEAL_HOLD_OLD"): # TEMP
+		_healing_dark = frac < HEAL_HOLD_HP and _ship.consumable_manager.is_using(ConsumableItem.ConsumableType.REPAIR_PARTY)
+	if not _healing_dark:
+		return false
+	var conceal: float = NavigationMapManager.reach_conceal_radius(_ship)
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	for b in ctx.server._team_belief(_ship.team.team_id):
+		if (b.pos as Vector2).distance_to(here) <= conceal:
+			return false
+	return true
+
 func sight_of(enemy: Ship) -> float:
 	if enemy.concealment == null or enemy.concealment.params == null:
 		return INF
@@ -4523,7 +4566,7 @@ func engage_target(target: Ship):
 		_ship.artillery_controller.select_shell(aim.ammo)
 		_ammo_changed_at = SimClock.now()
 
-	if _hold_salvo(target, contact, aim.ammo):
+	if _hold_salvo(target, contact, aim.ammo) or _sync_salvo(target_lead):
 		return
 
 	# Fire only a gun that is loaded, on the lead (its _aim_point can be stale from
@@ -4539,6 +4582,30 @@ func engage_target(target: Ship):
 		gun.fire(_ship.artillery_controller.target_mod)
 		shots_by_ammo[1 if he else 0] += 1
 		return
+
+## A loaded gun waits for one that can bear and is within SALVO_SYNC_SHARE of a reload of loading, so the turrets
+## fire together; at most SALVO_SYNC_SHARE of a reload.
+const SALVO_SYNC_SHARE: float = 0.3
+var _sync_since: float = INF
+
+func _sync_salvo(target_lead: Vector3) -> bool:
+	var ac = _ship.artillery_controller
+	var reload: float = ac.get_params().reload_time
+	var ready := false
+	var lag := 0.0
+	for g in ac.guns:
+		if g.disabled:
+			continue
+		if g.reload >= 1.0:
+			ready = true
+		elif g.valid_target(target_lead):
+			lag = maxf(lag, (1.0 - g.reload) * reload)
+	var now: float = SimClock.now()
+	if not ready or lag <= 0.0 or lag > SALVO_SYNC_SHARE * reload:
+		_sync_since = INF
+		return false
+	_sync_since = minf(_sync_since, now)
+	return now - _sync_since < SALVO_SYNC_SHARE * reload
 
 ## Salvo hold: the next salvo waits up to HOLD_MAX_RELOADS for the aspect the target is turning to,
 ## when damage per second, EV(wait) / (reload + wait), is best after a wait.

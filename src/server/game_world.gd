@@ -12,7 +12,9 @@ func _ready():
 		get_node("Camera3D").queue_free()
 		add_child(LiveScoreboard.new())
 		
-		if CmdArgs.has("--spectate"):
+		var spectate: bool = CmdArgs.has("--spectate") or NetworkManager.spectating
+		NetworkManager.spectating = false
+		if spectate:
 			get_parent().request_spectate.rpc_id(1)
 			get_tree().root.add_child.call_deferred(SpectatorCamera.new())
 			return

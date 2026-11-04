@@ -108,6 +108,8 @@ var all_players_spawned: bool = false
 # so a single debugged client leaving doesn't tear everything down.
 var _debug_keep_alive: bool = OS.has_feature("editor")
 var spectators: Dictionary[int, bool] = {}
+## No human plays this match: it ends when its last spectator leaves.
+var _spectated := false
 const SPECTATOR_PARAMS_INTERVAL_MS: int = 250
 var _spectator_params_sent: Dictionary[String, PackedByteArray] = {}
 var _spectator_params_next_ms: int = 0
@@ -207,6 +209,24 @@ func _start_bot_match() -> void:
 	var seed_arg := CmdArgs.value("--seed")
 	if seed_arg != "":
 		seed(int(seed_arg))
+	_spawn_lineup()
+	print("botmatch: %d bots from %s" % [players.size(), path])
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		print("botmatch: spawn %s %s %s team %d slot %d" % [p_name, p.ship_name, Ship.ShipClass.keys()[p.ship_class],
+			p.team.team_id, team_info["team"][p_name].get("spawn_position", -1)])
+
+## The matchmaker's all-bot lineup, watched by the spectator who asked for it.
+func _start_spectated_match() -> void:
+	var file := FileAccess.open("user://team_info.json", FileAccess.READ)
+	team_info = JSON.parse_string(file.get_as_text()) if file != null else null
+	if not team_info is Dictionary or not team_info.has("team"):
+		push_error("spectated match: no lineup in user://team_info.json")
+		return
+	_spectated = true
+	_spawn_lineup()
+
+func _spawn_lineup() -> void:
 	_assign_matchmaker_spawns(team_info["team"])
 	for p_name in team_info["team"]:
 		team_info["team"][p_name]["is_bot"] = true
@@ -216,11 +236,6 @@ func _start_bot_match() -> void:
 	if team_info.has("scenario"):
 		scenario = BotScenario.new(team_info["scenario"])
 		scenario.start(self)
-	print("botmatch: %d bots from %s" % [players.size(), path])
-	for p_name in players:
-		var p: Ship = players[p_name][0]
-		print("botmatch: spawn %s %s %s team %d slot %d" % [p_name, p.ship_name, Ship.ShipClass.keys()[p.ship_class],
-			p.team.team_id, team_info["team"][p_name].get("spawn_position", -1)])
 
 ## The matchmaker's deal (classes shuffled, each class shuffled), but every
 ## class is spread evenly down the line with a random phase, so unequal class
@@ -270,6 +285,8 @@ static func _scene_ship_class(path: String) -> int:
 func request_spectate() -> void:
 	var id := multiplayer.get_remote_sender_id()
 	spectators[id] = true
+	if players.is_empty() and not bot_match:
+		_start_spectated_match()
 	for p_name in players:
 		var p: Ship = players[p_name][0]
 		spawn_players_client.rpc_id(id, players[p_name][2], p.name, p.global_position,
@@ -288,6 +305,12 @@ func _on_peer_connected(id):
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
 	if spectators.erase(id):
+		if _spectated and spectators.is_empty() and not _debug_keep_alive:
+			if not match_complete:
+				match_ended = true
+				_end_match_abandoned()
+				match_complete = true
+			_reset_server()
 		return
 	if _debug_keep_alive:
 		print("Editor/debug build: keeping match alive despite disconnect")

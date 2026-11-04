@@ -3,6 +3,8 @@ extends Control
 const SHIP_DATA: Dictionary = preload("res://src/matchmaker/matchmaker.gd").SHIP_DATA
 const MATCHMAKER_PORT := 28961
 const HALF_MAP := 17500.0
+## Control entry that watches the all-bot scenario from the spectator camera.
+const SPECTATE := "(spectate)"
 
 var data: Dictionary = {}
 var path: String = ""
@@ -228,6 +230,7 @@ func _refresh() -> void:
 	var prev_control := _control()
 	ships.clear()
 	control_opt.clear()
+	control_opt.add_item(SPECTATE)
 	for key in data.team:
 		var e: Dictionary = data.team[key]
 		var i := ships.add_item("[%s] %s  %s" % [e.get("team", "?"), key, String(e.get("ship", "")).get_file().get_basename()])
@@ -266,7 +269,8 @@ func _fill_form() -> void:
 	_syncing = false
 
 func _control() -> String:
-	return control_opt.get_item_text(control_opt.selected) if control_opt.selected >= 0 else ""
+	var c: String = control_opt.get_item_text(control_opt.selected) if control_opt.selected >= 0 else ""
+	return "" if c == SPECTATE else c
 
 func _select(key: String) -> void:
 	selected = key
@@ -382,12 +386,14 @@ func _remove() -> void:
 
 func _play() -> void:
 	var control := _control()
-	if control == "":
-		status.text = "Add a ship to control."
+	var teams := {}
+	for e in data.team.values():
+		if e is Dictionary:
+			teams[str(e.get("team", ""))] = true
+	if teams.size() < 2:
+		status.text = "Scenario needs ships on both teams."
 		return
-	if not data.team.values().any(func(e): return e is Dictionary and str(e.get("team", "")) != str(data.team[control].get("team", ""))):
-		status.text = "Scenario needs an enemy ship."
-		return
+	NetworkManager.spectating = control == ""
 	GameSettings.is_single_player = true
 	GameSettings.save_settings()
 	_udp = PacketPeerUDP.new()
@@ -395,7 +401,7 @@ func _play() -> void:
 	_udp.put_packet(JSON.stringify({
 		"request": "request_server",
 		"player_name": GameSettings.player_name,
-		"selected_ship": data.team[control].get("ship", ""),
+		"selected_ship": data.team[control].get("ship", "") if control != "" else "",
 		"single_player": true,
 		"scenario": data,
 		"control": control,

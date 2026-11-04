@@ -12,8 +12,8 @@ extends BotSkill
 ## Whichever search answers, the sailed destination eases from the last one
 ## toward it at EASE_RATE x (our top speed plus EASE_GAIN_MPS for every second it has held still), never jumping,
 ## along the navigator's route to it, so it goes round islands.
-## Params: only (run that Mode alone), prefer_cover (advancing OFFENSE cover first), and
-## each search's own.
+## Params: only (run that Mode alone), prefer_cover (advancing OFFENSE cover first), need_spot (no
+## island cover: hidden, we cannot see a priority nobody else spots), and each search's own.
 
 enum Mode { STATION, COVER, SPOT }
 
@@ -112,8 +112,11 @@ func _walk(goal: Vector2, d: float) -> void:
 		_path_i += 1
 	_shown = _shown.move_toward(goal, d)
 
+var _need_spot := false
+
 func _choose(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var only: int = int(params.get("only", -1))
+	_need_spot = only < 0 and bool(params.get("need_spot", false))
 	if only >= 0:
 		return _run(ctx, only, params)
 	var kept := _keep_mode(ctx, params)
@@ -270,6 +273,8 @@ var _handoff_at: float = -INF
 
 ## Runs one search, resetting the last on a switch so its claim and station go.
 func _run(ctx: SkillContext, m: int, params: Dictionary) -> NavIntent:
+	if m == Mode.COVER and _need_spot:
+		return null
 	if m != mode:
 		var old := current()
 		if mode != Mode.SPOT and old.has_station():

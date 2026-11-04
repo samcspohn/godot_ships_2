@@ -12,6 +12,8 @@ enum ConnectionType {
 var current_connection_type = ConnectionType.DISCONNECTED
 var network_peer: ENetMultiplayerPeer = null
 var player_controller_connected = false
+## The next match joined is watched from the spectator camera, not played.
+var spectating := false
 var _address = ""
 var _port = 0
 var server_port: int = 0
