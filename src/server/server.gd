@@ -562,6 +562,9 @@ func spawn_player(id, player_name):
 	# not in each individual bot's spawn_player call.
 	if players_spawned_bots:
 		_begin_replay()
+		if scenario == null and not is_bot and team_info.has("scenario"):
+			scenario = BotScenario.new(team_info["scenario"])
+			scenario.start(self)
 
 func _begin_replay() -> void:
 	if not _Utils.authority() or CmdArgs.has("--no-replay"):

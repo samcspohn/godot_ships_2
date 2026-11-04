@@ -653,6 +653,10 @@ func process_player_input() -> void:
 	#print(cam.aim_position)
 	# _Debug.sphere(cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
+@rpc("authority", "call_remote", "reliable")
+func set_throttle(level: int) -> void:
+	throttle_level = level
+
 @rpc("any_peer")
 func kill():
 	ship.health_controller.apply_damage(10000000,10000000, ship.citadel, false, HPManager.DAMAGE_TYPE.FIRE, HPManager.DAMAGE_LEVEL.HEAVY, ship, 1.0)

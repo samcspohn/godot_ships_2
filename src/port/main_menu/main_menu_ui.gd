@@ -30,6 +30,10 @@ func _ready():
 	match_replays_btn.text = "Match Replays"
 	match_replays_btn.pressed.connect(_on_match_replays_pressed)
 	_topbar_hbox.add_child(match_replays_btn)
+	var scenario_btn = Button.new()
+	scenario_btn.text = "Scenarios"
+	scenario_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://src/port/scenario_editor/scenario_editor.tscn"))
+	_topbar_hbox.add_child(scenario_btn)
 	original_modulate = connect_button.modulate
 
 	# Hook up network signals

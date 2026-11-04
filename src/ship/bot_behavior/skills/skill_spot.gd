@@ -17,6 +17,8 @@ const HURT_MARGIN := 0.25
 const LOOK_M := 1000.0
 ## A hider is looked for from this far inside the ring it is found in: on the ring, a grid cell's width decides it.
 const FIND_INSIDE_M := 500.0
+## Kept this far outside an enemy's radar or hydro, charged or not; its secondaries are open-water gun stations' concern.
+const SENSOR_MARGIN_M := 500.0
 ## team_id -> enemy instance id -> [spotter instance id, ms].
 static var _spot_claims: Dictionary = {}
 var stealth_corridor: bool = true
@@ -106,10 +108,12 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary], refs: A
 		var e: Ship = b.ship
 		out.pos.append(b.pos)
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
-		# Not out-concealing it, we are seen wherever we spot it from: only its radar, hydro and secondaries keep us off.
+		# Not out-concealing it, we are seen wherever we spot it from: only its radar and hydro keep us off.
 		var sight: float = conceal if cp == null or conceal <= cp.radius else 0.0
-		# A spotter is no match for a battleship's secondaries: kept out of them as out of its sight.
-		out.det.append(maxf(maxf(maxf(sight, float(b.force_spot)) * margin, BotBehavior.secondary_reach(e)) - float(b.spread), 0.0))
+		var sensor_r: float = maxf(float(b.force_spot), ctx.server._latent_force_spot_reach(e))
+		if sensor_r > 0.0:
+			sensor_r += SENSOR_MARGIN_M
+		out.det.append(maxf(maxf(sight, sensor_r) * margin - float(b.spread), 0.0))
 		# Radar and hydro see through islands.
 		out.always.append(maxf(float(b.force_spot) * margin - float(b.spread), 0.0) if float(b.force_spot) > 0.0 else 0.0)
 		var sr: float = maxf(maxf(cp.radius if cp != null else 0.0, sensor) - FIND_INSIDE_M, 0.0)

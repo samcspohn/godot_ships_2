@@ -50,6 +50,8 @@ func start(server: GameServer) -> void:
 			mc.engine_power = share
 		if e.has("throttle"):
 			ship.movement_controller.throttle_level = int(e.throttle)
+		if ship.control is PlayerController:
+			ship.control.set_throttle.rpc_id(ship.peer_id, ship.movement_controller.throttle_level)
 		if e.has("hp"):
 			var hc = ship.health_controller
 			hc._current_hp = minf(float(e.hp), hc.max_hp) / hc.params.p().mult

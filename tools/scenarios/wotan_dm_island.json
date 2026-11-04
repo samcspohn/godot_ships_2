@@ -1,7 +1,7 @@
 {
  "scenario": {
-  "duration_s": 600,
-  "elapsed_s": 600,
+  "duration_s": 600.0,
+  "elapsed_s": 600.0,
   "trace": [
    "Wotan",
    "Des Moines"
@@ -15,14 +15,14 @@
    "player_id": "wotan",
    "ship": "res://assets/Ships/H44/H44.2.tscn",
    "is_bot": true,
-   "aptitude": 1,
-   "spawn_position": 0,
+   "aptitude": 1.0,
+   "spawn_position": 0.0,
    "pos": [
-    5500,
-    300
+    6370.0,
+    -170.0
    ],
-   "heading_deg": 180,
-   "speed": 28,
+   "heading_deg": 180.0,
+   "speed": 28.0,
    "identified": true
   },
   "spot0": {
@@ -30,18 +30,14 @@
    "player_id": "spot0",
    "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
    "is_bot": true,
-   "aptitude": 1,
-   "spawn_position": 1,
+   "aptitude": 1.0,
+   "spawn_position": 1.0,
    "pos": [
-    5000,
-    -7000
+    5000.0,
+    -7000.0
    ],
-   "heading_deg": 90,
-   "speed": 0,
-   "fixed": {
-    "throttle": 0,
-    "rudder": 0
-   },
+   "heading_deg": 90.0,
+   "speed": 0.0,
    "identified": true
   },
   "desmoines": {
@@ -49,25 +45,25 @@
    "player_id": "desmoines",
    "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
    "is_bot": true,
-   "aptitude": 1,
-   "spawn_position": 0,
+   "aptitude": 1.0,
+   "spawn_position": 0.0,
    "pos": [
-    900,
-    -2500
+    900.0,
+    -2500.0
    ],
-   "heading_deg": 175,
-   "speed": 10,
+   "heading_deg": 175.0,
+   "speed": 10.0,
    "identified": true,
    "consumables": [
     {
-     "slot": 2,
-     "used": 99,
-     "last_s": 999
+     "slot": 2.0,
+     "used": 99.0,
+     "last_s": 999.0
     },
     {
-     "slot": 3,
-     "used": 99,
-     "last_s": 999
+     "slot": 3.0,
+     "used": 99.0,
+     "last_s": 999.0
     }
    ]
   },
@@ -76,18 +72,14 @@
    "player_id": "spot1",
    "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
    "is_bot": true,
-   "aptitude": 1,
-   "spawn_position": 1,
+   "aptitude": 1.0,
+   "spawn_position": 1.0,
    "pos": [
-    12500,
-    1000
+    12500.0,
+    1000.0
    ],
-   "heading_deg": 0,
-   "speed": 0,
-   "fixed": {
-    "throttle": 0,
-    "rudder": 0
-   },
+   "heading_deg": 0.0,
+   "speed": 0.0,
    "identified": true
   }
  }

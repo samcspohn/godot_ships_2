@@ -81,7 +81,9 @@ func _process(_delta: float) -> void:
 				var client_data = {
 					"ship": packet_result['selected_ship'],
 					"single_player": packet_result.get('single_player', false),
-					"player_name": packet_result.get('player_name', 'Player')
+					"player_name": packet_result.get('player_name', 'Player'),
+					"scenario": packet_result.get('scenario', {}),
+					"control": str(packet_result.get('control', ''))
 				}
 				connecting_clients[info] = client_data
 			elif packet_result["request"] == "leave_queue":
@@ -117,7 +119,9 @@ func _process(_delta: float) -> void:
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				if true:
+				if not client_data["scenario"].is_empty():
+					team = scenario_team(client_data["scenario"], client_data["control"], client_data["player_name"])
+				elif true:
 					team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
 				elif false:
 					# --- TEMPORARY: player ship on team 0, H44 bot on team 1 ---
@@ -170,6 +174,8 @@ func _process(_delta: float) -> void:
 				var team_info = {
 					"team": team
 				}
+				if client_data["scenario"].has("scenario"):
+					team_info["scenario"] = client_data["scenario"]["scenario"]
 
 				print("Single player team info created: ", team_info)
 
@@ -261,6 +267,21 @@ func _process(_delta: float) -> void:
 				for i in range(min_players):
 					var client = multiplayer_clients[i]
 					connecting_clients.erase(client)
+
+## The scenario roster with `control` handed to the player under their name.
+static func scenario_team(scenario: Dictionary, control: String, player_name: String) -> Dictionary:
+	var team: Dictionary = {}
+	for key in scenario["team"]:
+		var e: Dictionary = scenario["team"][key].duplicate(true)
+		if key == control:
+			e["is_bot"] = false
+			e["player_id"] = player_name
+			e.erase("fixed")
+			team[player_name] = e
+		else:
+			e["is_bot"] = true
+			team[key if key != player_name else key + "_bot"] = e
+	return team
 
 # Initialize the list of available ports
 func initialize_available_ports():

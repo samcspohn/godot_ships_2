@@ -168,7 +168,7 @@ max_angle = 6.021385919380437
 
 [sub_resource type="Resource" id="Resource_86xt5"]
 script = ExtResource("22_pjysk")
-min_angle = 3.665191429188092
+min_angle = 3.605713457256739
 max_angle = 6.021385919380437
 
 [sub_resource type="Resource" id="Resource_iv11n"]
@@ -176,10 +176,10 @@ script = ExtResource("22_pjysk")
 min_angle = 0.26179938779914913
 max_angle = 2.809894092904124
 
-[sub_resource type="Resource" id="Resource_eq5gm"]
+[sub_resource type="Resource" id="Resource_n0aqy"]
 script = ExtResource("22_pjysk")
 min_angle = 0.26179938779914913
-max_angle = 2.617993877991494
+max_angle = 2.6774718499228474
 
 [sub_resource type="Resource" id="Resource_4ql0v"]
 script = ExtResource("22_pjysk")
@@ -325,10 +325,13 @@ slew_max_angle = 2.8660305652799583
 slew_max_angle = 2.809894092904124
 fire_arcs = Array[ExtResource("22_pjysk")]([SubResource("Resource_iv11n")])
 
-[node name="GER_150mm_2b_gerat60_008" parent="TurretMount_GER_150mm_2b_gerat60_008" parent_id_path=PackedInt32Array(2000943539) index="0" unique_id=2057650557 instance=ExtResource("5_wrhyv")]
+[node name="TurretMount_GER_150mm_2b_gerat60_008" parent="." index="19" unique_id=2000943539]
+transform = Transform3D(-1, 0, -3.8941437e-07, 0, 1, 0, 3.8941437e-07, 0, -1, -12.475, 12.056, 29.081)
+
+[node name="GER_150mm_2b_gerat60_008" parent="TurretMount_GER_150mm_2b_gerat60_008" index="0" unique_id=2057650557 instance=ExtResource("5_wrhyv")]
 slew_min_angle = 0.26179938779914913
 slew_max_angle = 3.1415923
-fire_arcs = Array[ExtResource("22_pjysk")]([SubResource("Resource_eq5gm")])
+fire_arcs = Array[ExtResource("22_pjysk")]([SubResource("Resource_n0aqy")])
 
 [node name="GER_150mm_2b_gerat60_009" parent="TurretMount_GER_150mm_2b_gerat60_009" parent_id_path=PackedInt32Array(272764772) index="0" unique_id=176158157 instance=ExtResource("5_wrhyv")]
 slew_min_angle = 0.2569433629839395
