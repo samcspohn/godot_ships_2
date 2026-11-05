@@ -40,6 +40,12 @@ prepare() {
 	mkdir -p "$wt/bin"
 	cp "$target/release/libships_core_rs.so" "$wt/bin/libships_core_rs.linux.x86_64.so"
 	"$GODOT" --headless --path "$wt" --import > "$OUT/import_$name.log" 2>&1 || true
+	# Point tables for this arm's code and the bots' loadouts, so its matches load them instead of each building.
+	if grep -q "point-tables-only" "$wt/src/ship/bot_behavior/bot_gunnery.gd" 2>/dev/null; then
+		(cd "$wt" && SHIPS_POINT_THREADS=32 timeout 900 "$GODOT" --headless --path . --fixed-fps 12 --server \
+			--port $([ "$name" = a ] && echo 39801 || echo 39802) --botmatch "$LINEUP" --seed 1 --no-replay --gun-matrix-cache --point-table-cache \
+			--point-tables-only --no-live-mods > "$OUT/point_tables_$name.log" 2>&1) || true
+	fi
 	echo "$name $commit $(git log -1 --format=%s "$commit")" >> "$OUT/arms.txt"
 }
 
@@ -52,16 +58,22 @@ prepare b "$CB" & pb=$!
 wait $pa && wait $pb
 
 # Each match's wall, user and system seconds land beside its metrics as <metrics>.time.
-cat > "$OUT/godot.sh" <<EOF
+# ENV_A / ENV_B ("K=V K2=V2") are exported for that arm only, so one snapshot can A/B a runtime flag.
+for arm in a b; do
+	envs=ENV_${arm^^}
+	cat > "$OUT/godot_$arm.sh" <<EOF
 #!/usr/bin/env bash
 m=/dev/null; prev=
 for a in "\$@"; do [ "\$prev" = --metrics ] && m="\$a.time"; prev=\$a; done
+export AB_ARM=$arm ${!envs:-}
 exec /usr/bin/time -f "%e %U %S" -o "\$m" taskset -c $CPUS timeout -k 30 $TIMEOUT "$GODOT" "\$@"
 EOF
-chmod +x "$OUT/godot.sh"
+	chmod +x "$OUT/godot_$arm.sh"
+	echo "$arm env: ${!envs:-}" >> "$OUT/arms.txt"
+done
 # Both arms through this tree's runner: an old arm's own would run its own tick rate and flags.
-(cd "$SIM_ROOT/worktrees/wt_ab_a" && "$SRC/tools/botmatch/run.sh" "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/a" 31000) > "$OUT/a.runlog" 2>&1 & ra=$!
-(cd "$SIM_ROOT/worktrees/wt_ab_b" && "$SRC/tools/botmatch/run.sh" "$OUT/godot.sh" "$LINEUP" "$N" "$N" "$OUT/b" 32000) > "$OUT/b.runlog" 2>&1 & rb=$!
+(cd "$SIM_ROOT/worktrees/wt_ab_a" && "$SRC/tools/botmatch/run.sh" "$OUT/godot_a.sh" "$LINEUP" "$N" "$N" "$OUT/a" 31000) > "$OUT/a.runlog" 2>&1 & ra=$!
+(cd "$SIM_ROOT/worktrees/wt_ab_b" && "$SRC/tools/botmatch/run.sh" "$OUT/godot_b.sh" "$LINEUP" "$N" "$N" "$OUT/b" 32000) > "$OUT/b.runlog" 2>&1 & rb=$!
 wait $ra || true
 wait $rb || true
 python3 tools/botmatch/compare.py "a=$OUT/a" "b=$OUT/b" | tee "$OUT/compare.txt"

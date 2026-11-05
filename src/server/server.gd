@@ -191,6 +191,8 @@ func _warm_gunnery() -> void:
 	for t in teams:
 		all_ships.append_array(t.ships)
 	BotBehavior.warm_dps_curves(all_ships)
+	if BotGunnery.point_tables_on():
+		BotGunnery.start_runtime_tables(all_ships)
 	_sweep_reach_fields()
 	print("Warmed %d ships' gunnery and reach tables in %d ms" % [ships.size(), Time.get_ticks_msec() - t0])
 
@@ -1479,6 +1481,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"manoeuvres": GunneryCalibration.probe_summary(),
 		"vetoes": GunneryCalibration.veto_summary(),
 		"aims": GunneryCalibration.aim_summary(),
+		"point_tables": BotGunnery.point_table_summary(),
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
@@ -1617,6 +1620,8 @@ func _physics_process(_delta: float) -> void:
 			matchmaker_heartbeat_timer = MATCHMAKER_HEARTBEAT_INTERVAL
 
 	current_time = SimClock.now()
+	if Engine.get_physics_frames() % 12 == 0 and BotGunnery.point_tables_on():
+		BotGunnery.poll_runtime_tables()
 	for t in teams:
 		t.ships = _get_team(t.id)
 

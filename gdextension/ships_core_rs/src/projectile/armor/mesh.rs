@@ -53,6 +53,149 @@ struct BvhNode {
 
 const LEAF_TRIS: usize = 4;
 const TIE_EPS: f64 = 1e-9;
+/// Outward padding of the f32 boxes, metres: far above f32 rounding at hull scale, so a box can only be visited
+/// when the exact test would skip it, never the other way round.
+const BOX_PAD: f64 = 1e-3;
+const EMPTY: u32 = u32::MAX;
+
+/// Four child boxes side by side (one SIMD lane each), f32 and padded outward.
+#[derive(Clone, Copy, Debug)]
+struct Bvh4Node {
+    lo: [[f32; 4]; 3],
+    hi: [[f32; 4]; 3],
+    /// Inner lane: child node index, count 0. Leaf lane: first index into `order` and its count. EMPTY: unused.
+    child: [u32; 4],
+    count: [u32; 4],
+}
+
+/// One binary leaf's triangles lane by lane (up to LEAF_TRIS); unused lanes are degenerate and never hit.
+#[derive(Clone, Copy, Debug, Default)]
+struct Leaf4 {
+    v0: [[f64; 4]; 3],
+    e1: [[f64; 4]; 3],
+    e2: [[f64; 4]; 3],
+    face: [u32; 4],
+    n: u32,
+}
+
+/// Moller-Trumbore on every lane, operation for operation as hit_pre (no fused multiply-adds), so each lane's
+/// `t` is bit-identical to the scalar test; NaN where a lane misses.
+#[inline(always)]
+fn leaf_hits_body(l: &Leaf4, from: V3, dir: V3) -> [f64; 4] {
+    let mut out = [f64::NAN; 4];
+    let (fx, fy, fz) = (from.x, from.y, from.z);
+    let (dx, dy, dz) = (dir.x, dir.y, dir.z);
+    for i in 0..4 {
+        let (e1x, e1y, e1z) = (l.e1[0][i], l.e1[1][i], l.e1[2][i]);
+        let (e2x, e2y, e2z) = (l.e2[0][i], l.e2[1][i], l.e2[2][i]);
+        let px = dy * e2z - dz * e2y;
+        let py = dz * e2x - dx * e2z;
+        let pz = dx * e2y - dy * e2x;
+        let det = e1x * px + e1y * py + e1z * pz;
+        let inv_det = 1.0 / det;
+        let sx = fx - l.v0[0][i];
+        let sy = fy - l.v0[1][i];
+        let sz = fz - l.v0[2][i];
+        let u = (sx * px + sy * py + sz * pz) * inv_det;
+        let qx = sy * e1z - sz * e1y;
+        let qy = sz * e1x - sx * e1z;
+        let qz = sx * e1y - sy * e1x;
+        let v = (dx * qx + dy * qy + dz * qz) * inv_det;
+        let t = (e2x * qx + e2y * qy + e2z * qz) * inv_det;
+        let ok = det.abs() >= 1e-14 && (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0 && t > 0.0 && t <= 1.0;
+        out[i] = if ok { t } else { f64::NAN };
+    }
+    out
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn leaf_hits_avx2(l: &Leaf4, from: V3, dir: V3) -> [f64; 4] {
+    leaf_hits_body(l, from, dir)
+}
+
+#[inline(always)]
+fn leaf_hits(l: &Leaf4, from: V3, dir: V3) -> [f64; 4] {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU supports AVX2, checked just above.
+            return unsafe { leaf_hits_avx2(l, from, dir) };
+        }
+    }
+    leaf_hits_body(l, from, dir)
+}
+
+/// One part-space segment as the 4-wide box test wants it.
+struct Ray4 {
+    o: [f32; 3],
+    inv: [f32; 3],
+}
+
+impl Ray4 {
+    fn new(from: V3, dir: V3) -> Self {
+        Ray4 { o: [from.x as f32, from.y as f32, from.z as f32],
+            inv: [(1.0 / dir.x) as f32, (1.0 / dir.y) as f32, (1.0 / dir.z) as f32] }
+    }
+
+    /// Entry fraction per lane, +inf where the segment misses the box before `tmax`. NaN slabs (a zero
+    /// direction component exactly on a face) are ignored, which the padding makes immaterial.
+    #[inline(always)]
+    fn entries(&self, n: &Bvh4Node, tmax: f32) -> [f32; 4] {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: SSE is part of the x86_64 baseline; loads are unaligned-safe.
+        unsafe {
+            use std::arch::x86_64::*;
+            let mut t0 = _mm_setzero_ps();
+            let mut t1 = _mm_set1_ps(tmax);
+            for a in 0..3 {
+                let o = _mm_set1_ps(self.o[a]);
+                let inv = _mm_set1_ps(self.inv[a]);
+                let x = _mm_mul_ps(_mm_sub_ps(_mm_loadu_ps(n.lo[a].as_ptr()), o), inv);
+                let y = _mm_mul_ps(_mm_sub_ps(_mm_loadu_ps(n.hi[a].as_ptr()), o), inv);
+                // min/max return their second operand when either is NaN, so a NaN slab leaves t0/t1 alone.
+                t0 = _mm_max_ps(_mm_min_ps(x, y), t0);
+                t1 = _mm_min_ps(_mm_max_ps(x, y), t1);
+            }
+            let hit = _mm_cmple_ps(t0, t1);
+            let r = _mm_or_ps(_mm_and_ps(hit, t0), _mm_andnot_ps(hit, _mm_set1_ps(f32::INFINITY)));
+            let mut out = [0.0f32; 4];
+            _mm_storeu_ps(out.as_mut_ptr(), r);
+            for l in 0..4 {
+                if n.child[l] == EMPTY {
+                    out[l] = f32::INFINITY;
+                }
+            }
+            out
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let mut t0 = [0.0f32; 4];
+            let mut t1 = [tmax; 4];
+            for a in 0..3 {
+                for l in 0..4 {
+                    let x = (n.lo[a][l] - self.o[a]) * self.inv[a];
+                    let y = (n.hi[a][l] - self.o[a]) * self.inv[a];
+                    t0[l] = t0[l].max(x.min(y));
+                    t1[l] = t1[l].min(x.max(y));
+                }
+            }
+            let mut out = [f32::INFINITY; 4];
+            for l in 0..4 {
+                if t0[l] <= t1[l] && n.child[l] != EMPTY {
+                    out[l] = t0[l];
+                }
+            }
+            out
+        }
+    }
+}
+
+/// `t` widened so f32 rounding of the box entries cannot prune a node that holds a hit at `t`.
+#[inline(always)]
+fn slack(t: f64) -> f32 {
+    (t * (1.0 + 1e-5) + 1e-6) as f32
+}
 
 /// One armour part: triangles in part space, a bounding-volume tree over them,
 /// and the part's placement in ship space.
@@ -61,6 +204,8 @@ pub struct PartMesh {
     pub tris: Vec<Tri>,
     nodes: Vec<BvhNode>,
     order: Vec<u32>,
+    nodes4: Vec<Bvh4Node>,
+    leaves: Vec<Leaf4>,
     pub armor_type: i32,
     pub dynamic: bool,
     pub xform: Transform3D,
@@ -88,7 +233,12 @@ impl PartMesh {
         if !tris.is_empty() {
             Self::build(&tris, &mut order, &mut nodes, 0, tris.len());
         }
-        let mut m = Self { tris, nodes, order, armor_type, dynamic, xform, inv: xform.affine_inverse(),
+        let mut nodes4 = Vec::new();
+        let mut leaves = Vec::new();
+        if !nodes.is_empty() {
+            Self::collapse(&nodes, &tris, &order, &mut nodes4, &mut leaves, 0);
+        }
+        let mut m = Self { tris, nodes, order, nodes4, leaves, armor_type, dynamic, xform, inv: xform.affine_inverse(),
             ship_min: V3::default(), ship_max: V3::default() };
         m.update_ship_bounds();
         m
@@ -161,7 +311,55 @@ impl PartMesh {
         idx
     }
 
+    /// The 4-wide node for binary node `bi`: its children, opened two levels down where they are inner nodes.
+    fn collapse(bin: &[BvhNode], tris: &[Tri], order: &[u32], out: &mut Vec<Bvh4Node>, leaves: &mut Vec<Leaf4>, bi: usize) -> u32 {
+        let idx = out.len();
+        out.push(Bvh4Node { lo: [[0.0; 4]; 3], hi: [[0.0; 4]; 3], child: [EMPTY; 4], count: [0; 4] });
+        let n = &bin[bi];
+        let mut kids: Vec<usize> = if n.count > 0 { vec![bi] } else { vec![n.first as usize, n.right as usize] };
+        while kids.len() < 4 {
+            let Some(pos) = kids.iter().position(|&k| bin[k].count == 0) else { break };
+            let k = kids.remove(pos);
+            kids.insert(pos, bin[k].right as usize);
+            kids.insert(pos, bin[k].first as usize);
+        }
+        for (l, &k) in kids.iter().enumerate() {
+            let b = &bin[k];
+            let lo = [b.min.x - BOX_PAD, b.min.y - BOX_PAD, b.min.z - BOX_PAD];
+            let hi = [b.max.x + BOX_PAD, b.max.y + BOX_PAD, b.max.z + BOX_PAD];
+            for a in 0..3 {
+                out[idx].lo[a][l] = lo[a] as f32;
+                out[idx].hi[a][l] = hi[a] as f32;
+            }
+            if b.count > 0 {
+                let mut lf = Leaf4 { n: b.count, ..Default::default() };
+                for (i, &f) in order[b.first as usize..(b.first + b.count) as usize].iter().enumerate() {
+                    let t = &tris[f as usize];
+                    let (e1, e2) = (t.v1.sub(t.v0), t.v2.sub(t.v0));
+                    for (a, (v, (x, y))) in [(t.v0.x, (e1.x, e2.x)), (t.v0.y, (e1.y, e2.y)), (t.v0.z, (e1.z, e2.z))].into_iter().enumerate() {
+                        lf.v0[a][i] = v;
+                        lf.e1[a][i] = x;
+                        lf.e2[a][i] = y;
+                    }
+                    lf.face[i] = f;
+                }
+                out[idx].child[l] = leaves.len() as u32;
+                out[idx].count[l] = b.count;
+                leaves.push(lf);
+            } else {
+                let c = Self::collapse(bin, tris, order, out, leaves, k);
+                out[idx].child[l] = c;
+            }
+        }
+        idx as u32
+    }
+
     fn segment_hits_box(from: V3, inv_dir: V3, tmax: f64, min: V3, max: V3) -> bool {
+        Self::box_entry(from, inv_dir, tmax, min, max).is_some()
+    }
+
+    /// Where the segment enters the box, as a fraction, if it does before `tmax`.
+    fn box_entry(from: V3, inv_dir: V3, tmax: f64, min: V3, max: V3) -> Option<f64> {
         let mut t0 = 0.0f64;
         let mut t1 = tmax;
         for axis in 0..3 {
@@ -171,7 +369,7 @@ impl PartMesh {
             let mut b = (max.axis(axis) - o) * inv;
             if inv.is_infinite() {
                 if o < min.axis(axis) || o > max.axis(axis) {
-                    return false;
+                    return None;
                 }
                 continue;
             }
@@ -181,10 +379,10 @@ impl PartMesh {
             t0 = t0.max(a);
             t1 = t1.min(b);
             if t0 > t1 {
-                return false;
+                return None;
             }
         }
-        true
+        Some(t0)
     }
 
     /// Two-sided Moller-Trumbore; `t` is the fraction of `dir`.
@@ -211,41 +409,55 @@ impl PartMesh {
         if t > 0.0 && t <= 1.0 { Some(t) } else { None }
     }
 
-    /// Closest hit along the part-space segment, as (t, face).
+    /// Closest hit along the part-space segment, as (t, face): lowest t, ties to the lowest face. 4-wide nodes,
+    /// nearest child first, nodes entered beyond the best hit skipped.
     fn raycast_local(&self, from: V3, to: V3) -> Option<(f64, usize)> {
-        if self.nodes.is_empty() {
+        if self.nodes4.is_empty() {
             return None;
         }
         let dir = to.sub(from);
-        let inv_dir = V3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
+        let ray = Ray4::new(from, dir);
         let mut best: Option<(f64, usize)> = None;
-        let mut stack = [0u32; 64];
+        let mut stack = [(0u32, 0.0f32); 96];
         let mut sp: usize = 1;
         while sp > 0 {
             sp -= 1;
-            let ni = stack[sp];
-            let n = &self.nodes[ni as usize];
-            let tmax = best.map(|b| b.0).unwrap_or(1.0);
-            if !Self::segment_hits_box(from, inv_dir, tmax, n.min, n.max) {
+            let (ni, entry) = stack[sp];
+            let tmax = best.map_or(1.0f32 + 1e-6, |b| slack(b.0));
+            if entry > tmax {
                 continue;
             }
-            if n.count > 0 {
-                for k in n.first..n.first + n.count {
-                    let face = self.order[k as usize] as usize;
-                    if let Some(t) = Self::hit_tri(&self.tris[face], from, dir) {
-                        let better = match best {
-                            None => true,
-                            Some((bt, bf)) => t < bt || (t == bt && face < bf),
-                        };
-                        if better {
-                            best = Some((t, face));
-                        }
+            let n = &self.nodes4[ni as usize];
+            let e = ray.entries(n, tmax);
+            let mut order: [usize; 4] = [0, 1, 2, 3];
+            order.sort_unstable_by(|&a, &b| e[b].partial_cmp(&e[a]).unwrap_or(std::cmp::Ordering::Equal));
+            // Leaves nearest first so the best hit tightens early; inner nodes pushed farthest first.
+            for &l in order.iter().rev() {
+                if !e[l].is_finite() || n.count[l] == 0 {
+                    continue;
+                }
+                let lf = &self.leaves[n.child[l] as usize];
+                let ts = leaf_hits(lf, from, dir);
+                for i in 0..lf.n as usize {
+                    let t = ts[i];
+                    if t.is_nan() {
+                        continue;
+                    }
+                    let face = lf.face[i] as usize;
+                    let better = match best {
+                        None => true,
+                        Some((bt, bf)) => t < bt || (t == bt && face < bf),
+                    };
+                    if better {
+                        best = Some((t, face));
                     }
                 }
-            } else if sp + 2 <= stack.len() {
-                stack[sp] = n.right;
-                stack[sp + 1] = n.first;
-                sp += 2;
+            }
+            for &l in &order {
+                if e[l].is_finite() && n.count[l] == 0 && sp < stack.len() {
+                    stack[sp] = (n.child[l], e[l]);
+                    sp += 1;
+                }
             }
         }
         best
@@ -287,7 +499,34 @@ impl PartMesh {
     }
 
     fn any_hit_local(&self, from: V3, to: V3) -> bool {
-        self.raycast_local(from, to).is_some()
+        if self.nodes4.is_empty() {
+            return false;
+        }
+        let dir = to.sub(from);
+        let ray = Ray4::new(from, dir);
+        let mut stack = [0u32; 96];
+        let mut sp: usize = 1;
+        while sp > 0 {
+            sp -= 1;
+            let n = &self.nodes4[stack[sp] as usize];
+            let e = ray.entries(n, 1.0 + 1e-6);
+            for l in 0..4 {
+                if !e[l].is_finite() {
+                    continue;
+                }
+                if n.count[l] > 0 {
+                    let lf = &self.leaves[n.child[l] as usize];
+                    let ts = leaf_hits(lf, from, dir);
+                    if ts[..lf.n as usize].iter().any(|t| !t.is_nan()) {
+                        return true;
+                    }
+                } else if sp < stack.len() {
+                    stack[sp] = n.child[l];
+                    sp += 1;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -315,34 +554,40 @@ impl ArmorMesh {
             let lf = self.to_part(pi, from);
             let lt = self.to_part(pi, to);
             let Some((t, face)) = part.raycast_local(lf, lt) else { continue };
-            // Coincident faces of adjacent parts: the citadel boundary wins,
-            // then the thicker plate, then registration order.
-            let better = match &best {
-                None => true,
-                Some(b) => {
-                    if (t - b.t).abs() > TIE_EPS {
-                        t < b.t
-                    } else {
-                        let (ca, cb) = (part.armor_type == 1, self.parts[b.part].armor_type == 1);
-                        let (ta, tb) = (part.tris[face].thickness, self.parts[b.part].tris[b.face].thickness);
-                        ca && !cb || (ca == cb && (ta > tb || (ta == tb && pi < b.part)))
-                    }
-                }
-            };
-            if !better {
-                continue;
-            }
-            let tri = &part.tris[face];
-            let ldir = lt.sub(lf);
-            let mut n = tri.v1.sub(tri.v0).cross(tri.v2.sub(tri.v0)).normalized();
-            if n.dot(ldir) > 0.0 {
-                n = n.scale(-1.0);
-            }
-            let pos = from.add(to.sub(from).scale(t));
-            let normal = V3::from_godot(part.xform.basis * n.to_godot()).normalized();
-            best = Some(Hit { part: pi, face, t, pos, normal });
+            self.merge(&mut best, pi, t, face, from, to, lf, lt);
         }
         best
+    }
+
+    /// Keeps the nearer of `best` and part `pi`'s hit. Coincident faces of adjacent parts: the citadel
+    /// boundary wins, then the thicker plate, then registration order.
+    #[allow(clippy::too_many_arguments)]
+    fn merge(&self, best: &mut Option<Hit>, pi: usize, t: f64, face: usize, from: V3, to: V3, lf: V3, lt: V3) {
+        let part = &self.parts[pi];
+        let better = match &*best {
+            None => true,
+            Some(b) => {
+                if (t - b.t).abs() > TIE_EPS {
+                    t < b.t
+                } else {
+                    let (ca, cb) = (part.armor_type == 1, self.parts[b.part].armor_type == 1);
+                    let (ta, tb) = (part.tris[face].thickness, self.parts[b.part].tris[b.face].thickness);
+                    ca && !cb || (ca == cb && (ta > tb || (ta == tb && pi < b.part)))
+                }
+            }
+        };
+        if !better {
+            return;
+        }
+        let tri = &part.tris[face];
+        let ldir = lt.sub(lf);
+        let mut n = tri.v1.sub(tri.v0).cross(tri.v2.sub(tri.v0)).normalized();
+        if n.dot(ldir) > 0.0 {
+            n = n.scale(-1.0);
+        }
+        let pos = from.add(to.sub(from).scale(t));
+        let normal = V3::from_godot(part.xform.basis * n.to_godot()).normalized();
+        *best = Some(Hit { part: pi, face, t, pos, normal });
     }
 
     pub fn raycast(&self, from: V3, to: V3) -> Option<Hit> {
@@ -375,38 +620,28 @@ impl ArmorMesh {
             V3::new(0.0, 1.0, 0.0), V3::new(0.0, -1.0, 0.0),
             V3::new(0.0, 0.0, -1.0), V3::new(0.0, 0.0, 1.0),
         ];
-        let np = self.parts.len();
-        let mut count = vec![0u8; np];
-        let mut discovered: Vec<usize> = Vec::new();
-        for d in DIRS {
-            let from = p.add(d.scale(400.0));
-            let mut side: Vec<(f64, usize)> = Vec::new();
-            for (pi, part) in self.parts.iter().enumerate() {
-                if !part.segment_reaches(from, p) {
-                    continue;
-                }
-                let lf = self.to_part(pi, from);
-                let lt = self.to_part(pi, p);
-                if let Some((t, _)) = part.raycast_local(lf, lt) {
-                    side.push((t, pi));
-                }
+        // A part hit from all six sides spans p on every axis, so only parts whose
+        // bounds every side's segment reaches can count. Every one of those is hit from +x, so the first
+        // discovered is the nearest from +x.
+        let lp_of = |pi: usize| self.to_part(pi, p);
+        let mut inside: Vec<(f64, usize)> = Vec::new();
+        for (pi, part) in self.parts.iter().enumerate() {
+            if part.nodes.is_empty() || !DIRS.iter().all(|d| part.segment_reaches(p.add(d.scale(400.0)), p)) {
+                continue;
             }
-            if side.is_empty() {
-                return None;
+            let lp = lp_of(pi);
+            if !DIRS[1..].iter().all(|d| part.any_hit_local(self.to_part(pi, p.add(d.scale(400.0))), lp)) {
+                continue;
             }
-            side.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
-            for (_, pi) in side {
-                count[pi] += 1;
-                if !discovered.contains(&pi) {
-                    discovered.push(pi);
-                }
+            if let Some((t, _)) = part.raycast_local(self.to_part(pi, p.add(DIRS[0].scale(400.0))), lp) {
+                inside.push((t, pi));
             }
         }
-        let inside: Vec<usize> = discovered.into_iter().filter(|&pi| count[pi] == 6).collect();
-        if let Some(&c) = inside.iter().find(|&&pi| self.is_citadel(pi)) {
+        inside.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
+        if let Some(&(_, c)) = inside.iter().find(|&&(_, pi)| self.is_citadel(pi)) {
             return Some(c);
         }
-        inside.first().copied()
+        inside.first().map(|&(_, pi)| pi)
     }
 
     /// Whether any part is crossed by the segment; used by nothing yet but the

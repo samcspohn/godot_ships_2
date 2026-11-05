@@ -489,7 +489,7 @@ static func _make_separator_stylebox() -> StyleBoxLine:
 
 func _make_return_button() -> Button:
 	var button := Button.new()
-	button.text = "Quit" if _spectator else "Return to Port"
+	button.text = "Quit" if CmdArgs.has("--spectate") else "Return to Port"
 	button.custom_minimum_size = Vector2(200, 50)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.add_theme_font_size_override("font_size", 20)
@@ -521,7 +521,7 @@ func _make_return_button() -> Button:
 
 
 func _on_return_to_port_pressed() -> void:
-	if _spectator:
+	if CmdArgs.has("--spectate"):
 		get_tree().quit()
 		return
 	_Utils.match_result = {}

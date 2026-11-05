@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use super::util::armor_rays_for;
 use super::ProjectileManager;
 use crate::ballistics::drag_v2::ProjectilePhysicsWithDragV2;
-use crate::projectile::armor::mesh::{ArmorMesh, V3};
+use crate::projectile::armor::mesh::{ArmorMesh, Hit, V3};
 use crate::projectile::armor::walk::{walk_plates, ShellSpec, StepLog};
 use crate::projectile::armor::{hit_result, NativeArmorInteraction, K_NOSE_APC, WATER_DRAG};
 use crate::ballistics::drag_v2::GRAVITY;
@@ -151,6 +151,103 @@ pub fn blob_header(b: &[u8]) -> Option<BlobHdr> {
     Some(BlobHdr { nx, ny, np, rect, dir, edges, cells, subs, cw, prof, refine })
 }
 
+pub(crate) struct FastLeaves {
+    u0: f64,
+    u1: f64,
+    inv_du: f64,
+    nfu: usize,
+    kx: usize,
+    nx: usize,
+    v0: f64,
+    v1: f64,
+    inv_step: f64,
+    lut: Vec<u32>,
+    vf: Vec<f64>,
+    vo: Vec<u32>,
+    row_of: Vec<u32>,
+    base: Vec<u32>,
+}
+
+impl FastLeaves {
+    #[inline]
+    pub fn code_at(&self, u: f64, v: f64) -> Option<usize> {
+        if !(u >= self.u0 && u < self.u1 && v >= self.v0 && v < self.v1) {
+            return None;
+        }
+        let fu = (((u - self.u0) * self.inv_du) as usize).min(self.nfu - 1);
+        let mut fv = self.lut[(((v - self.v0) * self.inv_step) as usize).min(self.lut.len() - 1)] as usize;
+        while fv + 2 < self.vf.len() && self.vf[fv + 1] <= v {
+            fv += 1;
+        }
+        let iy = self.row_of[fv] as usize;
+        let (ix, sx) = (fu / self.kx, fu % self.kx);
+        let c = iy * self.nx + ix;
+        let b = self.base[c];
+        if b == u32::MAX {
+            return Some(c);
+        }
+        Some(b as usize + (fv - self.vo[iy] as usize) * self.kx + sx)
+    }
+}
+
+/// Real-dispersion value of each aim: per aim `nc` component values then landed share, averaged over the
+/// normalised samples `mc_off` scaled by `half_disp` plus per-salvo lead draws `mc_lead` scaled by `lead_sd`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mc_score(
+    codes: &[u8], leaves: &Leaves, aims: &[Vector2], half_disp: Vector2, lead_sd: Vector2, mc_off: &[Vector2],
+    mc_lead: &[Vector2], pay: &[f64], nc: usize, turret_cap: f64,
+) -> Vec<f32> {
+    let len = pay.len() / nc.max(1);
+    let n = mc_off.len();
+    let mut out = vec![0.0f32; aims.len() * (nc + 1)];
+    if n == 0 {
+        return out;
+    }
+    // Payout depends only on the code byte, so samples are binned by byte first.
+    let mut table = vec![0.0f32; 256 * nc];
+    for code in 0..256usize {
+        let c8 = code as u8;
+        if c8 == CELL_UNWALKED || c8 == CELL_MISS {
+            continue;
+        }
+        let idx = (((c8 & CELL_SECTION_MASK) >> CELL_SECTION_SHIFT) as usize) * 16 + (c8 & CELL_CODE_MASK) as usize;
+        for c in 0..nc {
+            let mut val = if idx < len { pay[c * len + idx] } else { 0.0 };
+            if c8 & CELL_TURRET != 0 {
+                val = val.min(turret_cap);
+            }
+            table[code * nc + c] = val as f32;
+        }
+    }
+    let off: Vec<(f32, f32)> = (0..n).map(|j| {
+        let (o, l) = (mc_off[j], if j < mc_lead.len() { mc_lead[j] } else { Vector2::ZERO });
+        (o.x * half_disp.x + l.x * lead_sd.x, o.y * half_disp.y + l.y * lead_sd.y)
+    }).collect();
+    let fast = leaves.fast();
+    let mut hist = [0u32; 256];
+    for (a, aim) in aims.iter().enumerate() {
+        hist.fill(0);
+        for &(dx, dy) in &off {
+            if let Some(k) = fast.code_at((aim.x + dx) as f64, (aim.y + dy) as f64) {
+                hist[codes[k] as usize] += 1;
+            }
+        }
+        let row = &mut out[a * (nc + 1)..(a + 1) * (nc + 1)];
+        for (code, &cnt) in hist.iter().enumerate() {
+            let c8 = code as u8;
+            if cnt == 0 || c8 == CELL_UNWALKED || c8 == CELL_MISS {
+                continue;
+            }
+            let w = cnt as f32 / n as f32;
+            row[nc] += w;
+            for c in 0..nc {
+                row[c] += table[code * nc + c] * w;
+            }
+        }
+    }
+    out
+}
+
 /// Kernel mass along one axis: per coarse cell, and per fine cell where cells are split.
 pub(crate) struct AxisW {
     pub w: Vec<f64>,
@@ -206,6 +303,30 @@ impl Leaves {
             }
         }
         Self { nx, ny, kx, uf, vf, vo, split, rows, n_codes: next }
+    }
+
+    /// `code_at` without searches: a row table on a uniform v grid, corrected by the true edges.
+    pub fn fast(&self) -> FastLeaves {
+        let (v0, v1) = (self.vf[0], self.vf[self.vf.len() - 1]);
+        let min_row = self.vf.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min).max(1e-3);
+        let step = min_row * 0.5;
+        let n = (((v1 - v0) / step).ceil() as usize).max(1);
+        let lut: Vec<u32> = (0..n)
+            .map(|i| (self.vf.partition_point(|&e| e <= v0 + step * i as f64).saturating_sub(1)) as u32)
+            .collect();
+        let row_of: Vec<u32> = (0..self.vf.len() - 1)
+            .map(|fv| self.vo.partition_point(|&o| o <= fv).saturating_sub(1).min(self.ny - 1) as u32)
+            .collect();
+        let mut base = vec![u32::MAX; self.nx * self.ny];
+        for (iy, row) in self.rows.iter().enumerate() {
+            for &(ix, b) in row {
+                base[iy * self.nx + ix] = b as u32;
+            }
+        }
+        let nfu = self.uf.len() - 1;
+        let (u0, u1) = (self.uf[0], self.uf[nfu]);
+        FastLeaves { u0, u1, inv_du: nfu as f64 / (u1 - u0), nfu, kx: self.kx, nx: self.nx, v0, v1, inv_step: 1.0 / step,
+            lut, vf: self.vf.clone(), vo: self.vo.iter().map(|&x| x as u32).collect(), row_of, base }
     }
 
     fn axis(edges: &[f64], groups: impl Fn(usize) -> (usize, usize), n: usize, aim: f64, hd: f64, s: f64,
@@ -389,14 +510,25 @@ fn water_run(spec: &ShellSpec, dir: Vector3, speed: f64, under: f64) -> Option<(
 /// `speed`, straddling the hull: (result byte, first part, plates met, met
 /// water first). A ray that meets the surface before the hull is walked on
 /// through the water only as far as the game would carry it.
-fn walk_cell(
+pub(crate) fn walk_cell(
     mesh: &ArmorMesh, aabb: Aabb, spec: &ShellSpec, p: Vector3, dir: Vector3, speed: f64, log: bool,
 ) -> (u8, usize, Vec<StepLog>, bool) {
+    walk_from(mesh, first_hit(mesh, aabb, p, dir).as_ref(), spec, p, dir, speed, log)
+}
+
+/// The plate a ray through `p` along `dir` meets first; shell-independent.
+fn first_hit(mesh: &ArmorMesh, aabb: Aabb, p: Vector3, dir: Vector3) -> Option<Hit> {
     let (entry, exit) = walk_span(aabb, p, dir);
     let prev = p - dir * entry;
     let from = prev - dir * 10.0;
     let to = p + dir * exit;
-    let Some(hit) = mesh.raycast(V3::from_godot(from), V3::from_godot(to)) else {
+    mesh.raycast(V3::from_godot(from), V3::from_godot(to))
+}
+
+fn walk_from(
+    mesh: &ArmorMesh, hit: Option<&Hit>, spec: &ShellSpec, p: Vector3, dir: Vector3, speed: f64, log: bool,
+) -> (u8, usize, Vec<StepLog>, bool) {
+    let Some(hit) = hit else {
         return (CELL_MISS, 0, Vec::new(), false);
     };
     let mut vel = dir * (speed as f32);
@@ -414,7 +546,7 @@ fn walk_cell(
             fuze = ti;
         }
     }
-    let out = walk_plates(mesh, spec, &hit, vel, fuze, hit_water, log);
+    let out = walk_plates(mesh, spec, hit, vel, fuze, hit_water, log);
     let part = out.final_part.unwrap_or(out.first_part);
     let mut code = (out.damage_result.clamp(0, 15) as u8) & CELL_CODE_MASK;
     if mesh.is_dynamic(part) {
@@ -428,7 +560,7 @@ fn walk_cell(
 /// then bisection wherever neighbours differ.
 #[allow(clippy::too_many_arguments)]
 fn sweep(
-    mesh: &ArmorMesh, aabb: Aabb, base: &ShellSpec, base_pen: f64, p: Vector3, dir: Vector3,
+    mesh: &ArmorMesh, hit: Option<&Hit>, base: &ShellSpec, base_pen: f64, p: Vector3, dir: Vector3,
     speed: f64, pens: &[f64], bisect_mm: f64, overmatch: f64, bounce: f64,
 ) -> (Vec<(f32, u8)>, u64) {
     let mut walks: u64 = 0;
@@ -438,7 +570,7 @@ fn sweep(
         s.overmatch = overmatch;
         s.auto_bounce = bounce;
         *walks += 1;
-        walk_cell(mesh, aabb, &s, p, dir, speed, false).0
+        walk_from(mesh, hit, &s, p, dir, speed, false).0
     };
     let mut samples: Vec<(f64, u8)> = pens.iter().map(|&pen| (pen, at(pen, &mut walks))).collect();
     let mut budget = MAX_SWEEP_WALKS;
@@ -580,12 +712,13 @@ pub(crate) fn sweep_bucket(
                 return vec![(vec![(0.0, CELL_MISS)], Vec::new()); bounces.len()];
             }
             let p = pts[prof.rep];
+            let hit = first_hit(mesh, aabb, p, dir);
             bounces
                 .iter()
                 .map(|&bo| {
-                    let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0, bo);
+                    let (bps, w1) = sweep(mesh, hit.as_ref(), &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0, bo);
                     let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
-                        sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64, bo)
+                        sweep(mesh, hit.as_ref(), &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64, bo)
                     } else {
                         (Vec::new(), 0)
                     };
@@ -1151,11 +1284,111 @@ impl ProjectileManager {
         turret_cap: f64,
         blob: &PackedByteArray,
     ) -> PackedFloat64Array {
+        let hdr = if blob.is_empty() { None } else { blob_header(blob.as_slice()) };
+        Self::score_leaves(cells.as_slice(), nx, ny, rect, v_edges, aims, half_disp, sigma, guarantee, ellipse,
+            payouts, turret_cap, hdr.as_ref().map(|h| &h.refine))
+    }
+
+    /// One point-table bucket: walks the real shell along each ray (`dirs` per point,
+    /// or one for all) and scores `aims` once per payout component. Returns per aim
+    /// n_comp values then landed, followed by [walk_us, score_us].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn point_bucket_impl(
+        &mut self,
+        target: Gd<Node3D>,
+        shell: Gd<Resource>,
+        points: PackedVector3Array,
+        dirs: PackedVector3Array,
+        speeds: PackedFloat32Array,
+        aims: PackedVector2Array,
+        comp_payouts: PackedFloat64Array,
+        geo: VarDictionary,
+    ) -> PackedFloat32Array {
+        let g = |k: &str| geo.get(k).unwrap_or_default();
+        let (nx, ny) = (g("nx").to_i32(), g("ny").to_i32());
+        let rect: Vector4 = g("rect").try_to().unwrap_or_default();
+        let v_edges: PackedFloat32Array = g("v_edges").try_to().unwrap_or_default();
+        let refine: PackedByteArray = g("refine").try_to().unwrap_or_default();
+        let half_disp: Vector2 = g("half_disp").try_to().unwrap_or_default();
+        let ellipse: Vector2 = g("ellipse").try_to().unwrap_or_default();
+        let (sigma, guarantee, turret_cap) = (g("sigma").to_f64(), g("guarantee").to_f64(), g("turret_cap").to_f64());
+        let n_comp = g("n_comp").to_i32();
+        let mut out = PackedFloat32Array::new();
+        let id = target.instance_id().to_i64();
+        self.armor_sync(id);
+        let aabb: Aabb = target.get("aabb").try_to::<Aabb>().unwrap_or_default();
+        let Some(mesh) = self.armor.get(id).map(|sa| &sa.mesh) else { return out };
+        let n = points.len();
+        if n_comp <= 0 || (dirs.len() != 1 && dirs.len() != n) || (speeds.len() != 1 && speeds.len() != n) {
+            return out;
+        }
+        let spec = ShellSpec::from_params(&shell);
+        let t0 = std::time::Instant::now();
+        let codes: Vec<u8> = (0..n)
+            .map(|i| {
+                let dir = dirs[if dirs.len() == 1 { 0 } else { i }].normalized();
+                let speed = speeds[if speeds.len() == 1 { 0 } else { i }] as f64;
+                walk_cell(mesh, aabb, &spec, points[i], dir, speed, false).0
+            })
+            .collect();
+        let walk_us = t0.elapsed().as_secs_f64() * 1e6;
+        let t1 = std::time::Instant::now();
+        let ref_in = if refine.is_empty() {
+            None
+        } else {
+            parse_refine(refine.as_slice(), 0, nx.max(0) as usize, ny.max(0) as usize).map(|r| r.0)
+        };
+        let nc = n_comp as usize;
+        let len = comp_payouts.len() / nc;
+        let na = aims.len();
+        out.resize(na * (nc + 1) + 2);
+        let mc_off: PackedVector2Array = g("mc_off").try_to().unwrap_or_default();
+        if !mc_off.is_empty() {
+            let mc_lead: PackedVector2Array = g("mc_lead").try_to().unwrap_or_default();
+            let lead_sd: Vector2 = g("lead_sd").try_to().unwrap_or_default();
+            let ve: Vec<f64> = v_edges.as_slice().iter().map(|&x| x as f64).collect();
+            let leaves = Leaves::new(nx.max(0) as usize, ny.max(0) as usize, rect.x as f64, rect.z as f64, &ve, ref_in.as_ref());
+            let vals = mc_score(&codes, &leaves, aims.as_slice(), half_disp, lead_sd, mc_off.as_slice(), mc_lead.as_slice(),
+                comp_payouts.as_slice(), nc, turret_cap);
+            out.as_mut_slice()[..vals.len()].copy_from_slice(&vals);
+        } else {
+        for c in 0..nc {
+            let pay = PackedFloat64Array::from(&comp_payouts.as_slice()[c * len..(c + 1) * len]);
+            let res = Self::score_leaves(&codes, nx, ny, rect, &v_edges, &aims, half_disp, sigma, guarantee,
+                ellipse, &pay, turret_cap, ref_in.as_ref());
+            for a in 0..na {
+                out[a * (nc + 1) + c] = res[2 * a] as f32;
+                if c == 0 {
+                    out[a * (nc + 1) + nc] = res[2 * a + 1] as f32;
+                }
+            }
+        }
+        }
+        out[na * (nc + 1)] = walk_us as f32;
+        out[na * (nc + 1) + 1] = (t1.elapsed().as_secs_f64() * 1e6) as f32;
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn score_leaves(
+        cells: &[u8],
+        nx: i32,
+        ny: i32,
+        rect: Vector4,
+        v_edges: &PackedFloat32Array,
+        aims: &PackedVector2Array,
+        half_disp: Vector2,
+        sigma: f64,
+        guarantee: f64,
+        ellipse: Vector2,
+        payouts: &PackedFloat64Array,
+        turret_cap: f64,
+        refine: Option<&Refine>,
+    ) -> PackedFloat64Array {
         let na = aims.len();
         let mut out = PackedFloat64Array::new();
         out.resize(na * 2);
         let (nx, ny) = (nx.max(0) as usize, ny.max(0) as usize);
-        let hdr = if blob.is_empty() { None } else { blob_header(blob.as_slice()) };
         let (u0, v0, u1, v1) = (rect.x as f64, rect.y as f64, rect.z as f64, rect.w as f64);
         let ve: Vec<f64> = if v_edges.len() == ny + 1 {
             (0..=ny).map(|i| v_edges[i] as f64).collect()
@@ -1163,8 +1396,7 @@ impl ProjectileManager {
             let dv = (v1 - v0) / ny.max(1) as f64;
             (0..=ny).map(|i| v0 + dv * i as f64).collect()
         };
-        let leaves = Leaves::new(nx, ny, u0, u1, &ve, hdr.as_ref().map(|h| &h.refine));
-        let cells = cells.as_slice();
+        let leaves = Leaves::new(nx, ny, u0, u1, &ve, refine);
         if nx == 0 || ny == 0 || cells.len() < leaves.n_codes {
             out.fill(-1.0);
             return out;

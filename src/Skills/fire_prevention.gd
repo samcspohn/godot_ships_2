@@ -6,8 +6,8 @@ extends Skill
 const BUILDUP_MOD: float = 1.10   # +10% fire resistance (harder to ignite)
 const DMG_MOD:     float = 0.90   # -10% fire damage rate
 const DUR_MOD:     float = 0.90   # -10% fire duration
-const REDUCTION_RATE_MOD: float = 1.10   # +10% fire reduction block rate
-const REDUCTION_BLOCK_MOD: float = 1.10  # +10% fire reduction block duration
+const REDUCTION_RATE_MOD: float = 1.25   # +25% fire reduction block rate
+const REDUCTION_BLOCK_MOD: float = 0.50  # -50% fire reduction block duration
 
 func _init() -> void:
 	skill_id = "fp"
@@ -19,8 +19,8 @@ func _init() -> void:
 		{"stat": "Fire Resistance",      "value": fmt_mult_pct(BUILDUP_MOD), "positive": true},
 		{"stat": "Fire Damage Rate",     "value": fmt_mult_pct(DMG_MOD),     "positive": true},
 		{"stat": "Fire Duration",        "value": fmt_mult_pct(DUR_MOD),     "positive": true},
-		{"stat": "Fire Reduction Block Rate", "value": fmt_mult_pct(REDUCTION_RATE_MOD), "positive": true},
-		{"stat": "Fire Reduction Rate", "value": fmt_mult_pct(REDUCTION_BLOCK_MOD), "positive": true},
+		{"stat": "Fire Reduction Block Rate", "value": fmt_mult_pct(REDUCTION_BLOCK_MOD), "positive": true},
+		{"stat": "Fire Reduction Rate", "value": fmt_mult_pct(REDUCTION_RATE_MOD), "positive": true},
 	]
 
 func _a(ship: Ship) -> void:

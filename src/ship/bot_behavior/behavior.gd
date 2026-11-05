@@ -4653,7 +4653,7 @@ func salvo_wait_s(target: Ship, contact: Dictionary, ammo: int, reload: float, h
 		return 0.0
 	var me := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var p := Vector2(contact.position.x, contact.position.z)
-	var tof: float = BotGunnery.flight_time(_ship, me.distance_to(p))
+	var tof: float = BotGunnery.flight_time(_ship, me.distance_to(p)) / maxf(ProjectileManager.get_shell_time_multiplier(), 0.01)
 	if not is_finite(tof):
 		return 0.0
 	var fwd: Vector3 = -(contact.basis as Basis).z

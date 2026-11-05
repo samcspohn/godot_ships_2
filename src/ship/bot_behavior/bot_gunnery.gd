@@ -158,6 +158,10 @@ static var _bake_tried: Dictionary = {}
 static var _shell_tables: Dictionary = {}
 ## answer key -> {"frame", "ans"}
 static var _answers: Dictionary = {}
+const PointTableScript := preload("res://src/ship/bot_behavior/point_table.gd")
+## "shooter|ammo|target" -> PointTable, or null once a load found nothing.
+static var _point_tables: Dictionary = {}
+static var _point_tables_on: int = -1
 ## [table path, bucket key, pen quantum, overmatch, is_he] -> resolved codes
 static var _resolved: Dictionary = {}
 static var _frames: Dictionary = {}
@@ -255,6 +259,10 @@ static func aspect_from(target: Ship, from: Vector3) -> float:
 ## `bearing_deg`: secondaries count only the guns that bear on the target there off our bow; NAN, all.
 static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: float,
 		kind: int = KIND_MAIN, bearing_deg: float = NAN) -> Dictionary:
+	if kind == KIND_MAIN and point_tables_on():
+		var pt := _expected_points(shooter, target, range_m, aspect_deg)
+		if not pt.is_empty():
+			return pt
 	var table = _table(target)
 	if table == null or not (table as Dictionary).has("ev"):
 		return {}
@@ -673,6 +681,7 @@ static func _bucket_key(shooter: Ship, target: Ship, kind: int = KIND_MAIN) -> A
 		target.get_instance_id(),
 		_aspect_index(aspect),
 		_range_index(kind, disp.length()),
+		roundi(rad_to_deg(target.angular_velocity.y) * 2.0) if kind == KIND_MAIN and point_tables_on() else 0,
 	]
 
 
@@ -862,8 +871,12 @@ static func _refine(target: Ship, frame: Array, dir: Vector3, rect: Vector4, nx:
 
 ## Parallel-ray lattice geometry for one bucket, from the hull's AABB.
 static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictionary:
+	return build_lattice_at(target, aspect_i, _descent_center(descent_i))
+
+
+static func build_lattice_at(target: Ship, aspect_i: int, descent_deg: float, cells: int = LATTICE_CELLS) -> Dictionary:
 	var frame := lattice_frame(aspect_i)
-	var d := deg_to_rad(_descent_center(descent_i))
+	var d := deg_to_rad(descent_deg)
 	var dir: Vector3 = ((frame[0] as Vector3) * cos(d) + Vector3.DOWN * sin(d)).normalized()
 	var box: AABB = target.aabb
 	if box.size == Vector3.ZERO:
@@ -886,11 +899,11 @@ static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictio
 		band_hi = maxf(band_hi, qb)
 	var w: float = maxf(hi.x - lo.x, 1.0)
 	var h: float = maxf(hi.y - lo.y, 1.0)
-	var nx: int = clampi(roundi(sqrt(LATTICE_CELLS * w / h)), LATTICE_MIN, LATTICE_MAX)
-	var ny_u: int = clampi(roundi(float(LATTICE_CELLS) / nx), 3, LATTICE_MAX)
+	var cap: int = maxi(LATTICE_MAX, roundi(LATTICE_MAX * sqrt(float(cells) / LATTICE_CELLS)))
+	var nx: int = clampi(roundi(sqrt(cells * w / h)), LATTICE_MIN, cap)
+	var ny_u: int = clampi(roundi(float(cells) / nx), 3, cap)
 	var rect := Vector4(lo.x, lo.y, lo.x + w, lo.y + h)
-	var edges := _row_edges(rect.y, rect.w, ny_u, band_lo, band_hi,
-		_descent_center(descent_i) < FINE_DESCENT_MAX_DEG)
+	var edges := _row_edges(rect.y, rect.w, ny_u, band_lo, band_hi, descent_deg < FINE_DESCENT_MAX_DEG)
 	var points := lattice_points(frame, rect, nx, edges)
 	var ref := _refine(target, frame, dir, rect, nx, edges)
 	points.append_array(ref["points"])
@@ -1128,12 +1141,399 @@ func _answer(key: Array, shooter: Ship, target: Ship) -> Dictionary:
 	var mounts := _batteries(shooter, kind, range_c)
 	var ans := {}
 	if not mounts.is_empty():
-		ans = _score(mounts, shooter, target, table)
+		if kind == KIND_MAIN and point_tables_on():
+			ans = _score_points(mounts, shooter, target)
+		if ans.is_empty():
+			ans = _score(mounts, shooter, target, table)
 	# Keyed by target instance, so the working set is bounded by the ships alive
 	# rather than by the hulls in the game. Dropped wholesale when it grows.
 	if _answers.size() >= ANSWER_CACHE_MAX:
 		_answers.clear()
 	_answers[key] = {"frame": frame, "sig": sig, "ans": ans}
+	return ans
+
+
+## Main-battery point tables: built in the match by the native worker unless SHIPS_POINT_TABLE=0. With
+## --point-table-cache (sims) or SHIPS_POINT_TABLE=1, prebuilt user:// tables are used and any pair without one is
+## built in the match and saved.
+const PT_OFF := 0
+const PT_FILES := 1
+const PT_RUNTIME := 2
+
+static func _pt_mode() -> int:
+	if _point_tables_on < 0:
+		var v := OS.get_environment("SHIPS_POINT_TABLE")
+		if v == "0" or v == "off":
+			_point_tables_on = PT_OFF
+		elif v == "1" or v == "file" or CmdArgs.has("--point-table-cache"):
+			_point_tables_on = PT_FILES
+		else:
+			_point_tables_on = PT_RUNTIME
+	return _point_tables_on
+
+
+static func point_tables_on() -> bool:
+	return _pt_mode() != PT_OFF
+
+
+static var _rt_keys: PackedStringArray = PackedStringArray()
+## Keys with a user:// file not yet loaded, and keys built in the match that are to be saved when done.
+static var _rt_pending_file: Dictionary = {}
+static var _rt_save: Dictionary = {}
+static var _rt_done: Dictionary = {}
+## Per key: sim seconds after submit when its two longest ranges were ready.
+static var _rt_open: Dictionary = {}
+## Per range rank from the top: sim seconds after submit when every table had it.
+static var _rt_rank_sim: PackedFloat64Array = PackedFloat64Array()
+## Per key: sim seconds from its opening rows being ready to its first lookup (negative: looked up before).
+static var _rt_margin: Dictionary = {}
+static var _rt := {"threads": 0, "jobs": 0, "submit_sim": -1.0, "submit_wall_ms": 0, "submit_cost_ms": 0,
+	"done_sim": -1.0, "done_wall_ms": -1.0, "first_query_sim": -1.0, "first_query_served": false,
+	"queries": 0, "served": 0, "fallback": 0, "files": 0, "saved": 0, "poll_ms": 0.0, "lookup_ms": 0.0, "buckets": 0, "walks": 0}
+
+
+## Queues every (shooter main battery shell, enemy hull) table for `ships` on the native worker. Called once
+## the match's ships exist; repeat calls only add pairs not yet queued.
+static func start_runtime_tables(ships: Array) -> void:
+	var pm := _projectile_native()
+	if pm == null:
+		return
+	var t0 := Time.get_ticks_msec()
+	var threads: int = int(OS.get_environment("SHIPS_POINT_THREADS")) if OS.has_environment("SHIPS_POINT_THREADS") else 4
+	pm.point_worker_start(threads)
+	_rt["threads"] = threads
+	for shooter in ships:
+		if not (shooter is Ship) or shooter.artillery_controller == null:
+			continue
+		for target in ships:
+			if not (target is Ship) or target.team == null or shooter.team == null \
+					or target.team.team_id == shooter.team.team_id:
+				continue
+			for ammo in 2:
+				var key := point_key(shooter, target, ammo)
+				if _point_tables.has(key) or _rt_pending_file.has(key):
+					continue
+				var path := PointTableScript.cache_path(key)
+				if _pt_mode() == PT_FILES and FileAccess.file_exists(path):
+					# Loaded on first use (_point_table).
+					_rt_pending_file[key] = true
+					_rt_open[key] = 0.0
+					_rt["files"] = int(_rt["files"]) + 1
+					continue
+				var job: Dictionary = PointTableScript.runtime_job(shooter, target, ammo)
+				if job.is_empty() or not pm.point_job_submit(key, target, job["shell"], job):
+					_point_tables[key] = false
+					continue
+				_point_tables[key] = true
+				_rt_keys.append(key)
+				if _pt_mode() == PT_FILES:
+					_rt_save[key] = {"points": job["points"], "ranges": job["ranges"], "n_aspect": (job["aspects"] as PackedFloat64Array).size(),
+						"path": path}
+	_rt["jobs"] = _rt_keys.size()
+	print("point tables (%s): %d jobs queued, %d from files, for %d ships" % [["off", "files", "runtime"][_pt_mode()], _rt_keys.size(), int(_rt["files"]), ships.size()])
+	if float(_rt["submit_sim"]) < 0.0:
+		_rt["submit_sim"] = SimClock.now()
+		_rt["submit_wall_ms"] = Time.get_ticks_msec()
+	_rt["submit_cost_ms"] = int(_rt["submit_cost_ms"]) + Time.get_ticks_msec() - t0
+	if _rt_keys.is_empty() and CmdArgs.has("--point-tables-only"):
+		print("point tables: all %d from files; quitting" % int(_rt["files"]))
+		(Engine.get_main_loop() as SceneTree).quit()
+
+
+## Records when tables open and finish (the worker writes buckets into the native store itself); the server calls
+## this about once a second.
+static func poll_runtime_tables() -> void:
+	if _rt_keys.size() == _rt_done.size():
+		return
+	var pm := _projectile_native()
+	var t0 := Time.get_ticks_usec()
+	for key in _rt_keys:
+		if _rt_done.has(key):
+			continue
+		var st: PackedFloat64Array = pm.point_job_status(key)
+		if st.size() >= 5 and st[4] >= 0.0 and not _rt_open.has(key):
+			_rt_open[key] = SimClock.now() - float(_rt["submit_sim"])
+		if st.size() >= 4 and st[1] > 0.0 and st[0] >= st[1]:
+			_rt_done[key] = true
+			if _rt_save.has(key):
+				_save_built_table(key, _rt_save[key])
+				_rt_save.erase(key)
+			_rt["walks"] = int(_rt["walks"]) + int(st[3])
+			_rt["buckets"] = int(_rt["buckets"]) + int(st[1])
+	var ranks: PackedFloat64Array = pm.point_worker_stats().get("rank_ms", PackedFloat64Array())
+	if _rt_rank_sim.size() < ranks.size():
+		var at := _rt_rank_sim.size()
+		_rt_rank_sim.resize(ranks.size())
+		for k in range(at, ranks.size()):
+			_rt_rank_sim[k] = -1.0
+	for k in ranks.size():
+		if ranks[k] >= 0.0 and _rt_rank_sim[k] < 0.0:
+			_rt_rank_sim[k] = SimClock.now() - float(_rt["submit_sim"])
+	_rt["poll_ms"] = float(_rt["poll_ms"]) + (Time.get_ticks_usec() - t0) / 1000.0
+	if _rt_keys.size() == _rt_done.size():
+		_rt["done_sim"] = SimClock.now() - float(_rt["submit_sim"])
+		_rt["done_wall_ms"] = Time.get_ticks_msec() - int(_rt["submit_wall_ms"])
+		if CmdArgs.has("--point-tables-only"):
+			print("point tables: %d built and saved in %d ms, %d from files; quitting" % [int(_rt["saved"]),
+				int(_rt["done_wall_ms"]), int(_rt["files"])])
+			(Engine.get_main_loop() as SceneTree).quit()
+
+
+## Per table key: whether its first query found the buckets it needed.
+static var _rt_first: Dictionary = {}
+
+## Writes a table the worker built to user:// (unpruned), via a temporary file so a sim reading it never sees half.
+static func _save_built_table(key: String, meta: Dictionary) -> void:
+	var t = PointTableScript.new()
+	t.points = meta["points"]
+	t.ranges = meta["ranges"]
+	t.n_aspect = meta["n_aspect"]
+	t.buckets = _projectile_native().point_table_export(key)
+	var path: String = meta["path"]
+	var tmp := "%s.%d.tmp" % [path, OS.get_process_id()]
+	if t.save(tmp) and DirAccess.rename_absolute(tmp, path) == OK:
+		_rt["saved"] = int(_rt["saved"]) + 1
+
+
+static func _note_point_query(served: bool, key: String = "") -> void:
+	if not point_tables_on():
+		return
+	if key != "" and not _rt_first.has(key):
+		_rt_first[key] = served
+		var now: float = SimClock.now() - float(_rt["submit_sim"])
+		_rt_margin[key] = now - float(_rt_open[key]) if _rt_open.has(key) else -now
+	_rt["queries"] = int(_rt["queries"]) + 1
+	_rt[("served" if served else "fallback")] = int(_rt["served" if served else "fallback"]) + 1
+	if float(_rt["first_query_sim"]) < 0.0:
+		_rt["first_query_sim"] = SimClock.now() - float(_rt["submit_sim"])
+		_rt["first_query_served"] = served
+
+
+## Runtime-table timing for the match metrics; {} unless SHIPS_POINT_TABLE=runtime.
+static func point_table_summary() -> Dictionary:
+	if not point_tables_on():
+		return {}
+	var out := _rt.duplicate()
+	out["mode"] = ["off", "files", "runtime"][_pt_mode()]
+	var pm := _projectile_native()
+	if pm != null:
+		out.merge(pm.point_worker_stats(), true)
+	out["done_jobs"] = _rt_done.size()
+	out["pairs_queried"] = _rt_first.size()
+	out["pairs_first_served"] = _rt_first.values().count(true)
+	# Sim seconds; the poll runs about once a sim second, so each is good to about a second.
+	out["rank_ready_sim"] = Array(_rt_rank_sim)
+	var m: Array = _rt_margin.values()
+	m.sort()
+	if not m.is_empty():
+		out["margin_sim"] = {"min": m[0], "p10": m[int(0.1 * (m.size() - 1))], "median": m[m.size() / 2], "max": m[m.size() - 1]}
+	var o: Array = _rt_open.values()
+	o.sort()
+	if not o.is_empty():
+		out["opening_ready_sim"] = {"median": o[o.size() / 2], "max": o[o.size() - 1]}
+	return out
+
+
+## What a point table depends on from the shooter: the shell's ballistics and armour-walk inputs (not damage or
+## fire chance, which apply at lookup) and the gun's spread at every table range after mods, plus grouping. Ships
+## whose guns hash alike share tables. Cached per instance, so a mod that changes the guns mid-match is not seen.
+static var _shell_keys: Dictionary = {}
+const _KEY_SHELL_PROPS := ["type", "speed", "drag", "mass", "caliber", "penetration_modifier", "fuze_delay",
+	"arming_threshold", "auto_bounce", "overmatch"]
+
+static func shell_key(shooter: Ship, ammo: int) -> String:
+	var iid: int = shooter.get_instance_id() * 2 + ammo
+	if _shell_keys.has(iid):
+		return _shell_keys[iid]
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var sh: ShellParams = p.shell1 if ammo == 0 else p.shell2
+	if sh == null:
+		return ""
+	var parts := []
+	for prop in _KEY_SHELL_PROPS:
+		parts.append([prop, sh.get(prop)])
+	for r in PointTableScript.RANGES_M:
+		var mounts := _batteries(shooter, KIND_MAIN, r)
+		if mounts.is_empty():
+			break
+		# Rounded: taking a toggled skill factor out and back in leaves last-bit differences.
+		parts.append(table_half_disp(shooter, mounts[0], r).snappedf(0.01))
+		parts.append(snappedf(float(mounts[0]["sigma"]), 0.001))
+	var key := var_to_bytes(parts).hex_encode().md5_text()
+	_shell_keys[iid] = key
+	return key
+
+
+## Main-battery half-dispersion at `range_m` for point tables: Close Quarters Expertise's in-range factor is taken
+## out of the live params, where it toggles with the aim, and applied by range instead (inside the longest
+## secondary range only), so one table is right at every range.
+static func table_half_disp(shooter: Ship, m: Dictionary, range_m: float) -> Vector2:
+	var hd := _half_disp(m, range_m)
+	var cq := _cq_expertise(shooter)
+	if cq == null:
+		return hd
+	var mod: float = cq.main_gun_in_range_mod
+	hd /= maxf(float(cq.applied_bonus), 0.01)
+	return hd * mod if range_m < _max_secondary_range(shooter) else hd
+
+
+static func _cq_expertise(shooter: Ship) -> Skill:
+	if shooter.skills == null or not is_instance_valid(shooter.skills):
+		return null
+	for id in shooter.skills.skills:
+		var sk: Skill = shooter.skills.skills[id]
+		if sk != null and sk.get_script() != null and (sk.get_script() as Script).resource_path.ends_with("cq_expertise.gd"):
+			return sk
+	return null
+
+
+static func _max_secondary_range(shooter: Ship) -> float:
+	var out := 0.0
+	var sec = shooter.secondary_controller
+	if sec == null or not is_instance_valid(sec):
+		return out
+	for sc in sec.sub_controllers:
+		if sc != null and is_instance_valid(sc):
+			out = maxf(out, (sc.params.dynamic_mod as GunParams)._range)
+	return out
+
+
+static func point_key(shooter: Ship, target: Ship, ammo: int) -> String:
+	return "%s|%s" % [shell_key(shooter, ammo), target.scene_file_path]
+
+
+## The native store key of `shooter`'s `ammo` table against `target`, or "" without one. File mode loads the
+## table from user:// into the store on first use.
+static func _point_table(shooter: Ship, target: Ship, ammo: int) -> String:
+	var key := point_key(shooter, target, ammo)
+	var known = _point_tables.get(key)
+	if known != null:
+		return key if known else ""
+	if _pt_mode() == PT_RUNTIME:
+		return ""
+	_rt_pending_file.erase(key)
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var shell: ShellParams = p.shell1 if ammo == 0 else p.shell2
+	var t = PointTableScript.load_from(PointTableScript.cache_path(key), shell) if shell != null else null
+	if t == null:
+		push_warning("BotGunnery: no point table for %s" % key)
+		_point_tables[key] = false
+		return ""
+	var aspects := PackedFloat64Array()
+	for ai in t.n_aspect:
+		aspects.append(_aspect_center(ai))
+	_projectile_native().point_table_put(key, t.ranges, aspects, t.points, PointTableScript.N_COMP, t.buckets)
+	_point_tables[key] = true
+	return key
+
+
+## Per (target, shell damage, saturation signature): [component weights, fire array] for point_best.
+static var _pt_live: Dictionary = {}
+
+static func _pt_live_inputs(target: Ship, damage: float) -> Array:
+	var sig := _saturation_sig(target)
+	var ck := "%d|%d" % [target.get_instance_id(), roundi(damage)]
+	var c: Array = _pt_live.get(ck, [])
+	if not c.is_empty() and int(c[0]) == sig:
+		return c
+	var fires := PackedFloat32Array()
+	if target.fire_manager != null:
+		for f in target.fire_manager.fires:
+			if f != null:
+				var pos: Vector3 = (f as Fire).position
+				fires.append_array([pos.x, pos.y, pos.z, 1.0 if (f as Fire).lifetime > 0.0 else 0.0])
+	c = [sig, PointTableScript.comp_weights(target, damage), fires]
+	if _pt_live.size() > 512:
+		_pt_live.clear()
+	_pt_live[ck] = c
+	return c
+
+
+## {point, offset (target-local, shooter on +x), value, damage, landed, visited} of the best point, fire included
+## for HE; {} without a table or while a bucket it needs is unbuilt.
+static func _point_best(shooter: Ship, target: Ship, ammo: int, range_m: float, aspect_deg: float) -> Dictionary:
+	var key := _point_table(shooter, target, ammo)
+	if key == "":
+		return {}
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var shell: ShellParams = p.shell1 if ammo == 0 else p.shell2
+	var live := _pt_live_inputs(target, shell.damage)
+	var he: bool = shell.type == ShellParams.ShellType.HE
+	var q := PackedFloat64Array([range_m, aspect_deg, shell.damage, _raw_fire_chance(shell, target) if he else 0.0,
+		fire_dps(target) * fire_burn_s(target) if he else 0.0])
+	var t0 := Time.get_ticks_usec()
+	var r: PackedFloat32Array = _projectile_native().point_best(key, q, live[1], live[2])
+	_rt["lookup_ms"] = float(_rt["lookup_ms"]) + (Time.get_ticks_usec() - t0) / 1000.0
+	_note_point_query(not r.is_empty(), key)
+	if r.is_empty():
+		return {}
+	return {"point": int(r[0]), "value": r[1], "damage": r[2], "landed": r[3], "visited": int(r[4]),
+		"offset": Vector3(r[5], r[6], r[7]), "shell": shell}
+
+
+## The shooter in the target's frame as it will be when the salvo lands: drifted by its velocity and turned by
+## its yaw rate, faded over IMPACT_TURN_FADE_S, for one main-battery flight time in game seconds.
+const IMPACT_TURN_FADE_S: float = 10.0
+
+static func _impact_local(shooter: Ship, target: Ship) -> Vector3:
+	var rel: Vector3 = shooter.global_position - target.global_position
+	var tof: float = flight_time(shooter, Vector2(rel.x, rel.z).length())
+	if not is_finite(tof):
+		return target.to_local(shooter.global_position)
+	tof /= maxf(ProjectileManager.get_shell_time_multiplier(), 0.01)
+	var turn: float = target.angular_velocity.y * IMPACT_TURN_FADE_S * (1.0 - exp(-tof / IMPACT_TURN_FADE_S))
+	var basis: Basis = Basis(Vector3.UP, turn) * target.global_basis
+	var pos: Vector3 = target.global_position + target.linear_velocity * tof
+	return basis.inverse() * (shooter.global_position - pos)
+
+
+## expected() from the point tables: each shell's best point at this range and aspect under live pools and fires,
+## scaled by HPManager.size_mod; empty when either shell's table is missing.
+static func _expected_points(shooter: Ship, target: Ship, range_m: float, aspect_deg: float) -> Dictionary:
+	var mounts := _batteries(shooter, KIND_MAIN, range_m)
+	if mounts.is_empty():
+		return {}
+	var rate: float = mounts[0]["rate"]
+	var b := []
+	for ammo in 2:
+		var r := _point_best(shooter, target, ammo, range_m, aspect_deg)
+		if r.is_empty():
+			return {}
+		r["size"] = HPManager.size_mod(target.mass, (r["shell"] as ShellParams).caliber)
+		b.append(r)
+	var ap_ev: float = float(b[0]["damage"]) * float(b[0]["size"])
+	var he_fire: float = float(b[1]["value"]) - float(b[1]["damage"])
+	var he_ev: float = float(b[1]["damage"]) * float(b[1]["size"]) + he_fire
+	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": he_fire, "he_landed": b[1]["landed"], "ap_landed": b[0]["landed"],
+		"ap_dps": ap_ev * rate, "he_dps": he_ev * rate}
+
+
+## _score's answer from the point tables; empty when either shell's table is missing.
+static func _score_points(mounts: Array, shooter: Ship, target: Ship) -> Dictionary:
+	var m: Dictionary = mounts[0]
+	var g := _impact_local(shooter, target)
+	var range_m: float = g.length()
+	var aspect: float = rad_to_deg(atan2(absf(g.x), -g.z))
+	# _solve mirrors by the side now; the offset must end on the side the shells meet.
+	var flip: float = signf(g.x if g.x != 0.0 else 1.0) * _shooter_side(shooter, target)
+	var options := [{}, {}]
+	for ammo in 2:
+		var b := _point_best(shooter, target, ammo, range_m, aspect)
+		if b.is_empty():
+			return {}
+		var aim: Vector3 = b["offset"]
+		var fire_ev: float = float(b["value"]) - float(b["damage"])
+		aim.x *= flip
+		options[ammo] = {"offset": aim, "ammo": ammo, "payout": b["value"], "landed": b["landed"],
+			"fire_chance": _fire_chance(b["shell"], target, aim) if ammo == 1 else 0.0, "fire_ev": fire_ev}
+	var pick: int = 0 if float(options[0].get("payout", 0.0)) >= float(options[1].get("payout", 0.0)) else 1
+	if options[pick].is_empty():
+		return {}
+	var ans: Dictionary = (options[pick] as Dictionary).duplicate()
+	ans["options"] = options
+	ans["dps"] = float(ans["payout"]) * float(m["rate"])
+	ans["salvo_ev"] = float(ans["payout"]) * float(m["guns"])
+	ans["reload"] = float(m["guns"]) / float(m["rate"])
 	return ans
 
 

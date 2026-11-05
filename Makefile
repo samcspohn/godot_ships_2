@@ -23,6 +23,13 @@ bake:
 N ?= 40
 LINEUP ?= res://tools/botmatch/lineup_12v12_t10.json
 OUT ?= build/botmatch/$(shell date +%Y%m%d_%H%M%S)
+# Builds and saves user://point_tables for LINEUP with the bots' real loadouts: one sim that quits once every
+# (gun, hull) table is on file. ab.sh runs it per arm; sims (run.sh) then only load.
+point-tables:
+	SHIPS_POINT_THREADS=$${SHIPS_POINT_THREADS:-32} timeout 900 $(GODOT) --headless --path . --fixed-fps 12 --server \
+		--port 39890 --botmatch "$(LINEUP)" --seed 1 --no-replay --gun-matrix-cache --point-table-cache \
+		--point-tables-only --no-live-mods 2>&1 | grep -E "^point tables"
+
 sim:
 	tools/botmatch/run.sh "$(GODOT)" "$(LINEUP)" $(N) $(JOBS) "$(OUT)"
 

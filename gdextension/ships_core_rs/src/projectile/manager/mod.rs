@@ -2,6 +2,7 @@ use godot::classes::{
     Camera3D, INode, Node, Node3D, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource,
 };
 use godot::prelude::*;
+use crate::variant_cast::VariantCast;
 use std::collections::BTreeMap;
 
 use crate::nav::map::NavigationMap;
@@ -14,6 +15,8 @@ pub(crate) mod ev;
 mod fire;
 mod lifecycle;
 mod survey;
+mod point_store;
+mod point_worker;
 pub(crate) mod util;
 
 /// Matches GDScript HitResult.
@@ -116,6 +119,10 @@ pub struct ProjectileManager {
     pub(crate) armor_ray_cache: BTreeMap<u64, ArmorRayCacheEntry>,
     /// Per-ship armour meshes: the narrowphase the walk runs against.
     pub(crate) armor: ArmorRegistry,
+    pub(crate) point_worker: Option<point_worker::PointWorker>,
+    pub(crate) point_store: point_store::Store,
+    /// Ship-space armour snapshots handed to point-table jobs, per target instance.
+    pub(crate) point_meshes: BTreeMap<i64, std::sync::Arc<crate::projectile::armor::mesh::ArmorMesh>>,
 }
 
 #[godot_api]
@@ -149,6 +156,9 @@ impl INode for ProjectileManager {
             shell_landings: BTreeMap::new(),
             armor_ray_cache: BTreeMap::new(),
             armor: ArmorRegistry::default(),
+            point_worker: None,
+            point_store: Default::default(),
+            point_meshes: BTreeMap::new(),
         }
     }
 
@@ -663,6 +673,160 @@ impl ProjectileManager {
             d.set("bounce_overrides", &cls.iter().map(|c| c.1 as i32).collect::<PackedInt32Array>());
         }
         d
+    }
+
+    /// Starts the runtime point-table worker with `threads` pool threads; a second call does nothing.
+    #[func]
+    pub(crate) fn point_worker_start(&mut self, threads: i32) {
+        if self.point_worker.is_none() {
+            self.point_worker = Some(point_worker::PointWorker::start(threads.max(1) as usize, self.point_store.clone()));
+        }
+    }
+
+    /// Queues the table `key` for `shell` against `target`'s armour as it is now. `job` carries the shell
+    /// table, ranges with half-dispersion, lead and bias rows, aspects, points, MC samples, payout
+    /// components and BotGunnery's lattice constants (see PointTable.runtime_job).
+    #[func]
+    pub(crate) fn point_job_submit(&mut self, key: GString, target: Gd<Node3D>, shell: Gd<Resource>, job: VarDictionary) -> bool {
+        let id = target.instance_id().to_i64();
+        if self.point_worker.is_none() {
+            return false;
+        }
+        self.armor_sync(id);
+        let mesh = match self.point_meshes.get(&id) {
+            Some(m) => m.clone(),
+            None => {
+                let Some(sa) = self.armor.get(id) else { return false };
+                let m = std::sync::Arc::new(sa.mesh.clone());
+                self.point_meshes.insert(id, m.clone());
+                m
+            }
+        };
+        let g = |k: &str| job.get(k).unwrap_or_default();
+        let f64s = |k: &str| -> Vec<f64> {
+            g(k).try_to::<PackedFloat64Array>().map(|a| a.as_slice().to_vec())
+                .or_else(|_| g(k).try_to::<PackedFloat32Array>().map(|a| a.as_slice().iter().map(|&x| x as f64).collect()))
+                .unwrap_or_default()
+        };
+        let v2s = |k: &str| -> Vec<Vector2> { g(k).try_to::<PackedVector2Array>().map(|a| a.as_slice().to_vec()).unwrap_or_default() };
+        let v3s = |k: &str| -> Vec<Vector3> { g(k).try_to::<PackedVector3Array>().map(|a| a.as_slice().to_vec()).unwrap_or_default() };
+        let c = f64s("consts");
+        if c.len() < 13 {
+            return false;
+        }
+        let consts = point_worker::Consts {
+            lattice_cells: c[0], lattice_min: c[1], lattice_max: c[2], fine_y_lo: c[3], fine_y_hi: c[4],
+            fine_row_m: c[5], fine_rows_max: c[6], fine_descent_max: c[7], sub_cell_m: c[8], sub_max: c[9],
+            anchor_gap_cols: c[10], anchor_gap_v: c[11], cells: c[12],
+        };
+        let aabb: Aabb = target.get("aabb").try_to::<Aabb>().unwrap_or_default();
+        self.point_worker.as_ref().unwrap().submit(point_worker::Job {
+            key: key.to_string(), mesh, aabb, spec: crate::projectile::armor::walk::ShellSpec::from_params(&shell),
+            shell_r: f64s("shell_r"), shell_desc: f64s("shell_desc"), shell_v: f64s("shell_v"), shell_step: g("shell_step").to_f64(),
+            ranges: f64s("ranges"), half_disp: v2s("half_disp"), bias: f64s("bias"), lead: f64s("lead"),
+            lead_band: g("lead_band").to_f64(), aspects: f64s("aspects"), points: v3s("points"), features: v3s("features"),
+            mc_off: v2s("mc_off"), mc_lead: v2s("mc_lead"), comp: f64s("comp"), n_comp: g("n_comp").to_i32().max(1) as usize,
+            turret_cap: g("turret_cap").to_f64(), c: consts,
+        });
+        true
+    }
+
+    /// [buckets done, total, ms from submit to the last bucket (0 until then), walks, ms from submit until the two
+    /// longest ranges were built (-1 until then)]; empty if never submitted.
+    #[func]
+    pub(crate) fn point_job_status(&self, key: GString) -> PackedFloat64Array {
+        let mut out = PackedFloat64Array::new();
+        if let Some((d, t, ms, w, open)) = self.point_worker.as_ref().and_then(|pw| pw.status(&key.to_string())) {
+            out.extend_array(&PackedFloat64Array::from(&[d as f64, t as f64, ms, w as f64, open][..]));
+        }
+        out
+    }
+
+    /// Puts a whole table in the store (file mode): `buckets` maps bucket index -> per point n_comp values then landed.
+    #[func]
+    pub(crate) fn point_table_put(&mut self, key: GString, ranges: PackedFloat32Array, aspects: PackedFloat64Array,
+            points: PackedVector3Array, n_comp: i32, buckets: VarDictionary) {
+        let mut t = point_store::PtTable::new(ranges.as_slice().iter().map(|&x| x as f64).collect(), aspects.as_slice().to_vec(),
+            points.as_slice().to_vec(), n_comp.max(1) as usize);
+        for (k, v) in buckets.iter_shared() {
+            if let Ok(vals) = v.try_to::<PackedFloat32Array>() {
+                t.insert(k.to::<i64>() as usize, vals.as_slice().to_vec());
+            }
+        }
+        self.point_store.write().unwrap().insert(key.to_string(), std::sync::Arc::new(std::sync::RwLock::new(t)));
+    }
+
+    #[func]
+    pub(crate) fn point_table_has(&self, key: GString) -> bool {
+        self.point_store.read().unwrap().contains_key(&key.to_string())
+    }
+
+    /// Best point of `key`: `q` = [range m, aspect deg, shell damage, raw fire chance, fire dps x burn s],
+    /// `w` the live weight per component, `fires` [x, y, z, burning] per target fire (target-local). Returns
+    /// [point, value, damage, landed, visited, x, y, z]; empty while the table or a needed bucket is missing.
+    #[func]
+    pub(crate) fn point_best(&self, key: GString, q: PackedFloat64Array, w: PackedFloat32Array, fires: PackedFloat32Array) -> PackedFloat32Array {
+        let mut out = PackedFloat32Array::new();
+        let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
+        let Some(t) = t else { return out };
+        if q.len() < 5 {
+            return out;
+        }
+        let f: Vec<(Vector3, bool)> = fires.as_slice().chunks_exact(4)
+            .map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
+        let g = t.read().unwrap();
+        if w.len() < g.n_comp {
+            return out;
+        }
+        if let Some(b) = g.best(q[0], q[1], w.as_slice(), q[2], q[3], q[4], &f) {
+            let p = g.points[b.point];
+            out.extend_array(&PackedFloat32Array::from(&[b.point as f32, b.value as f32, b.damage as f32, b.landed as f32,
+                b.visited as f32, p.x, p.y, p.z][..]));
+        }
+        out
+    }
+
+    /// The built buckets of `key`: bucket index -> PackedFloat32Array (probes).
+    #[func]
+    pub(crate) fn point_table_export(&self, key: GString) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
+        if let Some(t) = t {
+            for (b, v) in &t.read().unwrap().buckets {
+                out.set(*b as i64, &PackedFloat32Array::from(v.as_slice()));
+            }
+        }
+        out
+    }
+
+    /// {busy_ms: worker time spent so far, pending: buckets not yet started, rank_ms: per range rank from the top, ms
+    /// from the first submit until every job had built it (-1 while not)}.
+    #[func]
+    pub(crate) fn point_worker_stats(&self) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        if let Some(pw) = self.point_worker.as_ref() {
+            out.set("busy_ms", pw.busy_ms());
+            out.set("pending", pw.pending() as i64);
+            out.set("rank_ms", &PackedFloat64Array::from(pw.rank_ms().as_slice()));
+        }
+        out
+    }
+
+    /// One point-table bucket with the real shell; see `point_bucket_impl`. `geo`: nx, ny,
+    /// rect, v_edges, refine, half_disp, sigma, guarantee, ellipse, n_comp, turret_cap.
+    #[func]
+    pub(crate) fn point_bucket(
+        &mut self,
+        target: Gd<Node3D>,
+        shell: Gd<Resource>,
+        points: PackedVector3Array,
+        dirs: PackedVector3Array,
+        speeds: PackedFloat32Array,
+        aims: PackedVector2Array,
+        comp_payouts: PackedFloat64Array,
+        geo: VarDictionary,
+    ) -> PackedFloat32Array {
+        self.point_bucket_impl(target, shell, points, dirs, speeds, aims, comp_payouts, geo)
     }
 
     /// Dispersion-kernel scoring of a survey lattice; see `lattice_score_impl`.

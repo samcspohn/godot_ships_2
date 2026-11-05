@@ -49,6 +49,7 @@ var _shooter: Ship
 ## The solver script, loaded once. The walks below run in ITS space, not the
 ## live one - see BotGunnery._survey_space for why that is not the same world.
 var _gunnery = load("res://src/ship/bot_behavior/bot_gunnery.gd")
+const PointTableScript := preload("res://src/ship/bot_behavior/point_table.gd")
 var _out: FileAccess
 var _done: bool = false
 
@@ -142,6 +143,16 @@ func _physics_process(_delta: float) -> void:
 		_saturation_test()
 	elif OS.get_cmdline_user_args().has("--citadel"):
 		_citadel_test()
+	elif OS.get_cmdline_user_args().has("--cqe-check"):
+		_cqe_check()
+	elif OS.get_cmdline_user_args().has("--rt-compare"):
+		_rt_compare()
+	elif OS.get_cmdline_user_args().has("--build-points"):
+		_build_points()
+	elif OS.get_cmdline_user_args().has("--points"):
+		_points_test()
+	elif OS.get_cmdline_user_args().has("--aimcheck"):
+		_aimcheck_test()
 	elif OS.get_cmdline_user_args().has("--column"):
 		_column_test()
 
@@ -229,6 +240,390 @@ func _bounce_test() -> void:
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()
+
+
+## `--cqe-check`: main-battery half-dispersion raw and as point tables see it, and the shell key, without Close
+## Quarters Expertise, with it toggled off and with it toggled on.
+func _cqe_check() -> void:
+	var sec_r: float = BotGunnery._max_secondary_range(_shooter)
+	_say("max secondary range %.0f m" % sec_r)
+	var report := func(label: String) -> void:
+		BotGunnery._shell_keys.clear()
+		var row := label
+		for r in [3000.0, 12000.0]:
+			var m: Dictionary = BotGunnery._batteries(_shooter, BotGunnery.KIND_MAIN, r)[0]
+			row += "  %.0f m raw %s table %s" % [r, BotGunnery._half_disp(m, r), BotGunnery.table_half_disp(_shooter, m, r)]
+		_say(row + "  key " + BotGunnery.shell_key(_shooter, 0).left(8))
+	report.call("no skill   ")
+	var sk = load("res://src/Skills/cq_expertise.gd").new()
+	sk.skill_id = "cq_expertise"
+	_shooter.skills.add_skill(sk)
+	_shooter._update_dynamic_mods()
+	report.call("cqe off    ")
+	sk.enabled = true
+	sk.main_gun_bonus = sk.main_gun_in_range_mod
+	report.call("cqe on, not yet applied")
+	_shooter.remove_dynamic_mod(sk._a)
+	_shooter.add_dynamic_mod(sk._a)
+	_shooter._update_dynamic_mods()
+	report.call("cqe on, applied")
+	sk.enabled = false
+	sk.main_gun_bonus = 1.0
+	_shooter.remove_dynamic_mod(sk._a)
+	_shooter.add_dynamic_mod(sk._a)
+	report.call("cqe off, not yet applied")
+	_shooter._update_dynamic_mods()
+	report.call("cqe off, applied")
+	_out.close()
+	get_tree().quit()
+
+
+## `--rt-compare`: the native runtime worker's table against PointTable.build for both shells: value error and
+## best-point agreement over every bucket, and the worker's wall time.
+func _rt_compare() -> void:
+	GunneryBake._force_turrets(_target)
+	_place(10000.0, 90.0)
+	var pm = ProjectileManager.get_raw()
+	pm.point_worker_start(int(OS.get_environment("SHIPS_POINT_THREADS")) if OS.has_environment("SHIPS_POINT_THREADS") else 4)
+	for ammo in 2:
+		var g = PointTableScript.new()
+		g.build(_shooter, _target, ammo)
+		var job: Dictionary = PointTableScript.runtime_job(_shooter, _target, ammo)
+		var key := "probe|%d" % ammo
+		var t0 := Time.get_ticks_msec()
+		pm.point_job_submit(key, _target, job["shell"], job)
+		var st: PackedFloat64Array = pm.point_job_status(key)
+		while st.size() < 4 or st[1] <= 0.0 or st[0] < st[1]:
+			OS.delay_msec(5)
+			st = pm.point_job_status(key)
+		var wall := Time.get_ticks_msec() - t0
+		var r = PointTableScript.runtime_table(job)
+		r.absorb(pm.point_table_export(key))
+		var n_b := 0
+		var same := 0
+		var err := 0.0
+		var top := 0.0
+		for key_b in g.full:
+			if not r.full.has(key_b):
+				continue
+			var a: PackedFloat32Array = g.full[key_b]
+			var b: PackedFloat32Array = r.full[key_b]
+			var ia := 0
+			var ib := 0
+			for k in a.size():
+				err += absf(a[k] - b[k])
+				top += absf(a[k])
+				if a[k] > a[ia]:
+					ia = k
+				if b[k] > b[ib]:
+					ib = k
+			n_b += 1
+			same += int(ia == ib)
+		var w: PackedFloat32Array = PointTableScript.comp_weights(_target, r.shell.damage)
+		var he: bool = r.shell.type == ShellParams.ShellType.HE
+		var agree := 0
+		var n_q := 0
+		var dv := 0.0
+		var us_gd := 0
+		var us_nat := 0
+		for rr in range(1500, 20000, 700):
+			for asp in range(3, 178, 9):
+				var t1 := Time.get_ticks_usec()
+				var bg: Dictionary = r.best_sorted(_target, rr, asp)
+				us_gd += Time.get_ticks_usec() - t1
+				var q := PackedFloat64Array([rr, asp, r.shell.damage, BotGunnery._raw_fire_chance(r.shell, _target) if he else 0.0,
+					BotGunnery.fire_dps(_target) * BotGunnery.fire_burn_s(_target) if he else 0.0])
+				t1 = Time.get_ticks_usec()
+				var bn: PackedFloat32Array = pm.point_best(key, q, w, PackedFloat32Array())
+				us_nat += Time.get_ticks_usec() - t1
+				if int(bg["point"]) < 0 and bn.is_empty():
+					continue
+				n_q += 1
+				if not bn.is_empty() and int(bn[0]) == int(bg["point"]):
+					agree += 1
+					dv = maxf(dv, absf(bn[1] - float(bg["value"])) / maxf(absf(float(bg["value"])), 1e-6))
+		_say("%s lookup: native vs gdscript same point %d/%d, max value diff %.4f%%, %.1f us vs %.1f us per lookup" % [
+			"AP" if ammo == 0 else "HE", agree, n_q, 100.0 * dv, float(us_nat) / maxi(n_q, 1), float(us_gd) / maxi(n_q, 1)])
+		_say("%s: gdscript %d buckets %.1f s single-thread; runtime %d buckets in %d ms wall (%.0f walks); mean |err| %.2f%% of value; same best point %d/%d" % [
+			"AP" if ammo == 0 else "HE", g.buckets.size(), g.stats["build_us"] / 1e6, r.buckets.size(), wall, st[3],
+			100.0 * err / maxf(top, 1e-9), same, n_b])
+	_out.close()
+	get_tree().quit()
+
+
+## `--build-points`: builds and caches both main-battery shells' PointTables for this (shooter, target).
+func _build_points() -> void:
+	GunneryBake._force_turrets(_target)
+	_place(10000.0, 90.0)
+	for ammo in 2:
+		var t = PointTableScript.new()
+		if not t.build(_shooter, _target, ammo):
+			_say("build failed: ammo %d" % ammo)
+			continue
+		var n_before: int = t.points.size()
+		var n_kept: int = t.prune(_target)
+		var path: String = PointTableScript.cache_path(BotGunnery.point_key(_shooter, _target, ammo))
+		_say("%s ammo %d: %d buckets, %.1f s, %d/%d points, saved %s %s" % [_shooter.scene_file_path.get_file(), ammo,
+			t.stats["buckets"], t.stats["build_us"] / 1e6, n_kept, n_before, path, t.save(path)])
+	_out.close()
+	get_tree().quit()
+
+
+## `--points <ranges m,..> <aspects deg,..>`: PointTable for both shells against the current solver, each
+## aim scored by simulated salvos through DispersionCalculator (citadel guarantee, per-salvo lead error).
+func _points_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--points")
+	var rs: Array = Array(args[i + 1].split(",")).map(func(x): return float(x)).filter(
+		func(x): return x <= _shooter.artillery_controller.get_params()._range)
+	var asps: Array = Array(args[i + 2].split(",")).map(func(x): return float(x))
+	var n_shots: int = int(OS.get_environment("POINT_SHOTS")) if OS.has_environment("POINT_SHOTS") else 600
+	GunneryBake._force_turrets(_target)
+	var space := GunneryBake.survey_space_state(_target)
+	space = GunneryBake.survey_space_state(_target)
+	_place(10000.0, 90.0)
+	var tables := [PointTableScript.new(), PointTableScript.new()]
+	for ammo in 2:
+		tables[ammo].mode = OS.get_environment("POINT_MODE") if OS.has_environment("POINT_MODE") else "mc"
+		tables[ammo].dense = OS.get_environment("POINT_DENSE") != "0"
+		if OS.has_environment("POINT_CELLS"):
+			tables[ammo].cells = int(OS.get_environment("POINT_CELLS"))
+		tables[ammo].build(_shooter, _target, ammo)
+		if OS.get_environment("POINT_PRUNE") == "1":
+			var before: int = tables[ammo].points.size()
+			var kept: int = tables[ammo].prune(_target)
+			var tmp := "user://point_tables_probe/%s_%d.pt" % [_shooter.scene_file_path.get_file(), ammo]
+			var raw_kb: int = tables[ammo].raw_bytes() / 1024
+			tables[ammo].save(tmp)
+			var st: Dictionary = tables[ammo].stats
+			tables[ammo] = PointTableScript.load_from(tmp, tables[ammo].shell)
+			tables[ammo].stats = st
+			_say("pruned %s: %d of %d points kept, file %d KB (floats in memory %d KB)" % ["AP" if ammo == 0 else "HE", kept, before,
+				FileAccess.get_file_as_bytes(tmp).size() / 1024, raw_kb])
+		var t = tables[ammo]
+		var keep: PackedInt32Array = t.useful(_target, 0.03)
+		var n_keep := 0
+		for k in keep:
+			n_keep += int(k > 0)
+		_say("%s %s: %d of %d points are within 3%% of a bucket's best somewhere" % [t.mode, "AP" if ammo == 0 else "HE", n_keep, keep.size()])
+		var st: Dictionary = t.stats
+		_say("build %s: %d buckets, %d points, %d walks, %.1f s total, walk %.2f ms/bucket (%.1f us/walk), score %.2f ms/bucket, raw %d KB, u8 %d KB" % [
+			"AP" if ammo == 0 else "HE", st["buckets"], t.points.size(), st["walks"], st["build_us"] / 1e6,
+			st["walk_us"] / 1000.0 / maxi(st["buckets"], 1), st["walk_us"] / maxi(st["walks"], 1),
+			st["score_us"] / 1000.0 / maxi(st["buckets"], 1), t.raw_bytes() / 1024, t.u8_bytes() / 1024])
+	_say("")
+	_say("| range | aspect | shell | table aim y,z | table pred | live | solver aim y,z | solver pred | live |")
+	_say("|---|---|---|---|---|---|---|---|---|")
+	var q_us := 0
+	var qs_us := 0
+	var visited := 0
+	var same := 0
+	var q_n := 0
+	var pick_live := [0.0, 0.0]
+	for r in rs:
+		for asp in asps:
+			_place(r, asp)
+			G.clear_all()
+			var sol: Dictionary = G.solve(_shooter, _target)
+			var opts: Array = sol.get("options", [{}, {}])
+			if opts.size() < 2:
+				continue
+			var tot := [[0.0, 0.0], [0.0, 0.0]]
+			for ammo in 2:
+				var t = tables[ammo]
+				var t0 := Time.get_ticks_usec()
+				var b: Dictionary = t.best(_target, r, asp)
+				q_us += Time.get_ticks_usec() - t0
+				t0 = Time.get_ticks_usec()
+				var bs: Dictionary = t.best_sorted(_target, r, asp)
+				qs_us += Time.get_ticks_usec() - t0
+				visited += int(bs["visited"])
+				same += int(int(bs["point"]) == int(b["point"]))
+				q_n += 1
+				if int(b["point"]) < 0 or (opts[ammo] as Dictionary).is_empty():
+					continue
+				var ta: Vector3 = t.points[int(b["point"])]
+				var sa: Vector3 = opts[ammo]["offset"]
+				var lt := _salvo_value(t.shell, ta, r, asp, n_shots, space)
+				var ls := _salvo_value(t.shell, sa, r, asp, n_shots, space)
+				var s_dmg: float = float(opts[ammo]["payout"]) - float(opts[ammo].get("fire_ev", 0.0))
+				_say("| %.0f | %.0f | %s | %.1f,%.1f | %.0f (landed %.2f) | %.0f (%.2f) | %.1f,%.1f | %.0f (%.2f) | %.0f (%.2f) |" % [r, asp,
+					"AP" if ammo == 0 else "HE", ta.y, ta.z, b["damage"], b["landed"], lt.x, lt.y, sa.y, sa.z, s_dmg,
+					float(opts[ammo]["landed"]), ls.x, ls.y])
+				var fire_t: float = float(b["value"]) - float(b["damage"])
+				var fire_s: float = float(opts[ammo].get("fire_ev", 0.0))
+				tot[0][ammo] = lt.x + (fire_t / maxf(float(b["landed"]), 1e-6) * lt.y if ammo == 1 else 0.0)
+				tot[1][ammo] = ls.x + (fire_s / maxf(float(opts[ammo]["landed"]), 1e-6) * ls.y if ammo == 1 else 0.0)
+			var tb: Array = [tables[0].best(_target, r, asp), tables[1].best(_target, r, asp)]
+			var t_pick: int = 0 if float(tb[0]["value"]) >= float(tb[1]["value"]) else 1
+			var s_pick: int = int(sol.get("ammo", 0))
+			pick_live[0] += tot[0][t_pick]
+			pick_live[1] += tot[1][s_pick]
+			_say("| %.0f | %.0f | pick | table %s | | %.0f | solver %s | | %.0f |" % [r, asp, "AP" if t_pick == 0 else "HE",
+				tot[0][t_pick], "AP" if s_pick == 0 else "HE", tot[1][s_pick]])
+	_say("")
+	_say("live value of picks, summed: table %.0f, solver %.0f (%+.1f%%); table query %.0f us" % [pick_live[0], pick_live[1],
+		100.0 * (pick_live[0] / maxf(pick_live[1], 1e-6) - 1.0), float(q_us) / maxi(q_n, 1)])
+	_say("sorted query %.0f us, %.1f points visited, same pick %d/%d" % [float(qs_us) / maxi(q_n, 1),
+		float(visited) / maxi(q_n, 1), same, q_n])
+	_out.close()
+	get_tree().quit()
+
+
+## (mean damage per shot, landed share) of `n` shells aimed at `aim` (target-local) through the game's
+## DispersionCalculator, with one lead-error draw per salvo.
+func _salvo_value(shell: ShellParams, aim: Vector3, range_m: float, aspect: float, n: int, space) -> Vector2:
+	var m: Dictionary = BotGunnery._batteries(_shooter, BotGunnery.KIND_MAIN, range_m)[0]
+	var pm = ProjectileManager.get_raw()
+	var from: Vector3 = _shooter.global_position + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var aim_w: Vector3 = _target.to_global(aim)
+	var at: Array = BotGunnery._shell_at(BotGunnery._shell_table(shell), range_m)
+	var lead: Vector2 = BotGunnery.lead_axes(at[0], aspect, range_m, DamageExpectation.lead_sigmas(_target))
+	var d: Vector2 = (m["dispersion"] as DispersionParams).dispersion_at((aim_w - from).length(), m["base_range"]) * (m["spread"] as Vector2)
+	var fwd := (aim_w - from).normalized()
+	var right := fwd.cross(Vector3.UP).normalized()
+	var up := right.cross(fwd).normalized()
+	seed(12345)
+	var calc := DispersionCalculator.new(float(m["sigma"]))
+	var lo := Vector2.ZERO
+	var pts := PackedVector3Array()
+	for k in n:
+		if calc._shell_index >= DispersionCalculator.SHELL_COUNT:
+			calc._new_salvo(float(m["sigma"]))
+			lo = Vector2(randfn(0.0, lead.x), randfn(0.0, lead.y))
+		var h: float = calc._h_offsets[calc._shell_index] * d.x * 0.5 + lo.x
+		var v: float = calc._v_offsets[calc._shell_index] * d.y * 0.5 + lo.y
+		calc._shell_index += 1
+		pts.append(_target.to_local(aim_w + right * h + up * v))
+	var codes: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
+	var pay: PackedFloat64Array = BotGunnery._payouts(_target, shell.damage)
+	var sum := 0.0
+	var landed := 0
+	for c in codes:
+		if c == 0xFF or c == 0xFE:
+			continue
+		landed += 1
+		sum += pay[((c >> 5) & 7) * 16 + (c & 0x0F)]
+	return Vector2(sum / n * shell.damage, float(landed) / n)
+
+
+## `--aimcheck <range m> <aspect deg>...`: the solver's AP and HE aims, scored by the table and by live
+## shells sampled over the same kernel (gaussian, sd = half-dispersion / sigma, lead error included).
+func _aimcheck_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--aimcheck")
+	var range_m := float(args[i + 1])
+	var table = G._table(_target)
+	var pm = ProjectileManager.get_raw()
+	var gp: GunParams = _shooter.artillery_controller.get_params()
+	GunneryBake._force_turrets(_target)
+	var space := GunneryBake.survey_space_state(_target)
+	space = GunneryBake.survey_space_state(_target)
+	var rng := RandomNumberGenerator.new()
+	var sym := "PpROSCc"
+	_say("| aspect | ammo | aim y | aim z | table EV | table@samples | live@samples | live results | table results |")
+	_say("|---|---|---|---|---|---|---|---|---|")
+	for k in range(i + 2, args.size()):
+		if not args[k].is_valid_float():
+			break
+		var aspect := float(args[k])
+		_place(range_m, aspect)
+		G.clear_all()
+		var sol: Dictionary = G.solve(_shooter, _target)
+		var opts: Array = sol.get("options", [{}, {}])
+		var mounts: Array = G._batteries(_shooter, BotGunnery.KIND_MAIN, range_m)
+		var m: Dictionary = mounts[0]
+		var lead := DamageExpectation.lead_sigmas(_target)
+		var g: Vector3 = _target.to_local(_shooter.global_position)
+		assert(g.x >= 0.0)
+		var e: Dictionary = BotGunnery.expected(_shooter, _target, range_m, aspect)
+		_say("| %.0f | expected() | | | AP %.0f HE %.0f (fire %.0f) | solve AP/HE %.2f | expected AP/HE %.2f | | |" % [aspect,
+			float(e.get("ap_ev", 0.0)), float(e.get("he_ev", 0.0)), float(e.get("he_fire_ev", 0.0)),
+			float(opts[0].get("payout", 0.0)) / maxf(float(opts[1].get("payout", 0.0)), 1e-6),
+			float(e.get("ap_ev", 0.0)) / maxf(float(e.get("he_ev", 0.0)), 1e-6)])
+		for ammo in 2:
+			var o: Dictionary = opts[ammo]
+			if o.is_empty():
+				continue
+			var shell: ShellParams = m["shells"][ammo]
+			var aim: Vector3 = o["offset"]
+			var st: Dictionary = G._shell_table(shell)
+			var s: Array = G._shell_at(st, (g - aim).length())
+			var ai: int = G._aspect_of(g, aim)
+			var gk: int = G.bucket_id(ai, G._descent_index(s[0]))
+			var b: PackedByteArray = table["buckets"][gk]
+			var frame: Array = G.lattice_frame(ai)
+			var hd: Vector2 = G._half_disp(m, range_m)
+			var miss: Vector2 = G.lead_axes(s[0], G._aspect_center(ai), range_m, lead) * float(m["sigma"])
+			hd = Vector2(Vector2(hd.x, miss.x).length(), Vector2(hd.y, miss.y).length())
+			var sd: Vector2 = hd / float(m["sigma"])
+			var pts := PackedVector3Array()
+			var aims := PackedVector2Array()
+			rng.seed = 7
+			while pts.size() < 400:
+				var du := rng.randfn(0.0, sd.x)
+				var dv := rng.randfn(0.0, sd.y)
+				if absf(du) > hd.x or absf(dv) > hd.y:
+					continue
+				var p: Vector3 = aim + frame[1] * du + frame[2] * dv
+				pts.append(p)
+				aims.append(G._to_plane(p, G.bucket_dir(b), frame))
+			var is_he: bool = shell.type == ShellParams.ShellType.HE
+			var codes: PackedByteArray = G._resolve(_target.scene_file_path, gk, b, s[2], shell.overmatch, is_he, shell.auto_bounce)
+			var payouts: PackedFloat64Array = G._payouts(_target, shell.damage)
+			var res: PackedFloat64Array = pm.lattice_score(codes, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
+				payouts, BotGunnery.DMG_TURRET, b)
+			var from: Vector3 = _target.global_position + _target.global_basis * g + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+			var live: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
+			var t_sum := 0.0
+			var l_sum := 0.0
+			var lh := {}
+			var th := {}
+			for j in pts.size():
+				t_sum += maxf(res[2 * j], 0.0)
+				var c: int = live[j]
+				var lc: String = "." if c == 0xFF or c == 0xFE else sym[c & 0x0F]
+				lh[lc] = int(lh.get(lc, 0)) + 1
+				if c != 0xFF and c != 0xFE:
+					l_sum += payouts[((c >> 5) & 7) * 16 + (c & 0x0F)]
+			var cell_res: PackedFloat64Array = pm.lattice_score(codes, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
+				_code_payouts(), 99.0, b)
+			for j in pts.size():
+				var tc: int = int(roundf(cell_res[2 * j])) if cell_res[2 * j + 1] > 0.5 else -1
+				var key: String = "." if tc < 0 else sym[tc - 1] if tc >= 1 and tc <= sym.length() else "?"
+				th[key] = int(th.get(key, 0)) + 1
+			var c60: PackedByteArray = G._resolve(_target.scene_file_path, gk, b, s[2], shell.overmatch, is_he, deg_to_rad(60.0))
+			var r60: PackedFloat64Array = pm.lattice_score(c60, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
+				payouts, BotGunnery.DMG_TURRET, b)
+			var s60 := 0.0
+			for j in pts.size():
+				s60 += maxf(r60[2 * j], 0.0)
+			_say("| %.0f | %s | %.2f | %.1f | %.0f | %.0f | %.0f | %s | %s | 60cls %.0f |" % [aspect, "HE" if is_he else "AP", aim.y, aim.z,
+				float(o["payout"]), t_sum / pts.size() * shell.damage, l_sum / pts.size() * shell.damage, _hist(lh), _hist(th),
+				s60 / pts.size() * shell.damage])
+	_out.close()
+	get_tree().quit()
+
+
+## Section-independent payout = result code + 1, so a near-zero kernel returns the code.
+func _code_payouts() -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	out.resize(16 * 8)
+	for sec in 8:
+		for c in 16:
+			out[sec * 16 + c] = c + 1
+	return out
+
+
+func _hist(h: Dictionary) -> String:
+	var keys := h.keys()
+	keys.sort()
+	return " ".join(keys.map(func(k): return "%s%d" % [k, h[k]]))
 
 
 ## `--map <range m> <aspect deg>`: the AP result per lattice cell at that geometry, baked and live,

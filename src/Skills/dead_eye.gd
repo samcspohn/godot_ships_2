@@ -7,10 +7,10 @@ extends Skill
 ## at 6 km, so the skill never pushes you out of the fight — it just rewards
 ## patient, aimed shots over rapid-fire engagements.
 
-const spread_mod        = 0.9   # -10% main gun dispersion
+const spread_mod        = 0.95   # -5% main gun dispersion
 # const shell_speed_mod   = 1.05   # +5% shell velocity (both shell types)
-const reload_mod        = 1.05   # +10% reload time (slower fire)
-const traverse_mod      = 0.9   # -15% turret traverse speed
+const reload_mod        = 1.05   # +5% reload time (slower fire)
+const traverse_mod      = 0.9   # -10% turret traverse speed
 
 func _init():
 	name = "Dead Eye"

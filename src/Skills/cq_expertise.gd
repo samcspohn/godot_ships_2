@@ -19,7 +19,10 @@ func _init():
 	]
 
 var main_gun_bonus = 1.0
+## The bonus the live params carry: set when the mod is applied, a frame after `enabled` flips.
+var applied_bonus = 1.0
 func _a(ship: Ship):
+	applied_bonus = main_gun_bonus
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
 	main.dispersion.h_disp *= main_gun_bonus
 	main.dispersion.v_disp *= main_gun_bonus
