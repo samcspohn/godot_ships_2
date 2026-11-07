@@ -86,7 +86,7 @@ class_name DispersionCalculator
 # 	return dispersed * speed
 
 
-const SHELL_COUNT := 3
+const SHELL_COUNT := 2
 const CITADEL_GUARANTEE_NUM := 4
 var citadel_guarantee_counter = 0
 
@@ -96,9 +96,9 @@ var _v_offsets := PackedFloat64Array()
 var _sigma := 1.0
 
 # Citadel ellipse for post-processing (in normalised fraction space, set externally)
-var _citadel_h_frac := 0.36
-var _citadel_v_frac := 0.1
-var _citadel_guarantee_enabled := true
+var _citadel_h_frac := 0.4
+var _citadel_v_frac := 0.5
+var _citadel_guarantee_enabled := false
 
 func _init(sigma: float = 1.0) -> void:
 	_sigma = maxf(sigma, 1.0)
@@ -264,7 +264,8 @@ func calculate_dispersed_launch(
 	if right.length_squared() < 0.0001:
 		right = forward.cross(Vector3.RIGHT)
 	right = right.normalized()
-	var up := right.cross(forward).normalized()
+	# var up := right.cross(forward).normalized()
+	var up := Vector3.UP
 	var dispersed_aim := aim_point + right * h_world + up * v_world
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, dispersed_aim, shell_params)
 	return a[0]

@@ -22,6 +22,7 @@ var pulse_time: float = 0.0
 var original_modulate: Color
 
 func _ready():
+	GameSettings.from_scenario = false
 	connect_button.pressed.connect(_on_connect_pressed)
 	single_player_button.pressed.connect(_on_single_player_pressed)
 	replay_button.pressed.connect(_on_replay_pressed)

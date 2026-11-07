@@ -1,0 +1,81 @@
+{
+ "scenario": {
+  "duration_s": 90,
+  "elapsed_s": 300,
+  "trace": [
+   "Yamato",
+   "Des Moines",
+   "Montana"
+  ],
+  "log_dt": 0.5,
+  "expect": "Yamato at 15k HP, a Montana at 16 km to finish it, a Des Moines at 8k HP 2.5 km off: doomed but out-HPing the cruiser, it rams or trades all-in.",
+  "check": [
+   {
+    "any": [
+     {
+      "ship": "Des Moines",
+      "end": "alive",
+      "op": "==",
+      "value": false
+     },
+     {
+      "ship": "Yamato",
+      "scn": "dist:Des Moines",
+      "op": "<=",
+      "value": 300,
+      "within_s": 60
+     }
+    ]
+   }
+  ]
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 25,
+   "identified": true,
+   "hp": 15000
+  },
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    2500,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 25,
+   "identified": true,
+   "hp": 8000
+  },
+  "montana": {
+   "team": "1",
+   "player_id": "montana",
+   "ship": "res://assets/Ships/Montana/Montana.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    16000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 20,
+   "identified": true
+  }
+ }
+}

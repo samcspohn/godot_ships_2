@@ -40,6 +40,19 @@ func _ready() -> void:
 	NetworkManager.connection_succeeded.connect(_on_connected)
 	NetworkManager.connection_failed.connect(_on_connect_failed)
 	_new()
+	if GameSettings.from_scenario and not GameSettings.last_scenario.is_empty():
+		_restore(GameSettings.last_scenario)
+	GameSettings.from_scenario = false
+
+func _restore(last: Dictionary) -> void:
+	data = last.data.duplicate(true)
+	path = last.path
+	selected = ""
+	_refresh()
+	for i in control_opt.item_count:
+		if control_opt.get_item_text(i) == (last.control if last.control != "" else SPECTATE):
+			control_opt.select(i)
+			_on_control_picked(i)
 
 func _build_ui() -> void:
 	var root := HBoxContainer.new()
@@ -394,6 +407,8 @@ func _play() -> void:
 		status.text = "Scenario needs ships on both teams."
 		return
 	NetworkManager.spectating = control == ""
+	GameSettings.last_scenario = {"data": data.duplicate(true), "path": path, "control": control}
+	GameSettings.from_scenario = true
 	GameSettings.is_single_player = true
 	GameSettings.save_settings()
 	_udp = PacketPeerUDP.new()

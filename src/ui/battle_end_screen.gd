@@ -150,8 +150,16 @@ func _ready() -> void:
 	_tab_container.add_child(leaderboard_tab)
 
 	# -- Return to Port button --
-	_return_button = _make_return_button()
-	vbox.add_child(_return_button)
+	_return_button = _make_return_button("Quit" if CmdArgs.has("--spectate") else "Return to Port", _on_return_to_port_pressed)
+	if GameSettings.from_scenario and not CmdArgs.has("--spectate"):
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 16)
+		row.add_child(_make_return_button("Return", _on_return_to_scenario_pressed))
+		row.add_child(_return_button)
+		vbox.add_child(row)
+	else:
+		vbox.add_child(_return_button)
 
 	# -- Fade-in --
 	var tween := create_tween()
@@ -487,9 +495,9 @@ static func _make_separator_stylebox() -> StyleBoxLine:
 
 
 
-func _make_return_button() -> Button:
+func _make_return_button(text: String, on_pressed: Callable) -> Button:
 	var button := Button.new()
-	button.text = "Quit" if CmdArgs.has("--spectate") else "Return to Port"
+	button.text = text
 	button.custom_minimum_size = Vector2(200, 50)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.add_theme_font_size_override("font_size", 20)
@@ -516,7 +524,7 @@ func _make_return_button() -> Button:
 	pressed_style.bg_color = BUTTON_BG_COLOR.darkened(0.2)
 	button.add_theme_stylebox_override("pressed", pressed_style)
 
-	button.pressed.connect(_on_return_to_port_pressed)
+	button.pressed.connect(on_pressed)
 	return button
 
 
@@ -527,3 +535,9 @@ func _on_return_to_port_pressed() -> void:
 	_Utils.match_result = {}
 	NetworkManager.disconnect_network()
 	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")
+
+
+func _on_return_to_scenario_pressed() -> void:
+	_Utils.match_result = {}
+	NetworkManager.disconnect_network()
+	get_tree().change_scene_to_file("res://src/port/scenario_editor/scenario_editor.tscn")

@@ -60,7 +60,7 @@ metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 script = ExtResource("5_rk6eg")
 speed = 875.0
 drag = 4e-05
-damage = 4500.0
+damage = 4100.0
 size = 1.35
 caliber = 150.0
 mass = 45.3
@@ -146,6 +146,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 script = ExtResource("14_a02lg")
 speed_knts = 45.0
 damage = 12000.0
+flood_buildup = 140.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
 [sub_resource type="Resource" id="Resource_021u1"]
@@ -181,7 +182,7 @@ script = ExtResource("16_qh7xe")
 icon = ExtResource("17_m572y")
 disabled_icon = ExtResource("16_ac8mu")
 cooldown_time = 80.0
-duration = 30.0
+duration = 25.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 

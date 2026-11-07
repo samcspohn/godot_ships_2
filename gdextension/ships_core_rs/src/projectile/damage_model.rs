@@ -32,6 +32,8 @@ struct Shooter {
     guarantee: f32,
     ellipse: (f32, f32),
     ammo: [Option<Ammo>; 2],
+    /// Shells a salvo fires.
+    salvo: f32,
 }
 
 struct Hull {
@@ -158,11 +160,22 @@ pub(crate) struct Expected {
     /// Share of shells that land on the hull at the best aim.
     pub ap_landed: f32,
     pub he_landed: f32,
+    /// AP alone, without lighting fires first.
+    pub ap_pure_dps: f32,
 }
 
 impl Expected {
     pub(crate) fn dps(&self) -> f32 {
         self.ap_dps.max(self.he_dps)
+    }
+
+    fn lerp(&self, o: &Expected, f: f32) -> Expected {
+        let l = |a: f32, b: f32| a + (b - a) * f;
+        Expected { ap_ev: l(self.ap_ev, o.ap_ev), he_ev: l(self.he_ev, o.he_ev), he_fire_ev: l(self.he_fire_ev, o.he_fire_ev),
+            ap_dps: l(self.ap_dps, o.ap_dps), he_dps: l(self.he_dps, o.he_dps), ap_heal: l(self.ap_heal, o.ap_heal),
+            he_heal: l(self.he_heal, o.he_heal), ap_cit: l(self.ap_cit, o.ap_cit), he_cit: l(self.he_cit, o.he_cit),
+            ap_fire_dps: l(self.ap_fire_dps, o.ap_fire_dps), ap_landed: l(self.ap_landed, o.ap_landed),
+            he_landed: l(self.he_landed, o.he_landed), ap_pure_dps: l(self.ap_pure_dps, o.ap_pure_dps) }
     }
 }
 
@@ -185,7 +198,7 @@ fn upper(edges: &[f64], x: f64) -> usize {
     edges.partition_point(|e| *e <= x).min(edges.len().saturating_sub(1))
 }
 
-/// Matches BotGunnery.ev_bucket_index: the summary lives on even buckets.
+/// Matches BotGunnery.ev_bucket_index: the summary lives on even descent buckets.
 fn even(i: usize, n: usize) -> usize {
     (2 * ((i as f64 / 2.0).round() as usize)).min(2 * ((n.max(1) - 1) / 2))
 }
@@ -213,7 +226,34 @@ impl DamageModel {
         true
     }
 
+    /// Between the two aspect buckets round `aspect_deg`, by their centres.
     pub(crate) fn expected(&self, shooter: i64, hull: i64, range: f32, aspect_deg: f32) -> Option<Expected> {
+        let n = self.aspect_edges.len();
+        if n == 0 {
+            return None;
+        }
+        let top = n - 1;
+        let centre = |i: usize| (if i == 0 { 0.0 } else { self.aspect_edges[i - 1] } + self.aspect_edges[i]) / 2.0;
+        let x = aspect_deg as f64;
+        let i = upper(&self.aspect_edges, x);
+        let mut e0 = i.min(top);
+        if x < centre(e0) && e0 >= 1 {
+            e0 -= 1;
+        }
+        let e1 = (e0 + 1).min(top);
+        let a = self.expected_at(shooter, hull, range, aspect_deg, e0)?;
+        if e1 == e0 {
+            return Some(a);
+        }
+        let (c0, c1) = (centre(e0), centre(e1));
+        let f = ((x - c0) / (c1 - c0)).clamp(0.0, 1.0) as f32;
+        match self.expected_at(shooter, hull, range, aspect_deg, e1) {
+            Some(b) => Some(a.lerp(&b, f)),
+            None => Some(a),
+        }
+    }
+
+    fn expected_at(&self, shooter: i64, hull: i64, range: f32, aspect_deg: f32, ai: usize) -> Option<Expected> {
         let (s, h) = (self.shooters.get(&shooter)?, self.hulls.get(&hull)?);
         let n_asp = self.aspect_edges.len();
         let n_desc = self.descent_edges.len();
@@ -229,7 +269,6 @@ impl DamageModel {
         let i1 = (i0 + 1).min(rows - 1);
         let f = (t - i0 as f32).clamp(0.0, 1.0);
         let at = |k: usize| s.curve[i0 * CURVE_STRIDE + k] + (s.curve[i1 * CURVE_STRIDE + k] - s.curve[i0 * CURVE_STRIDE + k]) * f;
-        let ai = even(upper(&self.aspect_edges, aspect_deg as f64), n_asp);
         let (hd_h, hd_v) = (at(4), at(5));
         let mut value = [0.0f32; 2];
         let mut heal = [h.repair[1]; 2];
@@ -284,9 +323,11 @@ impl DamageModel {
             }
         }
         let mut ap_ev = value[0];
+        let ap_pure_dps = value[0] * s.rate;
         let fires_per_s = s.ammo[1].as_ref().map_or(0.0, |a| {
             let chance = if h.max_buildup > 0.0 { (a.fire_buildup / h.max_buildup).clamp(0.0, 1.0) } else { 0.0 };
-            chance * landed_he * s.rate
+            // A salvo's shells at one aim point build up one zone, which lights once: one fire a salvo at most.
+            (chance * landed_he * s.salvo).min(1.0) * s.rate / s.salvo
         });
         let burning = fires_per_s * h.fire_burn_s;
         let capped = if burning > h.fire_zones { h.fire_zones / burning } else { 1.0 };
@@ -308,7 +349,8 @@ impl DamageModel {
         let he_ev = value[1] + fire_ev;
         let he_heal = if he_ev > 0.0 { (value[1] * heal[1] + fire_ev * h.repair[0]) / he_ev } else { heal[1] };
         Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate,
-            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 }, ap_fire_dps, ap_landed: landed_ap, he_landed: landed_he })
+            ap_heal: heal[0], he_heal, ap_cit: cit[0], he_cit: if he_ev > 0.0 { value[1] * cit[1] / he_ev } else { 0.0 }, ap_fire_dps, ap_landed: landed_ap, he_landed: landed_he,
+            ap_pure_dps })
     }
 }
 
@@ -328,7 +370,7 @@ impl DamageModel {
     /// damage <= 0 where the slot is empty. `rate`: shells per second.
     #[func]
     fn set_shooter(&mut self, id: i64, step: f32, curve: PackedFloat32Array, rate: f32, sigma: f32, guarantee: f32,
-        ellipse: Vector2, ammo: PackedFloat32Array) {
+        ellipse: Vector2, ammo: PackedFloat32Array, salvo: f32) {
         let a = ammo.as_slice();
         let slot = |k: usize| -> Option<Ammo> {
             let b = &a.get(6 * k..6 * k + 6)?;
@@ -337,7 +379,7 @@ impl DamageModel {
         };
         self.grids.retain(|k, _| k.0 != id);
         self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, sigma, guarantee, ellipse: (ellipse.x, ellipse.y),
-            ammo: [slot(0), slot(1)] });
+            ammo: [slot(0), slot(1)], salvo: salvo.max(1.0) });
     }
 
     /// HPManager's size_mod (DMG_MOD_*) and pool rules (SECTION_SHARE, the saturated floor and a penetration's
@@ -425,6 +467,7 @@ impl DamageModel {
             d.set("ap_fire_dps", e.ap_fire_dps);
             d.set("ap_landed", e.ap_landed);
             d.set("he_landed", e.he_landed);
+            d.set("ap_pure_dps", e.ap_pure_dps);
         }
         d
     }

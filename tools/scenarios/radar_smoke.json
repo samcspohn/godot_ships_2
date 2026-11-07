@@ -1,0 +1,100 @@
+{
+ "scenario": {
+  "duration_s": 120,
+  "elapsed_s": 300,
+  "trace": [
+   "Shimakaze",
+   "Des Moines",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Shimakaze in fresh smoke, Des Moines with radar closing from 11 km: it stops firing or leaves the smoke before radar range, and is not caught in it.",
+  "check": [
+   {
+    "any": [
+     {
+      "ship": "Shimakaze",
+      "scn": "seen",
+      "op": "==",
+      "value": false,
+      "share": 0.7,
+      "from_s": 10
+     },
+     {
+      "ship": "Shimakaze",
+      "scn": "shots",
+      "delta": true,
+      "op": "==",
+      "value": 0,
+      "from_s": {
+       "ship": "Des Moines",
+       "scn": "dist:Shimakaze",
+       "op": "<=",
+       "value": 7500
+      }
+     }
+    ]
+   },
+   {
+    "ship": "Shimakaze",
+    "end": "hp_frac",
+    "op": ">=",
+    "value": 0.6
+   }
+  ]
+ },
+ "team": {
+  "shima": {
+   "team": "0",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 0,
+   "identified": true,
+   "consumables": [
+    {
+     "slot": 2,
+     "used": 1,
+     "last_s": 2
+    }
+   ]
+  },
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    11000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 30,
+   "identified": true
+  },
+  "yamato": {
+   "team": "1",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    11000,
+    -9000
+   ],
+   "heading_deg": 270,
+   "speed": 20,
+   "identified": true
+  }
+ }
+}

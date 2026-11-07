@@ -13,6 +13,8 @@ static var stats: Dictionary = {}
 var goal := Vector2.INF
 var stand := false
 var stand_why := ""
+## The destination was pulled inside an enemy's concealment (needs_spot).
+var spot_bound := false
 var _stand_since := -1.0
 var fight_calls := 0
 var eased := Vector2.INF
@@ -123,6 +125,7 @@ func begin_tick() -> void:
 	goal = Vector2.INF
 	stand = false
 	stand_why = ""
+	spot_bound = false
 	fight_calls = 0
 	eased = Vector2.INF
 	post = Vector2.INF

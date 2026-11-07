@@ -121,7 +121,9 @@ func _log(ship: Ship, t: float) -> void:
 		ship.global_position.x, ship.global_position.z, rad_to_deg(atan2(fwd.x, fwd.z)), ship.linear_velocity.length()]
 	var bc := ship.get_node_or_null("Modules/BotController")
 	var shots: PackedInt32Array = bc.behavior.shots_by_ammo if bc != null and bc.behavior != null else PackedInt32Array([0, 0])
-	line += " seen=%s shots=%d" % [ship.is_detected(), shots[0] + shots[1]]
+	line += " seen=%s shots=%d ap=%d fires=%d dcp=%s smoke=%s" % [ship.is_detected(), shots[0] + shots[1], shots[0],
+		ship.fire_manager.get_active_fires() if ship.fire_manager != null else 0, _dcp_state(ship),
+		ship.consumable_manager.is_using(ConsumableItem.ConsumableType.SMOKE_SCREEN) if ship.consumable_manager != null else false]
 	if bc != null and bc.behavior != null and bc.process_mode != Node.PROCESS_MODE_DISABLED:
 		var b: BotBehavior = bc.behavior
 		var tgt: Ship = bc.target
@@ -136,14 +138,27 @@ func _log(ship: Ship, t: float) -> void:
 		if bc._last_intent != null:
 			var dst: Vector3 = bc._last_intent.target_position
 			line += " dest=(%.0f,%.0f) dd=%.0f" % [dst.x, dst.z, ship.global_position.distance_to(dst)]
+			line += " shell=%d apr=%.2f/%.2f/%.2f" % [ship.artillery_controller.shell_index if ship.artillery_controller != null else -1,
+				b.ammo_forecast_debug.x, b.ammo_forecast_debug.y, b.ammo_forecast_debug.z]
+			line += " helm=%d/%.2f ih=%.0f" % [ship.movement_controller.throttle_level, ship.movement_controller.rudder_input,
+				rad_to_deg(bc._last_intent.target_heading) if is_finite(bc._last_intent.target_heading) else INF]
 		line += " fight=[%s] cov1=%s lost=%s gb=%s" % [b._skill_fight.debug_text(), b.cover_first_last, b._skill_fight.cover.lost,
 			b._is_gunboat(ship) if b.has_method("_is_gunboat") else "-"]
-		line += " thr=%.2f dis=%s prio=%s" % [b._threat_score_cache, b.churn.dis_why, b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
+		line += " thr=%.2f dis=%s bound=%s prio=%s" % [b._threat_score_cache, b.churn.dis_why, b.churn.spot_bound, b.priority.ship.ship_name if not b.priority.is_empty() and is_instance_valid(b.priority.ship) else "ref" if not b.priority.is_empty() else "-"]
 		if not b.priority.is_empty():
 			var pp: Vector2 = b.priority.pos
 			line += " ppos=(%.0f,%.0f) pd=%.0f" % [pp.x, pp.y, pp.distance_to(Vector2(ship.global_position.x, ship.global_position.z))]
 		line += " | " + b._skill_stance.debug_text()
 	print(line)
+
+static func _dcp_state(ship: Ship) -> String:
+	var cm = ship.consumable_manager
+	if cm == null:
+		return "-"
+	for item in cm.equipped_consumables:
+		if item != null and item.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
+			return "on" if cm.active_effects.has(item.id) else "cd" if cm.cooldowns.has(item.id) else "ready"
+	return "-"
 
 ## What the enemy had seen of each ship by then: identified (its spawn reference retired) and its last sighting.
 func _know(server: GameServer) -> void:

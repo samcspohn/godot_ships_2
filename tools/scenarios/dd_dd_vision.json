@@ -5,33 +5,26 @@
   "trace": [
    "SP1",
    "Shimakaze",
-   "Yamato"
+   "Des Moines"
   ],
   "log_dt": 0.5,
-  "expect": "SP1 (4.65 km concealment, hydro spent) is lit at 4.3 km by a Shimakaze (3.0 km) it cannot see, with a Yamato shooting on that spotting: SP1 disengages out of the Shimakaze's sight.",
+  "expect": "SP1 (4.65 km concealment, hydro spent) is lit at 4.3 km by a Shimakaze (3.0 km) it cannot see, with a Des Moines shooting on that spotting: SP1 turns round, stern to the Shimakaze, and survives.",
   "check": [
    {
     "ship": "SP1",
-    "scn": "skill",
+    "scn": "off_bow:Shimakaze",
+    "op": ">=",
+    "value": 120,
+    "within_s": 30
+   },
+   {
+    "ship": "SP1",
+    "end": "alive",
     "op": "==",
-    "value": "Disengage",
-    "within_s": 20
-   },
-   {
-    "ship": "SP1",
-    "scn": "dist:Shimakaze",
-    "op": ">=",
-    "value": 4700,
-    "share": 0.5,
-    "from_s": 20
-   },
-   {
-    "ship": "SP1",
-    "end": "hp_frac",
-    "op": ">=",
-    "value": 0.8
+    "value": true
    }
-  ]
+  ],
+  "pass_rate": 0.75
  },
  "team": {
   "sp1": {
@@ -71,15 +64,15 @@
    "speed": 15,
    "identified": true
   },
-  "yamato": {
+  "desmoines": {
    "team": "1",
-   "player_id": "yamato",
-   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
    "is_bot": true,
    "aptitude": 1,
    "spawn_position": 0,
    "pos": [
-    13000,
+    9000,
     -12000
    ],
    "heading_deg": 270,

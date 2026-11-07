@@ -69,6 +69,7 @@ impl ProjectileManager {
             entry.fire_time = self.current_time as f32;
             entry.caliber = caliber;
             entry.team_id = team_id;
+            entry.is_he = shell.get("type").to_i32() == 0;
 
             let impact_vel = ProjectilePhysicsWithDragV2::calculate_velocity_at_time_impl(vel, flight_time, shell);
             entry.landing_vx = impact_vel.x;

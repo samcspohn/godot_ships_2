@@ -1,0 +1,76 @@
+{
+ "scenario": {
+  "duration_s": 150,
+  "elapsed_s": 300,
+  "trace": [
+   "Yamato",
+   "Des Moines",
+   "Montana"
+  ],
+  "log_dt": 1.0,
+  "expect": "Montana 14 km off a Yamato and Des Moines sailing together: they spread to a crossfire of 45\u00b0 or more at the Montana, so any angle it takes shows one a broadside.",
+  "check": [
+   {
+    "ship": "Yamato",
+    "scn": "xfire:Des Moines:Montana",
+    "op": ">=",
+    "value": 45,
+    "share": 0.5,
+    "from_s": 60
+   },
+   {
+    "ship": "Montana",
+    "end": "alive",
+    "op": "==",
+    "value": false
+   }
+  ]
+ },
+ "team": {
+  "montana": {
+   "team": "1",
+   "player_id": "montana",
+   "ship": "res://assets/Ships/Montana/Montana.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 20,
+   "identified": true
+  },
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -14000,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 25,
+   "identified": true
+  },
+  "desmoines": {
+   "team": "0",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -13000,
+    -10500
+   ],
+   "heading_deg": 90,
+   "speed": 25,
+   "identified": true
+  }
+ }
+}

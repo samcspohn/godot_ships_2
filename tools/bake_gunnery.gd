@@ -332,7 +332,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 					continue
 				job_hull.append(h)
 				job_bid.append(BotGunnery.bucket_id(ai, di))
-				ev_jobs.append(int(BotGunnery.ev_bucket_index(ai) == ai and BotGunnery.ev_bucket_index(di) == di))
+				ev_jobs.append(int(BotGunnery.ev_bucket_index(di) == di))
 				job_dir.append(geo["dir"])
 				job_vref.append(v_ref[di])
 				job_nxny.append_array([geo["nx"], geo["ny"]])

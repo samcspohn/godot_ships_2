@@ -6,8 +6,8 @@ extends Skill
 const BUILDUP_MOD: float = 1.10   # +10% fire resistance (harder to ignite)
 const DMG_MOD:     float = 0.90   # -10% fire damage rate
 const DUR_MOD:     float = 0.90   # -10% fire duration
-const REDUCTION_RATE_MOD: float = 1.25   # +25% fire reduction block rate
-const REDUCTION_BLOCK_MOD: float = 0.50  # -50% fire reduction block duration
+const REDUCTION_RATE_MOD: float = 1.2   # +20% fire reduction block rate
+const REDUCTION_BLOCK_MOD: float = 0.20  # -20% fire reduction block duration
 
 func _init() -> void:
 	skill_id = "fp"

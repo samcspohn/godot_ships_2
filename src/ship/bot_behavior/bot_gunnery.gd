@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 18
+const SOLVER_VERSION: int = 19
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -241,7 +241,7 @@ static func _base_payouts() -> PackedFloat64Array:
 
 # ------------------------------------------------------- expected damage
 
-## The expected-damage summary is baked on every other aspect and descent bucket.
+## The expected-damage summary is baked on every aspect bucket and every other descent bucket.
 static func ev_bucket_index(i: int) -> int:
 	return clampi(2 * roundi(i / 2.0), 0, 2 * ((mini(_aspect_edges().size(), descent_edges().size()) - 1) / 2))
 
@@ -268,7 +268,7 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 		return {}
 	var ev: Dictionary = table["ev"]
 	var pm := _projectile_native()
-	var ai := ev_bucket_index(_aspect_index(aspect_deg))
+	var ai := _aspect_index(aspect_deg)
 	var lead := DamageExpectation.lead_sigmas(target)
 	var value := [0.0, 0.0]
 	var landed_he := 0.0
@@ -407,7 +407,7 @@ static func _register(ship: Ship) -> void:
 		curve.append_array([hd.x, hd.y])
 		r += SHELL_RANGE_STEP_M
 	_model.set_shooter(id, SHELL_RANGE_STEP_M, curve, float(m["rate"]), float(m["sigma"]), float(m["guarantee"]),
-		CITADEL_ELLIPSE, ammo)
+		CITADEL_ELLIPSE, ammo, float(m["guns"]))
 
 
 ## HP per second one fire takes off `ship`, its build included.
@@ -427,6 +427,12 @@ static func fire_burn_s(ship: Ship) -> float:
 static func fire_zones(ship: Ship) -> float:
 	return float(ship.fire_manager.get_child_count()) if ship.fire_manager != null else 0.0
 
+
+## Share of a salvo's per-shell fire chances that can burn: shells at one aim point build up one zone, which
+## ignites once and takes no more buildup while it burns.
+static func salvo_fire_share(shells: int, landed: float, chance: float) -> float:
+	var k: float = float(shells) * landed * chance
+	return minf(k, 1.0) / k if k > 0.0 else 1.0
 
 static func _raw_fire_chance(shell: ShellParams, target: Ship) -> float:
 	var fm = target.fire_manager
@@ -567,6 +573,7 @@ func forget_dead() -> void:
 ## Between matches: drop everything keyed on instances. Tables are per hull
 ## file and stay loaded.
 static func clear_all() -> void:
+	BotBehavior._sec_dps_cache.clear()
 	_warmed.clear()
 	_answers.clear()
 	_shell_tables.clear()
@@ -1398,6 +1405,23 @@ static func _max_secondary_range(shooter: Ship) -> float:
 	return out
 
 
+## Whether every point table `shooter` has against `target` is built, so answers from it no longer change; true
+## without tables (the baked summary answers for good).
+static func point_tables_ready(shooter: Ship, target: Ship) -> bool:
+	if _pt_mode() == PT_OFF or shooter.artillery_controller == null:
+		return true
+	for ammo in 2:
+		var key := point_key(shooter, target, ammo)
+		if key.begins_with("|"):
+			continue
+		var known = _point_tables.get(key)
+		if known == null:
+			return false
+		if known and _pt_mode() == PT_RUNTIME and not _rt_done.has(key):
+			return false
+	return true
+
+
 static func point_key(shooter: Ship, target: Ship, ammo: int) -> String:
 	return "%s|%s" % [shell_key(shooter, ammo), target.scene_file_path]
 
@@ -1502,7 +1526,8 @@ static func _expected_points(shooter: Ship, target: Ship, range_m: float, aspect
 		r["size"] = HPManager.size_mod(target.mass, (r["shell"] as ShellParams).caliber)
 		b.append(r)
 	var ap_ev: float = float(b[0]["damage"]) * float(b[0]["size"])
-	var he_fire: float = float(b[1]["value"]) - float(b[1]["damage"])
+	var he_fire: float = (float(b[1]["value"]) - float(b[1]["damage"])) \
+		* salvo_fire_share(int(mounts[0]["guns"]), float(b[1]["landed"]), _raw_fire_chance(b[1]["shell"], target))
 	var he_ev: float = float(b[1]["damage"]) * float(b[1]["size"]) + he_fire
 	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": he_fire, "he_landed": b[1]["landed"], "ap_landed": b[0]["landed"],
 		"ap_dps": ap_ev * rate, "he_dps": he_ev * rate}
@@ -1522,10 +1547,11 @@ static func _score_points(mounts: Array, shooter: Ship, target: Ship) -> Diction
 		if b.is_empty():
 			return {}
 		var aim: Vector3 = b["offset"]
-		var fire_ev: float = float(b["value"]) - float(b["damage"])
+		var chance: float = _fire_chance(b["shell"], target, aim) if ammo == 1 else 0.0
+		var fire_ev: float = (float(b["value"]) - float(b["damage"])) * salvo_fire_share(int(m["guns"]), float(b["landed"]), chance)
 		aim.x *= flip
-		options[ammo] = {"offset": aim, "ammo": ammo, "payout": b["value"], "landed": b["landed"],
-			"fire_chance": _fire_chance(b["shell"], target, aim) if ammo == 1 else 0.0, "fire_ev": fire_ev}
+		options[ammo] = {"offset": aim, "ammo": ammo, "payout": float(b["damage"]) + fire_ev, "landed": b["landed"],
+			"fire_chance": chance, "fire_ev": fire_ev}
 	var pick: int = 0 if float(options[0].get("payout", 0.0)) >= float(options[1].get("payout", 0.0)) else 1
 	if options[pick].is_empty():
 		return {}
@@ -1666,6 +1692,8 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 		chance[ci] /= total_rate
 	for m in mounts:
 		guns += float((m as Dictionary)["guns"])
+	for ci in n:
+		fire[ci] *= salvo_fire_share(int(guns), 1.0, chance[ci])
 	var ans := _choose(cands, value, landed, fire, chance, total_rate, target)
 	if not ans.is_empty():
 		ans["dps"] = float(ans["payout"]) * total_rate

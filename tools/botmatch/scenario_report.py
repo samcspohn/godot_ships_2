@@ -20,6 +20,9 @@ def compare(a, op, b):
         return False
     if op == "has":
         return str(b).lower() in str(a).lower()
+    if op in ("in", "out"):
+        x = num(a)
+        return x is not None and (b[0] <= x <= b[1]) == (op == "in")
     x, y = num(a), num(b)
     if x is None or y is None:
         x, y = str(a).lower(), str(b).lower()
@@ -48,9 +51,17 @@ def scn_samples(lines):
 def scn_value(samples, ship, i, field):
     t, f = samples[ship][i]
     kind, _, name = field.partition(":")
-    if kind not in ("off_bow", "dist"):
+    if kind not in ("off_bow", "dist", "xfire"):
         return f.get(field)
-    o = next((g for s, g in samples.get(name, []) if abs(s - t) < 1e-3), None)
+    at = lambda n: next((g for s, g in samples.get(n, []) if abs(s - t) < 1e-3), None)
+    if kind == "xfire":
+        other, _, tgt = name.partition(":")
+        o, q = at(other), at(tgt)
+        if o is None or q is None:
+            return None
+        a = math.atan2(f["x"] - q["x"], f["z"] - q["z"]) - math.atan2(o["x"] - q["x"], o["z"] - q["z"])
+        return abs(math.degrees((a + math.pi) % (2 * math.pi) - math.pi))
+    o = at(name)
     if o is None:
         return None
     if kind == "dist":
@@ -76,6 +87,9 @@ def event_t(samples, ev):
 
 
 def run_check(c, samples, met):
+    if "any" in c:
+        res = [run_check(k, samples, met) for k in c["any"]]
+        return any(r[0] for r in res), "|".join(str(r[1]) for r in res)
     want = c.get("value")
     if isinstance(want, dict):
         want = end_value(met, want["ship"], want["end"])
@@ -93,7 +107,13 @@ def run_check(c, samples, met):
         lo = event_t(samples, lo)
         if lo is None:
             return False, "no event"
-    hi = lo + c["within_s"] if "within_s" in c else c.get("to_s", math.inf)
+    hi = c.get("to_s", math.inf)
+    if isinstance(hi, dict):
+        hi = event_t(samples, hi)
+        if hi is None:
+            return False, "no end event"
+    if "within_s" in c:
+        hi = lo + c["within_s"]
     idx = [i for i, (t, _) in enumerate(seq) if lo <= t <= hi]
     if not idx:
         return False, "no samples"
@@ -110,6 +130,8 @@ def run_check(c, samples, met):
 
 
 def label(c):
+    if "any" in c:
+        return " or ".join(f"({label(k)})" for k in c["any"])
     what = c.get("match") or c.get("end") or c.get("scn")
     s = f"{c.get('ship', 'match')} {what}{' Δ' if c.get('delta') else ''} {c.get('op', '==')} {c.get('value')}"
     if "within_s" in c:

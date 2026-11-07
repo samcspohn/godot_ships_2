@@ -1,0 +1,92 @@
+{
+ "scenario": {
+  "duration_s": 90,
+  "elapsed_s": 300,
+  "trace": [
+   "Montana",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Yamato steams bow-on at Montana from 10 km, then turns broadside: Montana holds AP while the bow is on and citadels the broadside.",
+  "check": [
+   {
+    "ship": "Montana",
+    "scn": "ap",
+    "delta": true,
+    "op": "==",
+    "value": 0,
+    "to_s": {
+     "ship": "Yamato",
+     "scn": "off_bow:Montana",
+     "op": ">=",
+     "value": 50
+    }
+   },
+   {
+    "ship": "Montana",
+    "scn": "ap",
+    "delta": true,
+    "op": ">",
+    "value": 0,
+    "within_s": 15,
+    "from_s": {
+     "ship": "Yamato",
+     "scn": "off_bow:Montana",
+     "op": ">=",
+     "value": 50
+    }
+   },
+   {
+    "ship": "Montana",
+    "end": "citadel_count",
+    "op": ">=",
+    "value": 1
+   }
+  ]
+ },
+ "team": {
+  "montana": {
+   "team": "1",
+   "player_id": "montana",
+   "ship": "res://assets/Ships/Montana/Montana.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -9000,
+    -12000
+   ],
+   "heading_deg": 90,
+   "speed": 20,
+   "identified": true
+  },
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    1000,
+    -12000
+   ],
+   "heading_deg": 270,
+   "speed": 35,
+   "identified": true,
+   "fixed": {
+    "throttle": 4,
+    "path": [
+     [
+      -500,
+      -12000
+     ],
+     [
+      -500,
+      -30000
+     ]
+    ]
+   }
+  }
+ }
+}

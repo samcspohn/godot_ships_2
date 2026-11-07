@@ -6,7 +6,7 @@ use godot::prelude::*;
 
 use crate::combat::turret::{wrapf, Turret};
 use crate::nav::navigator::hull::{rudder_to_heading, Hull, PHYSICS_DT};
-use crate::nav::types::ShipParams;
+use crate::nav::types::{normalize_angle, ShipParams};
 
 /// A turret within this of its target's bearing counts as trained.
 const TRAINED_RAD: f64 = 0.01;
@@ -112,8 +112,10 @@ impl StanceSim {
     /// metres in the hull frame; `top` how high above the water a falling shell still strikes.
     #[func]
     #[allow(clippy::too_many_arguments)]
+    /// `aspect_w`: per shell, its damage per hit at each aspect off our bow (0..180, evenly), alpha 1; empty, all 1.
     fn dodge_costs(shells: PackedFloat32Array, hull: Rect2, cit: Rect2, top: f32, ref_cal: f32, cit_w: f32,
-            params: PackedFloat32Array, state: PackedFloat32Array, cands: PackedVector3Array, horizon: f32) -> PackedFloat32Array {
+            params: PackedFloat32Array, state: PackedFloat32Array, cands: PackedVector3Array, horizon: f32,
+            aspect_w: PackedFloat32Array) -> PackedFloat32Array {
         let (Some(p), Some(h0)) = (ship_params(params.as_slice()), start_hull(state.as_slice())) else {
             return PackedFloat32Array::new();
         };
@@ -122,7 +124,7 @@ impl StanceSim {
         let mut out = Vec::with_capacity(cands.len() * 2);
         for c in cands.as_slice() {
             sail(&p, h0, *c, horizon, &mut track);
-            out.push(shell_cost(sh, &track, hull, cit, top as f64, ref_cal as f64, cit_w as f64) as f32);
+            out.push(shell_cost(sh, &track, hull, cit, top as f64, ref_cal as f64, cit_w as f64, aspect_w.as_slice()) as f32);
             out.push(track.last().map_or(h0.heading, |h| h.heading));
         }
         PackedFloat32Array::from(out.as_slice())
@@ -138,6 +140,81 @@ impl StanceSim {
         sail(&p, h0, cand, horizon, &mut track);
         let k = ((every / PHYSICS_DT).round() as usize).max(1);
         track.iter().step_by(k).map(|h| h.pos).collect()
+    }
+
+    /// Every candidate's (x, z, heading) every `every` seconds over `horizon`, `horizon / every` + 1 points each, back to back.
+    #[func]
+    fn dodge_paths(params: PackedFloat32Array, state: PackedFloat32Array, cands: PackedVector3Array, horizon: f32, every: f32) -> PackedVector3Array {
+        let (Some(p), Some(h0)) = (ship_params(params.as_slice()), start_hull(state.as_slice())) else {
+            return PackedVector3Array::new();
+        };
+        let k = ((every / PHYSICS_DT).round() as usize).max(1);
+        let n = (horizon / every).floor() as usize + 1;
+        let mut track = Vec::new();
+        let mut out = Vec::with_capacity(cands.len() * n);
+        for c in cands.as_slice() {
+            sail(&p, h0, *c, horizon, &mut track);
+            out.extend((0..n).map(|i| { let h = track[(i * k).min(track.len() - 1)]; Vector3::new(h.pos.x, h.pos.y, h.heading) }));
+        }
+        PackedVector3Array::from(out.as_slice())
+    }
+
+    /// SkillStance's own tracks on the navigator's hull: per leg [heading, power, way, then, after_s], the bow steered
+    /// for `heading` (way ±1: round that way, the stance's lead), for `then` once `after_s` has run (INF: never);
+    /// (x, z, heading) every `every` seconds over `horizon`, `horizon / every` + 1 points each, back to back.
+    #[func]
+    fn helm_paths(params: PackedFloat32Array, state: PackedFloat32Array, legs: PackedFloat32Array, horizon: f32, every: f32) -> PackedVector3Array {
+        let (Some(p), Some(h0)) = (ship_params(params.as_slice()), start_hull(state.as_slice())) else {
+            return PackedVector3Array::new();
+        };
+        let k = ((every / PHYSICS_DT).round() as usize).max(1);
+        let n = (horizon / every).floor() as usize + 1;
+        let steps = (horizon / PHYSICS_DT).ceil().max(0.0) as usize;
+        let mut out = Vec::new();
+        for l in legs.as_slice().chunks_exact(5) {
+            let mut h = h0;
+            for s in 0..=steps {
+                if s % k == 0 && s / k < n {
+                    out.push(Vector3::new(h.pos.x, h.pos.y, h.heading));
+                }
+                let t = s as f32 * PHYSICS_DT;
+                let (want, way) = if l[3].is_finite() && t >= l[4] { (l[3], 0.0) } else { (l[0], l[2]) };
+                let left = normalize_angle(want - h.heading);
+                let aim = if way != 0.0 && left.abs() > std::f32::consts::FRAC_PI_2 && left.signum() != way {
+                    h.heading + way * std::f32::consts::FRAC_PI_2
+                } else { want };
+                h.step(&p, rudder_to_heading(&h, &p, aim, l[1] < 0.0), l[1], PHYSICS_DT);
+            }
+        }
+        PackedVector3Array::from(out.as_slice())
+    }
+
+    /// The navigator's path through `pts` at full ahead, a point passed within `wp_m`, on the hull: (x, z, heading)
+    /// every `every` seconds until the last is reached or `horizon` runs out.
+    #[func]
+    fn route_path(params: PackedFloat32Array, state: PackedFloat32Array, pts: PackedVector2Array, wp_m: f32, horizon: f32, every: f32) -> PackedVector3Array {
+        let (Some(p), Some(mut h)) = (ship_params(params.as_slice()), start_hull(state.as_slice())) else {
+            return PackedVector3Array::new();
+        };
+        let k = ((every / PHYSICS_DT).round() as usize).max(1);
+        let steps = (horizon / PHYSICS_DT).ceil().max(0.0) as usize;
+        let pts = pts.as_slice();
+        let mut i = 0;
+        let mut out = Vec::new();
+        for s in 1..=steps {
+            while i < pts.len() && h.pos.distance_to(pts[i]) < wp_m {
+                i += 1;
+            }
+            if i >= pts.len() {
+                break;
+            }
+            let to = pts[i] - h.pos;
+            h.step(&p, rudder_to_heading(&h, &p, to.x.atan2(to.y), false), 1.0, PHYSICS_DT);
+            if s % k == 0 {
+                out.push(Vector3::new(h.pos.x, h.pos.y, h.heading));
+            }
+        }
+        PackedVector3Array::from(out.as_slice())
     }
 
     /// Per mount in `list`: 1 when live and bearing on `target` with the hull at `at`.
@@ -179,9 +256,12 @@ fn sail(p: &ShipParams, h0: Hull, c: Vector3, horizon: f32, track: &mut Vec<Hull
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shell_cost(sh: &[f32], track: &[Hull], hull: Rect2, cit: Rect2, top: f64, ref_cal: f64, cit_w: f64) -> f64 {
+#[allow(clippy::too_many_arguments)]
+fn shell_cost(sh: &[f32], track: &[Hull], hull: Rect2, cit: Rect2, top: f64, ref_cal: f64, cit_w: f64, aspect_w: &[f32]) -> f64 {
     let mut cost = 0.0;
-    for s in sh.chunks_exact(7) {
+    let n_shells = sh.len() / 7;
+    let n_asp = if n_shells > 0 { aspect_w.len() / n_shells } else { 0 };
+    for (j, s) in sh.chunks_exact(7).enumerate() {
         let k = ((s[4] / PHYSICS_DT).round().max(0.0) as usize).min(track.len() - 1);
         let (ax, az, ah) = (track[k].pos.x as f64, track[k].pos.y as f64, track[k].heading as f64);
         let (fx, fz) = (ah.sin(), ah.cos());
@@ -197,7 +277,13 @@ fn shell_cost(sh: &[f32], track: &[Hull], hull: Rect2, cit: Rect2, top: f64, ref
         let a = (ux * sx + uz * sz, ux * fx + uz * fz);
         let b = (wx * sx + wz * sz, wx * fx + wz * fz);
         if segment_in(a, b, hull) {
-            cost += (s[6] as f64 / ref_cal).powi(3) * (1.0 + if segment_in(a, b, cit) { cit_w } else { 0.0 });
+            // Off our bow, the bearing the shell comes from: what it meets there.
+            let w = if n_asp > 1 {
+                let off = diff(ah, (-vx).atan2(-vz)).abs();
+                let i = ((off / PI * (n_asp - 1) as f64).round() as usize).min(n_asp - 1);
+                aspect_w[j * n_asp + i] as f64
+            } else { 1.0 };
+            cost += w * (s[6] as f64 / ref_cal).powi(3) * (1.0 + if segment_in(a, b, cit) { cit_w } else { 0.0 });
         }
     }
     cost

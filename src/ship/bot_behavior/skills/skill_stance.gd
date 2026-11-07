@@ -29,7 +29,6 @@ const ESCAPE_DT: float = 1.0
 const ESCAPE_REPRICE_S: float = 1.0
 ## At full speed this share of what would land misses; slower, proportionally less.
 const DODGE_AT_SPEED: float = 0.2
-const TURN_SPEED_FRAC: float = 0.75
 ## Citadel damage counts this much extra.
 const CITADEL_W: float = 1.0
 ## Firing headings this close in turn are a tie, broken toward the route.
@@ -82,8 +81,11 @@ var _juke: bool = false
 var _fire: StringName = &""
 var _fire_deadline: float = INF
 var _fire_cooldown: float = -INF
-## Shooter instance id -> [range bucket, dps per aspect step then repairable parts].
+## Shooter instance id -> {"t": built at, range bucket: [rows, raw]}; dropped after TABLE_TTL_S.
 var _tables: Dictionary = {}
+const TABLE_TTL_S: float = 5.0
+var _me: Ship = null
+var _clock: SalvoClock = null
 ## bearing, rows, weight, group (on, by, dark), spread (dark: believed-position radius), reload, next (seconds to its next landing).
 var _shooters: Array[Dictionary] = []
 ## No gun reaches us now: the shooters are the ones land is stopping.
@@ -98,6 +100,7 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		return intent
 	var threatened: bool = _survey(ctx)
 	var route: float = _route_bearing(intent, ctx)
+	_route = route
 	var hdg: float = ctx.behavior._get_ship_heading()
 	if not threatened and not _quiet(ctx):
 		reset()
@@ -108,6 +111,7 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	_axis = INF
 	if threatened:
 		_lie_on_axis(ctx, intent, route, hdg)
+		_to_cone(hdg)
 		_on_route = _route_wins
 		if _on_route:
 			_throttle = 1.0
@@ -117,10 +121,20 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		_setup(ctx, hdg)
 	else:
 		_duel_h = INF
+		_duel_live = false
 	var fire_h: float = INF if is_finite(_duel_h) or _set_up else _fire_heading(ctx, _heading if threatened and not _on_route else hdg, route, hdg)
+	if not is_finite(fire_h) and _fire == &"guns":
+		_fire = &""
+	var aimed := false
+	if is_finite(fire_h) and not _in_cone(fire_h, maxf(_throttle, FIRE_HOLD_THROTTLE)):
+		fire_h = INF
 	if is_finite(fire_h) and _clear_ahead(ctx, fire_h, _throttle < 0.0):
 		_heading = fire_h
 		_on_route = false
+		# The tubes bear: launching needs no way on.
+		if _fire == &"torps" and _tubes_bear(ctx, hdg):
+			_throttle = FIRE_HOLD_THROTTLE
+			aimed = true
 	elif threatened and not _clear_ahead(ctx, _heading, _throttle < 0.0):
 		_on_route = true
 	_juke = _dodge(ctx)
@@ -130,11 +144,12 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		_on_route = false
 	if _on_route:
 		return intent
+	_to_cone(hdg)
 	intent.target_heading = _heading
 	intent.heading_weight = 1.0
 	# A duel is fought under way: the navigator would brake for a destination stance is not sailing to.
-	if _juke and _throttle > 0.0:
-		intent.throttle_override = roundi(_throttle * 4.0)
+	if (_juke or aimed) and _throttle > 0.0:
+		intent.throttle_override = maxi(roundi(_throttle * 4.0), 1)
 	elif is_finite(_duel_h) and _throttle > 0.0:
 		intent.throttle_override = 4
 	intent.force_reverse = _throttle < 0.0
@@ -174,8 +189,8 @@ func debug_text() -> String:
 	var lie: String = "route" if _on_route else ("stern-in" if _stern_in != _turning else "bow-in") + _setup_tag()
 	if is_finite(_duel_h):
 		lie = "DUEL " + _duel_name + _setup_tag()
-	return "Stance %s %.0f° %s%s%s%s | turn %.0f astern %.0f | %d guns on us" % [lie, rad_to_deg(_heading), gear,
-		" TURNING" if _turning else "", " " + _fire if _fire != &"" else "", " DODGE %.1f>%.1f" % [_dodge_cost.x, _dodge_cost.y] if _juke else "",
+	return "Stance %s %.0f° %s%s%s%s%s | turn %.0f astern %.0f | %d guns on us" % [lie, rad_to_deg(_heading), gear,
+		" TURNING" if _turning else "", "", " " + _fire if _fire != &"" else "", " DODGE %s %.1f>%.1f" % [_dodge_kind, _dodge_cost.x, _dodge_cost.y] if _juke else "",
 		_turn_cost, _astern_cost, _shooters.size()]
 
 
@@ -184,6 +199,7 @@ func _setup_tag() -> String:
 
 
 func reset() -> void:
+	_duel_live = false
 	_set_up = false
 	_duel_h = INF
 	_duel_then = INF
@@ -248,7 +264,9 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 	_route_or_lie(ctx, intent, hdg)
 	# The navigator swings the short way to a heading: lead it round the way that was priced.
 	var left: float = angle_difference(hdg, _heading)
+	_lead_for = INF
 	if _turning and not _route_wins and absf(left) > TURN_LEAD and signf(left) != _turn_way:
+		_lead_for = _heading
 		_heading = wrapf(hdg + _turn_way * TURN_LEAD, -PI, PI)
 
 
@@ -265,6 +283,8 @@ var _route_track: Array = []
 var _route_priced_at: float = -INF
 ## Which way the priced turn swings: +1 increasing heading.
 var _turn_way: float = 1.0
+## The heading a long-way turn is led round toward, while _heading holds only the lead; INF otherwise.
+var _lead_for: float = INF
 
 func _route_or_lie(ctx: SkillContext, intent: NavIntent, hdg: float) -> void:
 	# Whether to leave a tuck is the route's planner's call, priced there; a lie would only stall it.
@@ -314,33 +334,74 @@ func _sail_route(ctx: SkillContext, intent: NavIntent, hdg: float, vmax: float, 
 			pts.append(Vector2(q.x, q.z))
 	if pts.is_empty():
 		pts.append(Vector2(intent.target_position.x, intent.target_position.z))
-	var w: float = vmax * TURN_SPEED_FRAC / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
-	var at := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
-	var track: Array = []
-	var i := 0
-	var t := 0.0
-	while t < ESCAPE_MAX_S and i < pts.size():
-		if at.distance_to(pts[i]) < ROUTE_WP_M:
-			i += 1
-			continue
-		var to: Vector2 = pts[i] - at
-		var err: float = angle_difference(hdg, atan2(to.x, to.y))
-		if t >= p.rudder_response_time:
-			hdg = wrapf(hdg + clampf(err, -w * ESCAPE_DT, w * ESCAPE_DT), -PI, PI)
-		var speed: float = vmax * TURN_SPEED_FRAC if absf(err) > AXIS_CONE else vmax
-		at += Vector2(sin(hdg), cos(hdg)) * minf(speed * ESCAPE_DT, to.length())
-		t += ESCAPE_DT
-		track.append([at, hdg, speed])
-	return track
+	if ctx.navigator == null:
+		return []
+	var start := Vector3(ctx.ship.global_position.x, ctx.ship.global_position.z, hdg)
+	var paths: PackedVector3Array = StanceSim.route_path(ctx.navigator.get_debug_arc_inputs(), _hull_state(ctx.ship), pts,
+		ROUTE_WP_M, ESCAPE_MAX_S, ESCAPE_DT)
+	paths.insert(0, start)
+	return _as_track(paths, 0, paths.size())
 
 ## The lie sailed ahead at its throttle: swinging onto _heading the short way, then on.
 func _ahead_track(ctx: SkillContext, hdg: float, vmax: float, p: MovementParams) -> Array:
-	var w: float = vmax * TURN_SPEED_FRAC / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
-	var swing: float = absf(angle_difference(hdg, _heading))
-	var way: float = signf(angle_difference(hdg, _heading)) if swing > 0.0 else 1.0
-	return _escape_track(Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), hdg, _heading, INF, vmax,
-		vmax * maxf(_throttle, 0.0), w * way, p.rudder_response_time, swing, false, ctx.behavior._get_ship_clearance(),
-		maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M))
+	var sailed := _helm_tracks(ctx, [[_heading, maxf(_throttle, 0.0), 0.0, INF, 0.0]], ESCAPE_MAX_S)
+	return _cut(ctx, sailed[0], Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, _heading, true)[0]
+
+
+## Per leg [heading, throttle, way (±1 round that way, 0 the short way), then, after_s], sailed on the navigator's hull
+## from the hull as it is: [position, heading, speed] every ESCAPE_DT over `horizon`; empty without a navigator.
+func _helm_tracks(ctx: SkillContext, legs: Array, horizon: float) -> Array:
+	var flat := PackedFloat32Array()
+	for l in legs:
+		flat.append_array([l[0], _power(l[1]), l[2], l[3], l[4]])
+	var paths := PackedVector3Array()
+	if ctx.navigator != null:
+		paths = StanceSim.helm_paths(ctx.navigator.get_debug_arc_inputs(), _hull_state(ctx.ship), flat, horizon, ESCAPE_DT)
+	var m: int = int(horizon / ESCAPE_DT) + 1
+	var out: Array = []
+	for i in legs.size():
+		out.append(_as_track(paths, i * m, m) if paths.size() >= (i + 1) * m else [])
+	return out
+
+## helm_paths / route_path points from `from`, `m` of them (the first the start), as [position, heading, speed].
+static func _as_track(paths: PackedVector3Array, from: int, m: int) -> Array:
+	var track: Array = []
+	for k in range(1, m):
+		var q: Vector3 = paths[from + k]
+		var prev: Vector3 = paths[from + k - 1]
+		track.append([Vector2(q.x, q.y), q.z, Vector2(q.x - prev.x, q.y - prev.y).length() / ESCAPE_DT])
+	return track
+
+const SWUNG: float = deg_to_rad(3.0)
+
+## `track` ended once `want` is made good along `gdir` (with `swung`, only after the bow is within SWUNG of `final`),
+## empty when it runs aground before `reach` past that swing; with the seconds the swing took.
+func _cut(ctx: SkillContext, track: Array, start: Vector2, gdir: Vector2, want: float, final: float, swung: bool,
+		then: float = INF, after_s: float = 0.0) -> Array:
+	var p: MovementParams = ctx.ship.movement_controller._p()
+	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
+	var clearance: float = ctx.behavior._get_ship_clearance()
+	var swing_k := -1
+	var first_s := -1.0
+	var after := 0.0
+	for k in track.size():
+		var at: Vector2 = track[k][0]
+		# The second leg is a swing of its own, with its own reach of land checked past it.
+		if is_finite(then) and (k + 1) * ESCAPE_DT >= after_s:
+			first_s = (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else (k + 1) * ESCAPE_DT
+			final = then
+			then = INF
+			swing_k = -1
+			after = 0.0
+		if swing_k < 0 and absf(angle_difference(float(track[k][1]), final)) <= SWUNG:
+			swing_k = k
+		if swing_k >= 0:
+			after += float(track[k][2]) * ESCAPE_DT
+		if after <= reach and NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
+			return [[], 0.0]
+		if (swing_k >= 0 or not swung) and (at - start).dot(gdir) >= want:
+			return [track.slice(0, k + 1), first_s if first_s >= 0.0 else (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else (k + 1) * ESCAPE_DT]
+	return [track, first_s if first_s >= 0.0 else (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else track.size() * ESCAPE_DT]
 
 
 ## Turning round, either way the land leaves clear, run until as far toward the goal, against backing
@@ -354,12 +415,9 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	var mv = ctx.ship.movement_controller
 	var p: MovementParams = mv._p()
 	var vmax: float = maxf(mv.max_speed, 1.0)
-	var v: float = vmax * TURN_SPEED_FRAC
-	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
 	var want: float = minf(dist, ESCAPE_M)
 	var start := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
-	var clearance: float = ctx.behavior._get_ship_clearance()
-	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
+	var gdir := Vector2(sin(goal), cos(goal))
 	var left: float = angle_difference(hdg, far)
 	var short: float = signf(left) if left != 0.0 else 1.0
 	_turn_cost = INF
@@ -367,18 +425,19 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	_turn_track = []
 	_vmax = vmax
 	var team_id: int = ctx.ship.team.team_id
-	for way in [short, -short]:
-		var swing: float = absf(left) if way == short else TAU - absf(left)
-		var track := _escape_track(start, hdg, goal, want, vmax, vmax, w * way, p.rudder_response_time, swing, false, clearance, reach)
+	var sailed := _helm_tracks(ctx, [[far, 1.0, short, INF, 0.0], [far, 1.0, -short, INF, 0.0], [near, -1.0, 0.0, INF, 0.0]], ESCAPE_MAX_S)
+	for i in 2:
+		var cut := _cut(ctx, sailed[i], start, gdir, want, far, true)
+		var track: Array = cut[0]
 		if not track.is_empty():
 			var cost := _priced(ctx, "turn", track, vmax, team_id, &"rows", INF)
 			if cost < _turn_cost:
 				_turn_cost = cost
-				_turn_way = way
-				_swing_s = p.rudder_response_time + swing / maxf(w, 1e-3)
+				_turn_way = short if i == 0 else -short
+				_swing_s = cut[1]
 				_turn_hp = _priced(ctx, "turn", track, vmax, team_id, &"raw", _swing_s)
 				_turn_track = track
-	var back := _escape_track(start, near, goal, want, vmax, vmax * p.reverse_speed_ratio, 0.0, 0.0, 0.0, true, clearance, reach)
+	var back: Array = _cut(ctx, sailed[2], start, gdir, want, near, false)[0]
 	_back_track = back
 	_window_s = _turn_track.size() * ESCAPE_DT if not _turn_track.is_empty() else back.size() * ESCAPE_DT
 	if _turn_track.is_empty():
@@ -395,39 +454,6 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 		if _window_s > 0.0:
 			_astern_cost *= 1.0 + short_s / _window_s
 	return _turn_cost < _astern_cost
-
-
-## Samples every ESCAPE_DT of [position, bow heading, speed] from `at`: the
-## rudder lag, a swing of `swing` at `w` rad/s, then on at `run` until `want`
-## along `goal` (astern: backing at `run` throughout). Empty when it runs aground
-## in the swing or within `reach` after it: past that the route steers round land.
-func _escape_track(at: Vector2, hdg: float, goal: float, want: float, vmax: float, run: float, w: float,
-		lag: float, swing: float, astern: bool, clearance: float, reach: float) -> Array:
-	var track: Array = []
-	var gdir := Vector2(sin(goal), cos(goal))
-	var start := at
-	var turned: float = 0.0
-	var after: float = 0.0
-	var t: float = 0.0
-	while t < ESCAPE_MAX_S:
-		var speed: float = run
-		if not astern and turned < swing:
-			speed = vmax * TURN_SPEED_FRAC
-			if t >= lag:
-				var step: float = minf(absf(w) * ESCAPE_DT, swing - turned)
-				hdg += step * signf(w)
-				turned += step
-		var dir := Vector2(sin(hdg), cos(hdg)) * (-1.0 if astern else 1.0)
-		at += dir * speed * ESCAPE_DT
-		t += ESCAPE_DT
-		if turned >= swing:
-			after += speed * ESCAPE_DT
-		if after <= reach and NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
-			return []
-		track.append([at, hdg, speed])
-		if turned >= swing and (at - start).dot(gdir) >= want:
-			break
-	return track
 
 
 ## Whole salvos landing along `track`, each on its shooter's clock: at the hull's
@@ -458,7 +484,9 @@ func _track_split(track: Array, vmax: float, team_id: int, window_s: float, earl
 			var reach: float = _reach_share(sh, to.length())
 			if reach > 0.0 and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				var d: float = float(sh.reload) * float(sh.weight) * reach * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				var row := _row_at(sh, to.length(), &"raw")
+				var d: float = float(sh.reload) * float(sh.weight) * reach * (row[a] if not row.is_empty() else 0.0) \
+					* (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 				var g: String = sh.group
 				out[g] += d
 				var si: int = 0
@@ -473,14 +501,19 @@ func _track_split(track: Array, vmax: float, team_id: int, window_s: float, earl
 
 ## `kind`'s salvos along `track` in `window_s`, sliced and priced by DamageExpectation (learned turn-outs).
 func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, rows: StringName, window_s: float,
-		stops: Dictionary = {}) -> float:
-	var s := _track_slices(track, vmax, team_id, rows, window_s, stops)
-	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT))
+		stops: Dictionary = {}, skip_s: float = 0.0) -> float:
+	var s := _track_slices(track, vmax, team_id, rows, window_s, stops, skip_s)
+	var torps: float = 0.0
+	if rows == &"rows":
+		for v in _track_torps(track, window_s):
+			torps += v
+	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT)) + torps
 
 
 ## [on, by, dark]: `rows` salvos along `track` (as _track_split) per DamageExpectation.TURNOUT_SLICES_S slice, from
 ## shooters on us, bystanders and unspotted enemies.
-func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary = {}) -> Array:
+func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary = {},
+		skip_s: float = 0.0) -> Array:
 	var slices: Array = DamageExpectation.TURNOUT_SLICES_S
 	var out := {"on": [], "by": [], "dark": []}
 	for g in out:
@@ -492,6 +525,8 @@ func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, wi
 	for sh in _shooters:
 		var reload: float = sh.reload
 		var t: float = float(sh.next)
+		while t < skip_s:
+			t += reload
 		var into: Array = out[sh.group]
 		var stop: float = minf(end, float(stops.get(sh.id, INF)))
 		while t < stop:
@@ -508,7 +543,9 @@ func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, wi
 				var si: int = 0
 				while si < slices.size() - 1 and t >= slices[si]:
 					si += 1
-				into[si] += reload * float(sh.weight) * reach * sh[rows][a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				var row := _row_at(sh, to.length(), rows)
+				if not row.is_empty():
+					into[si] += reload * float(sh.weight) * reach * row[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 			t += reload
 	return [out.on, out.by, out.dark]
 
@@ -535,7 +572,7 @@ func _fire_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> 
 		return INF
 	var want: StringName = &"torps"
 	var h: float = _tube_heading(ctx, base, route, hdg)
-	if not is_finite(h):
+	if not is_finite(h) and not _duel_live:
 		want = &"guns"
 		h = _gun_heading(ctx, base, route, hdg)
 	if not is_finite(h):
@@ -548,7 +585,28 @@ func _fire_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> 
 		_fire_cooldown = now + (FIRE_RETRY_S if want == &"guns" else TORP_RETRY_S)
 		_fire = &""
 		return INF
+	if _sails_into_sight(ctx, h, _fire_deadline - now):
+		_fire_cooldown = now + (FIRE_RETRY_S if want == &"guns" else TORP_RETRY_S)
+		_fire = &""
+		return INF
 	return h
+
+
+## Unseen, sailing `h` at full speed for `secs` would bring us inside an enemy's sight of us we are now outside.
+const SIGHT_MARGIN_M: float = 300.0
+
+func _sails_into_sight(ctx: SkillContext, h: float, secs: float) -> bool:
+	var ship: Ship = ctx.ship
+	if ship.is_detected() or ship.team == null or ctx.server == null or secs <= 0.0:
+		return false
+	var seen: float = NavigationMapManager.reach_conceal_radius(ship) + SIGHT_MARGIN_M
+	var a := Vector2(ship.global_position.x, ship.global_position.z)
+	var b: Vector2 = a + Vector2(sin(h), cos(h)) * ship.movement_controller.max_speed * secs
+	for e in ctx.server._team_belief(ship.team.team_id):
+		var p: Vector2 = e.pos
+		if a.distance_to(p) > seen and Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p) <= seen:
+			return true
+	return false
 
 
 func _tube_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> float:
@@ -561,7 +619,13 @@ func _tube_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> 
 	return _nearest(loaded, Vector2(aim.x, aim.z), base, route, hdg, false)
 
 
-## The least turn off `base` that bears every gun, when the guns idle there are loaded by the time it is made.
+## Of the two least turns off `base` that bear every gun, the one whose guns idle at `base` fire soonest, the hull sailed
+## and the turrets slewed from where they lie; only when they fire and the bow is back on `base` before the target's
+## next salvo lands. Repriced every ESCAPE_REPRICE_S.
+const GUN_PRICE_S: float = 60.0
+var _gun_priced_at: float = -INF
+var _gun_h: float = INF
+
 func _gun_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> float:
 	var t: Ship = ctx.target
 	var arty = ctx.ship.artillery_controller
@@ -570,21 +634,61 @@ func _gun_heading(ctx: SkillContext, base: float, route: float, hdg: float) -> f
 	var gp: GunParams = arty.get_params()
 	if ctx.ship.global_position.distance_to(t.global_position) > gp._range:
 		return INF
+	var now: float = SimClock.now()
+	if now - _gun_priced_at < ESCAPE_REPRICE_S:
+		return _gun_h
+	_gun_priced_at = now
+	var pick := _gun_pick(ctx, t, arty, gp, base, hdg)
+	_gun_h = INF
+	if is_finite(pick.y) and pick.y + _turn_s(ctx, absf(angle_difference(pick.x, base))) <= ctx.behavior.salvo_clock.next_landing(t, now):
+		_gun_h = pick.x
+	return _gun_h
+
+## (heading, seconds until the guns idle at `base` have all fired there); INF seconds with none idle or none to fire.
+func _gun_pick(ctx: SkillContext, t: Ship, arty, gp: GunParams, base: float, hdg: float) -> Vector2:
 	var at := Vector2(t.global_position.x, t.global_position.z)
-	var h: float = _nearest(arty.guns, at, base, route, hdg, true)
-	if not is_finite(h):
-		return INF
+	var hs: PackedFloat32Array = StanceSim.nearest_bearing(arty.guns, at, hdg, base, true)
+	if hs.is_empty():
+		return Vector2(INF, INF)
 	var bearing: PackedByteArray = StanceSim.bearing_mask(arty.guns, at, hdg, base)
-	var turn_s: float = _turn_s(ctx, absf(angle_difference(hdg, h)))
-	var idle: bool = false
+	var idle: Array = []
 	for i in arty.guns.size():
-		var g = arty.guns[i]
-		if g.disabled or bearing[i] == 1:
+		if not arty.guns[i].disabled and bearing[i] == 0:
+			idle.append(i)
+	if idle.is_empty():
+		return Vector2(INF, INF)
+	var throttle: float = _throttle if _throttle > 0.0 else 1.0
+	var sailed := _helm_tracks(ctx, [[hs[0], throttle, 0.0, INF, 0.0], [hs[1], throttle, 0.0, INF, 0.0]], GUN_PRICE_S)
+	var at0 := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	var tv := Vector2(t.linear_velocity.x, t.linear_velocity.z)
+	var best := INF
+	var best_s := INF
+	for c in 2:
+		var track: Array = sailed[c]
+		if track.is_empty():
 			continue
-		if (1.0 - clampf(g.reload, 0.0, 1.0)) * gp.reload_time > turn_s:
-			return INF
-		idle = true
-	return h if idle else INF
+		var pos := PackedVector2Array()
+		var hdgs := PackedFloat32Array()
+		var tpos := PackedVector2Array()
+		for k in track.size():
+			pos.append(track[k][0])
+			hdgs.append(float(track[k][1]))
+			tpos.append(at + tv * (k + 1) * ESCAPE_DT)
+		var masks: PackedInt64Array = StanceSim.track_bearing(arty.guns, at0, hdg, pos, hdgs, tpos, gp.traverse_speed, ESCAPE_DT)
+		var fire_s := 0.0
+		for i in idle:
+			var trained := INF
+			for k in masks.size():
+				if masks[k] & (1 << i) != 0:
+					trained = (k + 1) * ESCAPE_DT
+					break
+			fire_s = maxf(fire_s, maxf(trained, (1.0 - clampf(arty.guns[i].reload, 0.0, 1.0)) * gp.reload_time))
+		# Reload alone can tie the sides: then the smaller swing of the hull.
+		if fire_s < best_s - ESCAPE_DT or (fire_s <= best_s + ESCAPE_DT and is_finite(best)
+				and absf(angle_difference(hdg, hs[c])) < absf(angle_difference(hdg, best))):
+			best_s = minf(fire_s, best_s)
+			best = hs[c]
+	return Vector2(best, best_s)
 
 
 ## Of the least turns each way off `base` that bear the mounts, the smaller; near
@@ -678,6 +782,10 @@ var _dodge_until: float = -INF
 ## Shell id and landing time of every shell the plan saw: ids are reused.
 var _dodge_seen: Dictionary = {}
 var _dodge_cost := Vector2.ZERO
+var _dodge_kind: String = ""
+var _dodge_kinds: PackedStringArray = []
+## The salvos still to come are priced this long past the shells in the air, as turn and astern are.
+const DODGE_PRICE_S: float = 20.0
 
 ## Whether an enemy shell lands near `ship` that the last dodge plan did not see.
 func shells_fresh(ship: Ship) -> bool:
@@ -732,14 +840,18 @@ func _dodge(ctx: SkillContext) -> bool:
 				cands.append(Vector3(side, hold, _power(thr)))
 				throttles.append(thr)
 	var out: PackedFloat32Array = StanceSim.dodge_costs(_pack_shells(shells), hull, cit, top, DODGE_REF_CAL, DODGE_CIT_W,
-		params, state, cands, horizon)
+		params, state, cands, horizon, _shell_aspects(ship, shells))
+	var cost := _dodge_window_costs(ctx, shells, out, cands, throttles, params, state, horizon)
+	var w: float = float(cost[cost.size() - 1])
 	var score := func(i: int) -> float:
-		return out[2 * i] + DODGE_OFF_W * absf(angle_difference(_heading, out[2 * i + 1])) + DODGE_GEAR_W * absf(throttles[i] - _throttle)
+		return cost[i] + w * (DODGE_OFF_W * absf(angle_difference(_heading, out[2 * i + 1])) + DODGE_GEAR_W * absf(throttles[i] - _throttle))
 	var order: Array = range(cands.size())
 	order.sort_custom(func(i, j): return score.call(i) < score.call(j))
 	# Land is checked only down the ranking: the rest never needs it.
 	var lie_clear := true
 	for i in order:
+		if i != 0 and not _in_cone(out[2 * i + 1], throttles[i]):
+			continue
 		var clear := true
 		for q in StanceSim.dodge_track(params, state, cands[i], horizon, DODGE_LAND_EVERY_S):
 			if NavigationMapManager.get_distance(Vector3(q.x, 0.0, q.y)) < clearance:
@@ -749,13 +861,181 @@ func _dodge(ctx: SkillContext) -> bool:
 			lie_clear = clear
 		if not clear:
 			continue
-		if i != 0 and (not lie_clear or score.call(i) <= out[0] - DODGE_MIN_GAIN):
+		if i != 0 and (not lie_clear or score.call(i) <= cost[0] - DODGE_MIN_GAIN * w):
 			_dodge_h = out[2 * i + 1]
 			_dodge_t = throttles[i]
-		_dodge_cost = Vector2(out[0], score.call(i))
+			_dodge_kind = _dodge_kinds[i]
+		_dodge_cost = Vector2(cost[0], score.call(i)) / w
 		break
 	_dodge_why(ctx, "dodge" if is_finite(_dodge_h) else "dodge_lie")
 	return is_finite(_dodge_h)
+
+
+## Per candidate: the shells in the air that strike (dodge_costs' weight, made HP by the shooters' shell damage) plus the
+## salvos after them over DODGE_PRICE_S along its track, range and aspect priced, the lie's way made good short of it charged
+## as astern's is; last, HP per weight unit. Without a known shooter, the weights alone.
+func _dodge_window_costs(ctx: SkillContext, shells: Array, out: PackedFloat32Array, cands: PackedVector3Array,
+		throttles: PackedFloat32Array, params: PackedFloat32Array, state: PackedFloat32Array, horizon: float) -> PackedFloat32Array:
+	var n: int = cands.size()
+	var cost := PackedFloat32Array()
+	cost.resize(n + 1)
+	_dodge_kinds.resize(n)
+	for i in n:
+		cost[i] = out[2 * i]
+		var c: Vector3 = cands[i]
+		_dodge_kinds[i] = "lie" if i == 0 else "astern" if throttles[i] < 0.0 else "turn" if c.y > 0.0 \
+			else "forward" if throttles[i] > 0.0 else "stop"
+	cost[n] = 1.0
+	var dmg := {}
+	for sh in _shooters:
+		if is_instance_valid(sh.ship) and not sh.ship.artillery_controller.guns.is_empty():
+			var p: ShellParams = sh.ship.artillery_controller.guns[0].get_shell()
+			dmg[roundi(p.caliber)] = p.damage
+	var hp := 0.0
+	var wt := 0.0
+	for sh in shells:
+		var cal: int = roundi(float(sh.caliber))
+		if dmg.has(cal):
+			hp += float(dmg[cal])
+			wt += pow(float(sh.caliber) / DODGE_REF_CAL, 3.0)
+	if wt <= 0.0:
+		return cost
+	var per_w: float = hp / wt
+	var window: float = horizon + DODGE_PRICE_S
+	var paths: PackedVector3Array = StanceSim.dodge_paths(params, state, cands, window, ESCAPE_DT)
+	var m: int = int(window / ESCAPE_DT) + 1
+	if paths.size() < n * m:
+		return cost
+	var vmax: float = maxf(ctx.ship.movement_controller.max_speed, 1.0)
+	var start := Vector2(paths[0].x, paths[0].y)
+	# Made good along the lie's heading, not along wherever its own track ends: a lie still turning round ends behind it.
+	var lie_dir := Vector2(sin(_heading), cos(_heading)) * (-1.0 if _throttle < 0.0 else 1.0)
+	var lie_made: float = (Vector2(paths[m - 1].x, paths[m - 1].y) - start).dot(lie_dir)
+	var team_id: int = ctx.ship.team.team_id
+	for i in n:
+		var track: Array = []
+		for k in m:
+			var q: Vector3 = paths[i * m + k]
+			var prev: Vector3 = paths[i * m + maxi(k - 1, 0)]
+			track.append([Vector2(q.x, q.y), q.z, Vector2(q.x - prev.x, q.y - prev.y).length() / ESCAPE_DT])
+		var made: float = ((track[-1][0] as Vector2) - start).dot(lie_dir)
+		var short_s: float = maxf(lie_made - made, 0.0) / vmax
+		var later: float = _priced(ctx, "dodge", track, vmax, team_id, &"rows", window, {}, horizon)
+		cost[i] = (out[2 * i] * per_w + later) * (1.0 + short_s / window)
+	cost[n] = per_w
+	return cost
+
+
+## Stance and duel only choose how to lie while making way toward the next waypoint: the motion they order stays
+## within PROGRESS_CONE of its bearing (_route; INF, no route: free), and stopping is for when there is nowhere to go.
+const PROGRESS_CONE: float = deg_to_rad(45.0)
+## Way kept on while launching with the tubes already bearing.
+const FIRE_HOLD_THROTTLE: float = 0.25
+var _route: float = INF
+
+## Whether `h` at `throttle` makes way inside the cone.
+func _in_cone(h: float, throttle: float) -> bool:
+	if not is_finite(_route):
+		return true
+	if throttle == 0.0:
+		return false
+	var motion: float = h if throttle > 0.0 else wrapf(h + PI, -PI, PI)
+	return absf(angle_difference(_route, motion)) <= PROGRESS_CONE + 1e-4
+
+## `h` (sailed ahead) moved to the nearest heading inside the cone.
+func _cone_heading(h: float) -> float:
+	if not is_finite(_route):
+		return h
+	return wrapf(_route + clampf(angle_difference(_route, h), -PROGRESS_CONE, PROGRESS_CONE), -PI, PI)
+
+## The held _heading/_throttle brought inside the cone: astern only backing into it, a stop made way ahead; a turn
+## round to it led the way it was priced.
+func _to_cone(hdg: float) -> void:
+	if not is_finite(_route) or _in_cone(_heading, _throttle):
+		return
+	if _throttle < 0.0:
+		# Backing is way made only with the stern already toward the goal; else ahead.
+		if absf(angle_difference(_route, wrapf(hdg + PI, -PI, PI))) <= PI / 2.0:
+			_heading = wrapf(_cone_heading(wrapf(_heading + PI, -PI, PI)) + PI, -PI, PI)
+			return
+		_throttle = 1.0
+	if _throttle == 0.0:
+		_throttle = 1.0
+	_heading = _cone_heading(_heading)
+	var left: float = angle_difference(hdg, _heading)
+	if _turning and absf(left) > TURN_LEAD and signf(left) != _turn_way:
+		_heading = wrapf(hdg + _turn_way * TURN_LEAD, -PI, PI)
+
+
+func _tubes_bear(ctx: SkillContext, hdg: float) -> bool:
+	var aim: Vector3 = ctx.behavior.torpedo_target_position
+	return StanceSim.bearing_mask(_loaded_tubes(ctx), Vector2(aim.x, aim.z), hdg, hdg).has(1)
+
+
+
+## Enemies whose tubes could reach us, not seen launching within a reload: what one spread of theirs is made of.
+var _torp_shooters: Array[Dictionary] = []
+
+func _torp_survey(ctx: SkillContext) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var ship: Ship = ctx.ship
+	if ship.team == null or ctx.server == null:
+		return out
+	var at := Vector2(ship.global_position.x, ship.global_position.z)
+	var now: float = SimClock.now()
+	for b in ctx.server._team_belief(ship.team.team_id):
+		var e: Ship = b.ship
+		if not is_instance_valid(e) or not e.is_alive() or not is_instance_valid(e.torpedo_controller):
+			continue
+		var tc: TorpedoController = e.torpedo_controller
+		if tc.launchers.is_empty() or tc.get_params() == null:
+			continue
+		if (b.pos as Vector2).distance_to(at) - float(b.spread) > tc.get_max_range() + ESCAPE_M:
+			continue
+		if now - float(ctx.behavior.torps_launched_at.get(e, -INF)) < tc.get_params().reload_time:
+			continue
+		var tp: TorpedoParams = tc.get_torp_params()
+		var fan := 0
+		for l in tc.launchers:
+			fan = maxi(fan, l.muzzles.size())
+		out.append({"pos": b.pos, "range": tc.get_max_range(), "dmg": tp.damage, "fan": fan, "det": tp.detection_range,
+			"vt": maxf(tp.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0), "bear": BotBehavior.torp_bear_s(e)})
+	return out
+
+
+## Per step of `track` (to `window_s`): HP from enemy spreads, BotBehavior.torpedo_curve's lanes at the hull shown,
+## stepped aside from at its speed then; each shooter's spread arrives within its bear and run, one spread at most.
+func _track_torps(track: Array, window_s: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(track.size())
+	if _torp_shooters.is_empty() or _me == null:
+		return out
+	var mc = _me.movement_controller
+	var p: MovementParams = mc._p()
+	var reach: float = sqrt(2.0 * p.turning_circle_radius * mc.ship_length)
+	var habit: float = maxf(BotBehavior.TORP_COURSE_SHIFTS * reach / maxf(mc.max_speed, 1.0), 1.0)
+	var n: int = mini(track.size(), int(window_s / ESCAPE_DT))
+	for sh in _torp_shooters:
+		var got := 0.0
+		var cap := 0.0
+		for k in n:
+			var to: Vector2 = (sh.pos as Vector2) - (track[k][0] as Vector2)
+			var d: float = to.length()
+			if d > float(sh.range) or d < 1.0:
+				continue
+			var a: float = angle_difference(float(track[k][1]), atan2(to.x, to.y))
+			var width: float = mc.ship_length * absf(sin(a)) + mc.ship_beam
+			var hits: float = minf(float(sh.fan), 1.0 + width / (d * BotBehavior.TORP_LANE_RAD))
+			var run: float = d / float(sh.vt)
+			var warn: float = minf(d, float(sh.det)) / float(sh.vt)
+			var shift: float = reach / maxf(float(track[k][2]), 1.0)
+			var react: float = clampf((warn - p.rudder_response_time) / maxf(shift, 0.1), 0.0, 1.0)
+			var spread: float = hits * float(sh.dmg) * lerpf(1.0, BotBehavior.TORP_DODGE_KEEP, react) * exp(-run / habit)
+			cap = maxf(cap, spread)
+			var v: float = minf(spread * ESCAPE_DT / (float(sh.bear) + run), maxf(cap - got, 0.0))
+			got += v
+			out[k] += v
+	return out
 
 
 ## A stance throttle as the hull's engine power: astern is the navigator's half power astern.
@@ -771,6 +1051,27 @@ func _hull_state(ship: Ship) -> PackedFloat32Array:
 
 
 ## get_shells_near_position entries as StanceSim.dodge_costs reads them.
+## Per shell in `shells`, what a hit of it does at each aspect off our bow over its alpha, from the shooter it comes
+## from (by bearing, as SalvoClock credits it) and the shell it is read to load; all 1 from an unknown one.
+func _shell_aspects(ship: Ship, shells: Array) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var at := Vector2(ship.global_position.x, ship.global_position.z)
+	for s in shells:
+		var from: float = atan2(-float(s.landing_vx), -float(s.landing_vz))
+		var row := PackedFloat32Array()
+		var best: float = SalvoClock.SOURCE_MATCH
+		for sh in _shooters:
+			var d: float = absf(angle_difference(from, float(sh.bearing)))
+			if d < best and is_instance_valid(sh.ship):
+				best = d
+				row = _row_at(sh, (sh.pos as Vector2).distance_to(at), &"hit")
+		if row.size() != ASPECTS:
+			row = PackedFloat32Array()
+			row.resize(ASPECTS)
+			row.fill(1.0)
+		out.append_array(row)
+	return out
+
 static func _pack_shells(shells: Array) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
 	for sh in shells:
@@ -901,11 +1202,14 @@ static func dps_at(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float)
 	return maxf(float(e.ap_dps), float(e.he_dps)) if not e.is_empty() else -1.0
 
 
-## (dps, repairable dps) of the worse ammo for us, or (-1, 0) unknown.
+## (dps, repairable dps) of the worse ammo for us, from `shooter`'s point table once built, else the baked summary;
+## (-1, 0) unknown.
 static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
-	var model := BotGunnery.damage_model(ship)
-	BotGunnery.damage_model(shooter)
-	var e: Dictionary = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
+	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if BotGunnery.point_tables_on() else {}
+	if e.is_empty():
+		var model := BotGunnery.damage_model(ship)
+		BotGunnery.damage_model(shooter)
+		e = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
 	if e.is_empty():
 		return Vector2(-1.0, 0.0)
 	var he: bool = float(e.he_dps) > float(e.ap_dps)
@@ -913,17 +1217,27 @@ static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: flo
 	return Vector2(dps, dps * float(e.get("he_heal" if he else "ap_heal", 0.5)))
 
 
-## Dps of the worse ammo for us: (citadel hits counted CITADEL_W extra, as it takes HP); the
-## table already shrinks a wide pattern against a small hull. x -1 unknown.
-static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
-	var model := BotGunnery.damage_model(ship)
-	BotGunnery.damage_model(shooter)
-	var e: Dictionary = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
+## Dps of `shooter`'s shell `read` (SalvoClock.shell_read; unknown: the worse for us at this aspect), from its point
+## table (live pools, real dispersion) once built, else the baked summary; AP alone, without lighting fires first:
+## (citadel hits counted CITADEL_W extra, as it takes HP); z, that shell's damage per hit over its alpha. x -1 unknown.
+static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float, read: int = SalvoClock.SHELL_UNKNOWN) -> Vector3:
+	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if BotGunnery.point_tables_on() else {}
 	if e.is_empty():
-		return Vector2(-1.0, -1.0)
-	var ap := float(e.ap_dps) * (1.0 + CITADEL_W * float(e.ap_cit))
-	var he := float(e.he_dps) * (1.0 + CITADEL_W * float(e.he_cit))
-	return Vector2(ap, float(e.ap_dps)) if ap >= he else Vector2(he, float(e.he_dps))
+		var model := BotGunnery.damage_model(ship)
+		BotGunnery.damage_model(shooter)
+		e = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
+	if e.is_empty():
+		return Vector3(-1.0, -1.0, 1.0)
+	var ap_raw: float = float(e.get("ap_pure_dps", e.ap_dps))
+	var ap := ap_raw * (1.0 + CITADEL_W * float(e.get("ap_cit", 0.0)))
+	var he := float(e.he_dps) * (1.0 + CITADEL_W * float(e.get("he_cit", 0.0)))
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var rate: float = float(e.ap_dps) / maxf(float(e.ap_ev), 1e-6)
+	if read == SalvoClock.SHELL_AP or (read == SalvoClock.SHELL_UNKNOWN and ap >= he):
+		var alpha_ap: float = p.shell1.damage if p.shell1 != null else 1.0
+		return Vector3(ap, ap_raw, ap_raw / rate / maxf(float(e.get("ap_landed", 1.0)), 0.01) / maxf(alpha_ap, 1.0))
+	var alpha_he: float = p.shell2.damage if p.shell2 != null else 1.0
+	return Vector3(he, float(e.he_dps), float(e.he_dps) / rate / maxf(float(e.get("he_landed", 1.0)), 0.01) / maxf(alpha_he, 1.0))
 
 
 ## Main and secondary dps on us at this range; one closing from past its range counts at its range.
@@ -969,6 +1283,9 @@ static func _switch_chance(ctx: SkillContext, e: Ship, at: Vector2) -> float:
 func _survey(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
 	_shooters = []
+	_me = ship
+	_clock = ctx.behavior.salvo_clock
+	_torp_shooters = _torp_survey(ctx)
 	if not ship.is_detected() or ship.team == null or ctx.server == null:
 		return false
 	var weight := {}
@@ -1035,7 +1352,8 @@ func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, w
 		return
 	var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
 	var next: float = next_s if not is_nan(next_s) else ctx.behavior.salvo_clock.next_landing(s, now) if group != &"dark" else INF
-	_shooters.append({"id": s.get_instance_id(), "bearing": atan2(to.x, to.y), "rows": rows, "raw": _tables[s.get_instance_id()][2],
+	_shooters.append({"id": s.get_instance_id(), "ship": s, "bearing": atan2(to.x, to.y), "rows": rows,
+		"raw": _tables[s.get_instance_id()][int(minf(to.length(), reach) / RANGE_BUCKET_M)][1],
 		"weight": weight, "group": group, "bit": bit, "spread": spread, "threat": _threat(s, ctx.ship, to.length()),
 		"pos": pos, "range": reach, "reload": reload, "next": next if is_finite(next) else reload * 0.5})
 
@@ -1061,24 +1379,44 @@ static func _guns_free(ctx: SkillContext) -> bool:
 func _rows(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
 	var id := shooter.get_instance_id()
 	var bucket := int(range_m / RANGE_BUCKET_M)
-	var cached: Array = _tables.get(id, [])
-	if not cached.is_empty() and int(cached[0]) == bucket:
-		return cached[1]
+	var now: float = SimClock.now()
+	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
+	var by: Dictionary = _tables.get(id, {})
+	if by.is_empty() or now - float(by.t) > TABLE_TTL_S or int(by.read) != read:
+		by = {"t": now, "read": read}
+		_tables[id] = by
+	if by.has(bucket):
+		return by[bucket][0]
 	var row := PackedFloat32Array()
 	var raw := PackedFloat32Array()
+	var hit := PackedFloat32Array()
 	row.resize(ASPECTS)
 	raw.resize(ASPECTS)
+	hit.resize(ASPECTS)
 	var cal: float = BotGunnery.calibration(shooter, ship, range_m)
 	for i in ASPECTS:
-		var e := _effective(ship, shooter, range_m, i * ASPECT_STEP_DEG)
+		var e := _effective(ship, shooter, range_m, i * ASPECT_STEP_DEG, read)
 		if e.x < 0.0:
 			row = PackedFloat32Array()
 			raw = PackedFloat32Array()
+			hit = PackedFloat32Array()
 			break
 		row[i] = e.x * cal
 		raw[i] = e.y * cal
-	_tables[id] = [bucket, row, raw]
+		hit[i] = e.z * cal
+	by[bucket] = [row, raw, hit]
 	return row
+
+
+## `sh`'s rows (&"rows", &"raw" or &"hit": damage per hit over alpha) at `dist` from it, out to its reach; empty unknown.
+func _row_at(sh: Dictionary, dist: float, rows: StringName) -> PackedFloat32Array:
+	if _me == null or not is_instance_valid(sh.ship):
+		return sh.get(rows, PackedFloat32Array())
+	var r: float = minf(dist, float(sh.range))
+	var row := _rows(_me, sh.ship, r)
+	if rows == &"rows" or row.is_empty():
+		return row
+	return _tables[sh.id][int(r / RANGE_BUCKET_M)][2 if rows == &"hit" else 1]
 
 
 static func _loaded_tubes(ctx: SkillContext) -> Array:
@@ -1113,6 +1451,8 @@ var _duel_turn_at: float = INF
 var _duel_h: float = INF
 var _duel_until: float = -INF
 var _duel_name: String = ""
+## The target is in reach of the duel: its options, turning out to bear the guns among them, own the helm.
+var _duel_live := false
 var _duel_throttle: float = 1.0
 var _last_dealt := 0.0
 var _last_taken := 0.0
@@ -1120,8 +1460,6 @@ var _last_kill_s := INF
 var _last_die_s := INF
 ## The chosen option sinks the target before it would sink us, inside the window.
 var _duel_wins: bool = false
-## The held duel option is not one that opens the range (GETTING_OUT): Disengage drops it.
-var _duel_back := false
 ## The last scored option's uncalibrated damage over the window: dealt (to its HP) and taken.
 var _last_pred_d := 0.0
 var _last_pred_t := 0.0
@@ -1136,6 +1474,7 @@ func dueling() -> bool:
 	return _active and is_finite(_duel_h) and _duel_wins
 
 func _duel(ctx: SkillContext, hdg: float) -> void:
+	_duel_live = false
 	var t: Ship = ctx.target
 	var arty = ctx.ship.artillery_controller
 	if t == null or not is_instance_valid(t) or not t.is_alive() or arty == null or not ctx.behavior._aimable(t):
@@ -1146,10 +1485,9 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	if not (_guns_free(ctx) and d <= arty.get_params()._range) and not (tc != null and d <= tc.get_max_range()):
 		_duel_h = INF
 		return
+	_duel_live = true
 	var now: float = SimClock.now()
 	if now < _duel_until:
-		if is_finite(_duel_h) and not _duel_wins and _duel_back and ctx.behavior._active_skill_name == &"Disengage":
-			_duel_h = INF
 		if is_finite(_duel_h):
 			_take_duel()
 		return
@@ -1158,28 +1496,27 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var to_t: float = atan2(tp.x - at.x, tp.y - at.y)
 	var away: float = wrapf(to_t + PI, -PI, PI)
 	# [heading, throttle, then heading, after s]. Ties go to the first: bow-in shows the least.
+	# Every option makes way inside the progress cone: turning away is Fight's call, made by where it puts the station.
 	var options := {}
 	var side: float = signf(angle_difference(to_t, hdg)) if angle_difference(to_t, hdg) != 0.0 else 1.0
-	var bow_in: float = wrapf(to_t + side * DUEL_ANGLE, -PI, PI)
-	options["bow-in"] = [bow_in, 1.0, INF, 0.0]
-	var bs := _nearer(StanceSim.nearest_bearing(arty.guns, tp, hdg, hdg, true), hdg)
+	options["bow-in"] = [_cone_heading(wrapf(to_t + side * DUEL_ANGLE, -PI, PI)), 1.0, INF, 0.0]
+	var bs := _bearing_in_cone(arty.guns, tp, hdg, _cone_heading(hdg), true)
 	if is_finite(bs):
 		options["broadside"] = [bs, 1.0, INF, 0.0]
-	options["away"] = [away, 1.0, INF, 0.0]
-	options["stop"] = [hdg, 0.0, INF, 0.0]
+	if not is_finite(_route):
+		options["stop"] = [hdg, 0.0, INF, 0.0]
 	# Backing off with the bow already near the target (caught mid turn), it is swung onto it; further off, backing shows the side.
-	if absf(angle_difference(hdg, to_t)) <= REVERSE_OFF_MAX:
+	if absf(angle_difference(hdg, to_t)) <= REVERSE_OFF_MAX and _in_cone(to_t, -1.0):
 		options["reverse"] = [to_t, -1.0, INF, 0.0]
-	var out := INF
 	if tc != null:
-		out = _nearer(StanceSim.nearest_bearing(tc.launchers, tp, hdg, away, false), away)
+		var out := _bearing_in_cone(tc.launchers, tp, hdg, _cone_heading(away), false)
 		if is_finite(out):
 			options["torp-out"] = [out, 1.0, INF, 0.0]
-	# Its next salvo: show the bow until it lands, then turn to launch (or bear the guns).
-	var due: float = ctx.behavior.salvo_clock.next_landing(t, now)
-	var then: float = out if is_finite(out) else bs
-	if is_finite(due) and due > 0.0 and due < DUEL_WINDOW_S and is_finite(then):
-		options["angle-then-turn"] = [bow_in, 1.0, then, due]
+	# Guns idle at the lie: out to bear them, on the side they fire soonest from, and back once they have.
+	if _guns_free(ctx) and d <= arty.get_params()._range:
+		var gun := _gun_pick(ctx, t, arty, arty.get_params(), _heading, hdg)
+		if is_finite(gun.y) and gun.y < DUEL_WINDOW_S and _in_cone(gun.x, 1.0):
+			options["turn-out"] = [gun.x, 1.0, _heading, gun.y]
 	options["lie"] = [_heading, _throttle, INF, 0.0]
 	var tracks := {}
 	var lethal := {}
@@ -1192,6 +1529,7 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 			lethal[name] = _lethal(ctx, t, track)
 	# A salvo that can sink us rules an option out, unless every option shows one.
 	var safe: bool = lethal.values().has(false)
+	var late := _station_delay(ctx, tracks)
 	_pred.clear()
 	var wins := {}
 	var scores := {}
@@ -1199,6 +1537,8 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var best_score := -INF
 	for name in tracks:
 		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name])
+		if is_finite(sc) and late.has(name):
+			sc -= maxf(float(late.net) - sc / DUEL_WINDOW_S, 0.0) * float(late[name])
 		scores[name] = sc
 		if is_finite(sc):
 			_pred[name] = Vector2(_last_pred_d, _last_pred_t)
@@ -1211,10 +1551,6 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 			best_score = sc
 			best = name
 	_duel_wins = bool(wins.get(best, false))
-	# Getting out, a duel we would lose is no reason to turn back: Disengage takes the best option ending no nearer than its route.
-	if ctx.behavior._active_skill_name == &"Disengage" and not _duel_wins:
-		best = _getting_out(scores)
-	_duel_back = not GETTING_OUT.has(best)
 	_duel_name = best
 	if _pred.has(best):
 		_probe(ctx, t, _pred[best])
@@ -1226,6 +1562,9 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	_duel_then = float(options[best][2]) if best != "lie" else INF
 	_duel_turn_at = now + float(options[best][3])
 	_duel_until = now + maxf(minf(_next_gun_s(arty), float(options[best][3]) if float(options[best][3]) > 0.0 else INF), DUEL_HOLD_MIN_S)
+	# A two-leg option is only what was priced once its second leg is sailed.
+	if best != "lie" and is_finite(float(options[best][2])):
+		_duel_until = maxf(_duel_until, _duel_turn_at + DUEL_HOLD_MIN_S)
 	# Stopping or backing off is only real once the way is off her: held until she has stopped.
 	if best != "lie" and float(options[best][1]) <= 0.0:
 		var mv = ctx.ship.movement_controller
@@ -1234,18 +1573,34 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	if is_finite(_duel_h):
 		_take_duel()
 
-## Disengaging, the duel only chooses how to open the range.
-const GETTING_OUT := ["reverse", "away", "lie"]
+## Per option, the seconds its end leaves us later to Fight's station than the nearest option's end, at full speed and
+## within the threat horizon the station is valued over; with "net", the station's worth per second. Empty off a
+## Fight station.
+func _station_delay(ctx: SkillContext, tracks: Dictionary) -> Dictionary:
+	var fs: FightStation = ctx.behavior._skill_fight.station
+	var at: Vector2 = fs.station_xz()
+	var net: float = fs.station_net()
+	if ctx.behavior._active_skill_name != &"Fight" or not at.is_finite() or net <= 0.0:
+		return {}
+	var vmax: float = maxf(ctx.ship.movement_controller.max_speed, 1.0)
+	var horizon: float = ctx.behavior.threat_horizon(ctx.server)
+	var arrive := {}
+	var least := INF
+	for name in tracks:
+		arrive[name] = minf((tracks[name][-1][0] as Vector2).distance_to(at) / vmax, horizon)
+		least = minf(least, float(arrive[name]))
+	var out := {"net": net}
+	for name in arrive:
+		out[name] = float(arrive[name]) - least
+	return out
+
 ## Reverse is offered only with the bow this near the target.
 const REVERSE_OFF_MAX := deg_to_rad(30.0)
 
-## The best-scoring of GETTING_OUT, else "lie".
-static func _getting_out(scores: Dictionary) -> String:
-	var best := "lie"
-	for name in GETTING_OUT:
-		if scores.has(name) and float(scores[name]) > float(scores.get(best, -INF)):
-			best = name
-	return best
+## The heading nearest `want` that bears `mounts` (all of them, or any) on `at`, when it is inside the cone; else INF.
+func _bearing_in_cone(mounts: Array, at: Vector2, hdg: float, want: float, all: bool) -> float:
+	var h := _nearer(StanceSim.nearest_bearing(mounts, at, hdg, want, all), want)
+	return h if is_finite(h) and _in_cone(h, 1.0) else INF
 
 ## Of a nearest_bearing pair, the one nearer `ref`; INF with none.
 static func _nearer(hs: PackedFloat32Array, ref: float) -> float:
@@ -1295,58 +1650,10 @@ static func _next_gun_s(arty) -> float:
 ## DUEL_WINDOW_S of sailing `h` at full ahead, turning onto it first; with `then`, turning onto that after
 ## `after_s`. Stopped or astern, the bow held as it lies.
 func _option_track(ctx: SkillContext, hdg: float, h: float, throttle: float, then: float = INF, after_s: float = 0.0) -> Array:
-	var mv = ctx.ship.movement_controller
-	var p: MovementParams = mv._p()
-	var vmax: float = maxf(mv.max_speed, 1.0)
-	if throttle <= 0.0:
-		return _hold_track(ctx, hdg, throttle * (vmax * p.reverse_speed_ratio if throttle < 0.0 else vmax), h if throttle < 0.0 else hdg)
-	var v: float = vmax * TURN_SPEED_FRAC
-	var w: float = v / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * TURN_SPEED_FRAC))
-	var start := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
-	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
-	var swing: float = absf(angle_difference(hdg, h))
-	var way: float = signf(angle_difference(hdg, h)) if swing > 0.0 else 1.0
-	var track := _escape_track(start, hdg, h, DUEL_WINDOW_S * vmax * 2.0, vmax, vmax, w * way,
-		p.rudder_response_time, swing, false, ctx.behavior._get_ship_clearance(), reach)
-	if is_finite(then) and not track.is_empty():
-		var k: int = clampi(int(after_s / ESCAPE_DT), 0, track.size() - 1)
-		var last: Array = track[k]
-		var turn: float = absf(angle_difference(float(last[1]), then))
-		var w2: float = signf(angle_difference(float(last[1]), then)) if turn > 0.0 else 1.0
-		var rest := _escape_track(last[0], float(last[1]), then, DUEL_WINDOW_S * vmax * 2.0, vmax, vmax, w * w2,
-			p.rudder_response_time, turn, false, ctx.behavior._get_ship_clearance(), reach)
-		if rest.is_empty():
-			return []
-		track = track.slice(0, k + 1) + rest
-	return track.slice(0, int(DUEL_WINDOW_S / ESCAPE_DT))
-
-## Bow fixed on `hdg`, speed run from the current toward `v_goal` (negative astern) at the hull's rates.
-func _hold_track(ctx: SkillContext, hdg: float, v_goal: float, h_goal: float = INF) -> Array:
-	var mv = ctx.ship.movement_controller
-	var p: MovementParams = mv._p()
-	var vmax: float = maxf(mv.max_speed, 1.0)
-	if not is_finite(h_goal):
-		h_goal = hdg
-	var dir := Vector2(sin(hdg), cos(hdg))
-	var at := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
-	var v: float = Vector2(ctx.ship.linear_velocity.x, ctx.ship.linear_velocity.z).dot(dir)
-	var clearance: float = ctx.behavior._get_ship_clearance()
-	var track: Array = []
-	for k in int(DUEL_WINDOW_S / ESCAPE_DT):
-		var slowing: bool = v * (v_goal - v) < 0.0
-		var rate: float = vmax / maxf(p.deceleration_time if slowing else p.acceleration_time, 0.1)
-		v = move_toward(v, v_goal, rate * ESCAPE_DT)
-		var off: float = angle_difference(hdg, h_goal)
-		if off != 0.0:
-			var share: float = absf(v) / vmax
-			var w: float = absf(v) / (maxf(p.turning_circle_radius, 1.0) * (p.slow_speed_turn_tightening + (1.0 - p.slow_speed_turn_tightening) * share))
-			hdg = wrapf(hdg + clampf(off, -w * ESCAPE_DT, w * ESCAPE_DT), -PI, PI)
-			dir = Vector2(sin(hdg), cos(hdg))
-		at += dir * v * ESCAPE_DT
-		if NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
-			return []
-		track.append([at, hdg, absf(v)])
-	return track
+	var bow: float = hdg if throttle == 0.0 else h
+	var sailed := _helm_tracks(ctx, [[bow, throttle, 0.0, then, after_s]], DUEL_WINDOW_S)
+	return _cut(ctx, sailed[0], Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, bow, true,
+		then, after_s)[0]
 
 func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	var ship: Ship = ctx.ship
@@ -1388,6 +1695,11 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 				dealt[k] += per_gun
 				ready[i] = time + gp.reload_time
 	_add_torpedoes(ctx, t, at0, hdg0, pos, hdgs, tpos, dealt)
+	var asp_t: float = BotBehavior.guns_bear_aspect(t)
+	for k in n:
+		var to_t: Vector2 = tpos[k] - pos[k]
+		var brg: float = rad_to_deg(absf(angle_difference(hdgs[k], atan2(to_t.x, to_t.y))))
+		dealt[k] += BotBehavior._secondary_dps(ship, t, to_t.length(), asp_t, brg) * ESCAPE_DT
 	var sum := 0.0
 	var kill_t := INF
 	for k in n:
@@ -1397,6 +1709,7 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 			break
 	# Unlearned, as dealt is: the learned turn-out prices only one side of the trade.
 	var taken := _track_incoming(track, maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, {t.get_instance_id(): kill_t}, ship.ship_class)
+	_add_secondaries_in(ship, track, t, kill_t, taken)
 	var hp: float = maxf(ctx.behavior.trade_hp(), 1.0)
 	_last_pred_d = minf(Array(dealt).reduce(func(a, x): return a + x, 0.0), hp_t)
 	_last_pred_t = Array(taken).reduce(func(a, x): return a + x, 0.0)
@@ -1426,6 +1739,41 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	_last_kill_s = (kill_k + 1) * ESCAPE_DT if kill_k >= 0 else INF
 	_last_die_s = (die_k + 1) * ESCAPE_DT if die_k >= 0 else INF
 	return _last_dealt - _last_taken - lost + won
+
+## Secondaries of the shooters on us into `taken` along `track`, at the aspect we show each and the bearing it shows us,
+## as _track_incoming books its guns: none behind land from it, the unspotted at DARK_TAKEN; `t` where it is going
+## and silent once it sinks.
+func _add_secondaries_in(ship: Ship, track: Array, t: Ship, kill_t: float, taken: PackedFloat32Array) -> void:
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var team_id: int = ship.team.team_id
+	var masks := {}
+	for sh in _shooters:
+		var e: Ship = sh.get("ship")
+		if not is_instance_valid(e) or not is_instance_valid(e.secondary_controller):
+			continue
+		var reach: float = e.secondary_controller.get_max_range()
+		var w: float = DamageExpectation.DARK_TAKEN[mini(ship.ship_class, 2)] if sh.group == &"dark" else 1.0
+		var e_hdg: float = atan2(-e.global_transform.basis.z.x, -e.global_transform.basis.z.z)
+		var ep: Vector2 = sh.pos
+		var ev := Vector2.ZERO
+		if e == t:
+			ep = Vector2(t.global_position.x, t.global_position.z)
+			ev = Vector2(t.linear_velocity.x, t.linear_velocity.z)
+		var bit: int = int(sh.bit)
+		var stop: int = mini(track.size(), int(kill_t / ESCAPE_DT) if e == t and is_finite(kill_t) else track.size())
+		for k in stop:
+			var at: Vector2 = track[k][0]
+			var to: Vector2 = ep + ev * (k + 1) * ESCAPE_DT - at
+			if to.length() > reach:
+				continue
+			if bit >= 0 and field != null:
+				if not masks.has(k):
+					masks[k] = field.exposure_mask(team_id, at)
+				if int(masks[k]) & (1 << bit) == 0:
+					continue
+			var a: float = rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y))))
+			var brg: float = rad_to_deg(absf(angle_difference(e_hdg, atan2(-to.x, -to.y))))
+			taken[k] += w * BotBehavior._secondary_dps(e, ship, to.length(), a, brg) * ESCAPE_DT
 
 ## Our spreads into `dealt`: each launcher once loaded and trained, its share of torpedo_curve (the
 ## target's dodge priced in) landing a run's time after launch.
@@ -1476,8 +1824,13 @@ func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary,
 			var reach: float = _reach_share(sh, to.length())
 			if reach > 0.0 and not shadowed:
 				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				out[k] += float(sh.reload) * w * reach * sh.raw[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
+				var row := _row_at(sh, to.length(), &"raw")
+				if not row.is_empty():
+					out[k] += float(sh.reload) * w * reach * row[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
 			t += float(sh.reload)
+	var torps := _track_torps(track, track.size() * ESCAPE_DT)
+	for k in out.size():
+		out[k] += torps[k]
 	return out
 
 

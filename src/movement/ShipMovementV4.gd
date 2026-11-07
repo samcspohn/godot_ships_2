@@ -3,7 +3,7 @@ class_name ShipMovementV4
 
 const SHIP_SPEED_MODIFIER: float = 2.6 # display shows knots / modifier
 
-var debug_log: bool = true
+var debug_log: bool = false
 
 # All per-ship tunables live in MovementParams (Moddable). Assign a
 # MovementParams subresource to `params` in the ship's .tscn.

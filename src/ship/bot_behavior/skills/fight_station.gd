@@ -65,6 +65,8 @@ const HARM_PRIOR_S := 300.0
 var _presumed := false
 ## The push's {push_i, push_away} for fight_search, or empty.
 var _push := {}
+## Whether the held station was picked pushing: the switch margin holds only against picks of the same kind.
+var _picked_push := false
 ## Per belief entry, 1 while a brawler may ignore that enemy's ring: it is shooting a friend.
 var _busy := PackedByteArray()
 var _checkpoints := 0
@@ -281,6 +283,7 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 		if ok:
 			_chasing = false
 			_adopt(Vector3(carry.x, 0.0, carry.y), 0.0, {})
+			_picked_push = _push.has("push_i")
 			_marched_ms = -100000
 	carry = Vector2.INF
 	if _has_station and not _chasing and not bool(vis.fight_eval(Vector2(_station.x, _station.z), pos, mo).ok):
@@ -304,7 +307,8 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 
 func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dictionary,
 		prio: PackedByteArray, belief: Array[Dictionary]) -> void:
-	var holding: bool = _has_station and not _chasing
+	# A push station is a point on a circle round a moving target: held as a cell, it is left behind.
+	var holding: bool = _has_station and not _chasing and not _push.has("push_i") and not _picked_push
 	mo.held = Vector2(_station.x, _station.z) if holding else Vector2.INF
 	var t0 := Time.get_ticks_usec()
 	var r: Dictionary = vis.fight_search(here, pos, mo)
@@ -327,6 +331,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 			_chase_to = r.get("chase_to", Vector2.INF)
 			_target = null
 			_adopt(Vector3(p.x, 0.0, p.y), 0.0, {})
+			_picked_push = _push.has("push_i")
 		return
 	var held: float = float(r.held_score) if holding and bool(r.held_ok) else -INF
 	if holding and float(r.score) <= held + maxf(MARCH_SWITCH_ABS, absf(held) * MARCH_SWITCH_REL):
@@ -337,6 +342,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	if bool(r.get("checkpoint", false)):
 		_checkpoints += 1
 	_adopt(Vector3(p.x, 0.0, p.y), float(r.score), {})
+	_picked_push = _push.has("push_i")
 	_mark(float(r.score), float(r.value), float(r.harm), int(r.mask), prio, belief)
 
 ## The held station's fire on us, share of our trade HP per second; 0 without one.
@@ -359,6 +365,10 @@ func resting() -> bool:
 ## Whether the run to the station would cost more of our HP than SURVIVE_SHARE.
 func doomed() -> bool:
 	return _has_station and _route_hp >= SURVIVE_SHARE
+
+## What the held station is worth per second there: our share of their HP dealt less our share of harm, unpriced.
+func station_net() -> float:
+	return _march_value - harm_share() if _has_station and not _chasing else 0.0
 
 func station_xz() -> Vector2:
 	return Vector2(_station.x, _station.z) if _has_station else Vector2.INF

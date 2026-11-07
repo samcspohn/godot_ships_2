@@ -1,0 +1,86 @@
+{
+ "scenario": {
+  "duration_s": 120,
+  "elapsed_s": 300,
+  "trace": [
+   "Yamato",
+   "Shimakaze",
+   "Montana"
+  ],
+  "log_dt": 0.5,
+  "expect": "Yamato (bot) under Shimakaze torpedoes from the east with a Montana 14 km north: it combs the spreads without showing the Montana its broadside.",
+  "check": [
+   {
+    "ship": "Shimakaze",
+    "end": "torpedoes_fired",
+    "op": ">=",
+    "value": 1
+   },
+   {
+    "ship": "Yamato",
+    "end": "torpedo_hits_taken",
+    "op": "<=",
+    "value": 1
+   },
+   {
+    "ship": "Yamato",
+    "scn": "off_bow:Montana",
+    "op": "out",
+    "value": [
+     60,
+     120
+    ],
+    "share": 0.7,
+    "from_s": 10
+   }
+  ]
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    3644,
+    -14000
+   ],
+   "heading_deg": 0,
+   "speed": 41.7,
+   "identified": true,
+   "bloom_m": 20000
+  },
+  "shima": {
+   "team": "1",
+   "player_id": "shima",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    9644,
+    -11000
+   ],
+   "heading_deg": 270,
+   "speed": 15,
+   "identified": true
+  },
+  "montana": {
+   "team": "1",
+   "player_id": "montana",
+   "ship": "res://assets/Ships/Montana/Montana.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    3644,
+    0
+   ],
+   "heading_deg": 180,
+   "speed": 20,
+   "identified": true
+  }
+ }
+}

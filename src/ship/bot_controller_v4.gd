@@ -695,6 +695,8 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 		if _ship.team != null:
 			server_node.teams[my_team_id].engaged[s] = [_ship, expiry]
 
+	if is_torpedo and behavior != null:
+		behavior.torps_launched_at[s] = maxf(float(behavior.torps_launched_at.get(s, -INF)), _pm_time_to_wall_time(launch_time))
 	if _shooter_lkp_launch_times.get(sid, -INF) >= launch_time:
 		return
 	# If they are already a valid (spotted) target there is nothing to update.

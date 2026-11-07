@@ -6,10 +6,10 @@
 
 [resource]
 script = ExtResource("3_b3dui")
+heal_per_sec = 0.009
 name = "Heavy Repair Team"
 icon = ExtResource("2_xbjdm")
 disabled_icon = ExtResource("1_lvxwm")
-cooldown_time = 90.0
-duration = 30.0
-max_stack = 2
+cooldown_time = 80.0
+duration = 20.0
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"

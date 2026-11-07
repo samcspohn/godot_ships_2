@@ -1,0 +1,68 @@
+{
+ "scenario": {
+  "duration_s": 90,
+  "elapsed_s": 300,
+  "trace": [
+   "Des Moines",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Des Moines 2.5 km off a Yamato's stern quarter with its turrets forward: it stays close and circles inside the Yamato's traverse, outdamaging it.",
+  "check": [
+   {
+    "ship": "Des Moines",
+    "scn": "dist:Yamato",
+    "op": "<=",
+    "value": 5000,
+    "share": 0.8
+   },
+   {
+    "ship": "Des Moines",
+    "end": "total_damage",
+    "op": ">",
+    "value": {
+     "ship": "Yamato",
+     "end": "total_damage"
+    }
+   },
+   {
+    "ship": "Des Moines",
+    "end": "alive",
+    "op": "==",
+    "value": true
+   }
+  ]
+ },
+ "team": {
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -12000
+   ],
+   "heading_deg": 0,
+   "speed": 25,
+   "identified": true
+  },
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -1500,
+    -14000
+   ],
+   "heading_deg": 0,
+   "speed": 35,
+   "identified": true
+  }
+ }
+}

@@ -52,6 +52,8 @@ pub struct ShellLandingEntry {
     pub landing_vz: f32,
     /// Half-length of the danger line (steeper = shorter).
     pub threat_half_len: f32,
+    /// HE rather than AP: what a player reads off the tracer.
+    pub is_he: bool,
 }
 
 #[derive(Default)]

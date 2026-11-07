@@ -76,7 +76,7 @@ elevation_speed = 3.5
 shell1 = SubResource("Resource_5dhfr")
 shell2 = SubResource("Resource_pqw46")
 dispersion = ExtResource("disp_ger_bb")
-reload_time = 31.0
+reload_time = 31.5
 traverse_speed = 3.5
 _range = 15900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
@@ -171,7 +171,7 @@ script = ExtResource("22_pjysk")
 min_angle = 3.605713457256739
 max_angle = 6.021385919380437
 
-[sub_resource type="Resource" id="Resource_iv11n"]
+[sub_resource type="Resource" id="Resource_nx45m"]
 script = ExtResource("22_pjysk")
 min_angle = 0.26179938779914913
 max_angle = 2.809894092904124
@@ -210,6 +210,8 @@ _max_hp = 155100.0
 bow_percent = 0.04
 stern_percent = 0.03
 superstructure_percent = 0.07
+casemate_percent = 0.17
+hull_percent = 0.73
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_gaqpb")
@@ -323,7 +325,7 @@ slew_max_angle = 2.8660305652799583
 
 [node name="GER_150mm_2b_gerat60_007" parent="TurretMount_GER_150mm_2b_gerat60_007" parent_id_path=PackedInt32Array(133564998) index="0" unique_id=164467063 instance=ExtResource("5_wrhyv")]
 slew_max_angle = 2.809894092904124
-fire_arcs = Array[ExtResource("22_pjysk")]([SubResource("Resource_iv11n")])
+fire_arcs = Array[ExtResource("22_pjysk")]([SubResource("Resource_nx45m")])
 
 [node name="TurretMount_GER_150mm_2b_gerat60_008" parent="." index="19" unique_id=2000943539]
 transform = Transform3D(-1, 0, -3.8941437e-07, 0, 1, 0, 3.8941437e-07, 0, -1, -12.475, 12.056, 29.081)

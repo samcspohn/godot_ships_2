@@ -37,6 +37,25 @@ var _landed: Dictionary = {}
 ## A shell is credited to the visible enemy within this of the bearing it comes from.
 const SOURCE_MATCH: float = deg_to_rad(10.0)
 
+## Ship -> [when its latest salvo seen lands, its last two salvos' shells (1 HE, 0 AP), oldest first].
+var _types: Dictionary = {}
+## Shells landing further apart than this are different salvos.
+const SALVO_GAP_S: float = 3.0
+const SHELL_UNKNOWN := -1
+const SHELL_AP := 0
+const SHELL_HE := 1
+
+## What `shooter` is read to be loading against us, from its salvos seen land: AP after one AP salvo, HE after two
+## HE in a row; else unknown.
+func shell_read(shooter: Ship) -> int:
+	var r: Array = _types.get(shooter, [])
+	if r.is_empty() or (r[1] as Array).is_empty():
+		return SHELL_UNKNOWN
+	var seen: Array = r[1]
+	if int(seen[-1]) == SHELL_AP:
+		return SHELL_AP
+	return SHELL_HE if seen.size() >= 2 and int(seen[-2]) == SHELL_HE else SHELL_UNKNOWN
+
 
 func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 	if ship == null or not is_instance_valid(ship):
@@ -88,6 +107,12 @@ func _attribute(ship: Ship, server: GameServer, shells: Array, now: float) -> vo
 		var t: float = s["time_remaining"]
 		_in_air[e] = minf(_in_air.get(e, INF), t)
 		_landed[e] = maxf(_landed.get(e, -INF), now + t)
+		var r: Array = _types.get_or_add(e, [-INF, []])
+		if now + t - float(r[0]) > SALVO_GAP_S:
+			(r[1] as Array).append(SHELL_HE if bool(s.get("is_he", false)) else SHELL_AP)
+			if (r[1] as Array).size() > 2:
+				(r[1] as Array).pop_front()
+		r[0] = maxf(float(r[0]), now + t)
 
 
 func _gather_aimers(ship: Ship, server: GameServer) -> void:

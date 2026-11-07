@@ -2,7 +2,7 @@
 extends ConsumableItem
 class_name RepairParty
 
-@export var heal_per_sec: float = 0.01
+@export_range(0.0000,1.0,0.0001) var heal_per_sec: float = 0.01
 
 func _init():
 	type = ConsumableType.REPAIR_PARTY

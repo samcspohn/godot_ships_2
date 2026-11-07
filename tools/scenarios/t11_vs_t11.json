@@ -1,0 +1,38 @@
+{
+ "scenario": {
+  "duration_s": 1200.0,
+  "elapsed_s": 0.0
+ },
+ "team": {
+  "ship": {
+   "team": "1",
+   "player_id": "ship",
+   "ship": "res://assets/Ships/H44/H44.2.tscn",
+   "is_bot": true,
+   "aptitude": 1.0,
+   "spawn_position": 0.0,
+   "pos": [
+    10000.0,
+    -10000.0
+   ],
+   "heading_deg": 0.0,
+   "speed": 0.0,
+   "identified": true
+  },
+  "ship2": {
+   "team": "0",
+   "player_id": "ship2",
+   "ship": "res://assets/Ships/Vermont/Montana_t11.tscn",
+   "is_bot": true,
+   "aptitude": 1.0,
+   "spawn_position": 1.0,
+   "pos": [
+    0.0,
+    -10000.0
+   ],
+   "heading_deg": 180.0,
+   "speed": 0.0,
+   "identified": true
+  }
+ }
+}

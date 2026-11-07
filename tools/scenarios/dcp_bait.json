@@ -1,0 +1,80 @@
+{
+ "scenario": {
+  "duration_s": 150,
+  "elapsed_s": 300,
+  "trace": [
+   "Des Moines",
+   "Yamato"
+  ],
+  "log_dt": 0.5,
+  "expect": "Des Moines sets fires on a Yamato at 11 km whose damage control is ready: it baits the DCP, then re-fires to set fresh fires during the cooldown.",
+  "check": [
+   {
+    "ship": "Yamato",
+    "scn": "fires",
+    "op": ">=",
+    "value": 1,
+    "within_s": 60
+   },
+   {
+    "ship": "Des Moines",
+    "scn": "shots",
+    "delta": true,
+    "op": ">=",
+    "value": 3,
+    "within_s": 20,
+    "from_s": {
+     "ship": "Yamato",
+     "scn": "dcp",
+     "op": "!=",
+     "value": "ready"
+    }
+   },
+   {
+    "ship": "Yamato",
+    "scn": "fires",
+    "op": ">=",
+    "value": 1,
+    "within_s": 40,
+    "from_s": {
+     "ship": "Yamato",
+     "scn": "dcp",
+     "op": "==",
+     "value": "cd"
+    }
+   }
+  ]
+ },
+ "team": {
+  "desmoines": {
+   "team": "1",
+   "player_id": "desmoines",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    -11000,
+    -12000
+   ],
+   "heading_deg": 0,
+   "speed": 25,
+   "identified": true
+  },
+  "yamato": {
+   "team": "0",
+   "player_id": "yamato",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1,
+   "spawn_position": 0,
+   "pos": [
+    0,
+    -12000
+   ],
+   "heading_deg": 0,
+   "speed": 25,
+   "identified": true
+  }
+ }
+}

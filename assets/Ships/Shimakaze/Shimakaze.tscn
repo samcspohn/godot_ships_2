@@ -95,7 +95,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 script = ExtResource("14_56jcx")
 speed_knts = 52.0
 damage = 20000.0
-flood_buildup = 200.0
+flood_buildup = 190.0
 arming_distance = 200.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
@@ -129,11 +129,10 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_pipf2"]
 script = ExtResource("10_y8kxj")
-heal_per_sec = 0.02
 icon = ExtResource("13_fjgfy")
 disabled_icon = ExtResource("12_17h8w")
 cooldown_time = 40.0
-duration = 10.0
+duration = 15.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 

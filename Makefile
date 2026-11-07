@@ -42,15 +42,16 @@ scenario:
 		--no-live-mods --metrics build/scenario/$(notdir $(basename $(S))).json 2>&1 | tee build/scenario/$(notdir $(basename $(S))).log \
 		| grep -E "^(SCN|DUEL)|SCRIPT ERROR"
 
-# Every scenario's checks over SCN_N seeds: make scenarios [ONLY=dd_*] [SCN_N=4] [TRACE=1]
-SCN_N ?= 4
+# Every scenario's checks over SCN_N seeds, SCN_JOBS at a time: make scenarios [ONLY=dd_*] [SCN_N=40] [SCN_JOBS=200] [TRACE=1]
+SCN_N ?= 40
+SCN_JOBS ?= 200
 ONLY ?= *
 scenarios:
 	rm -rf build/scenarios; mkdir -p build/scenarios
-	i=0; for f in tools/scenarios/$(ONLY).json; do n=$$(basename $$f .json); \
-		for s in $$(seq 1 $(SCN_N)); do i=$$((i+1)); \
-		"$(GODOT)" --headless --path . --fixed-fps 12 --server --port $$((30480+i)) --botmatch res://$$f --seed $$s --no-replay \
-		--gun-matrix-cache --no-live-mods --metrics build/scenarios/$$n.s$$s.json > build/scenarios/$$n.s$$s.log 2>&1 & done; done; wait
+	for f in tools/scenarios/$(ONLY).json; do for s in $$(seq 1 $(SCN_N)); do echo "$$f $$s"; done; done | awk '{print $$0, NR}' | \
+		xargs -P $(SCN_JOBS) -L1 sh -c 'n=$$(basename $$0 .json); "$(GODOT)" --headless --path . --fixed-fps 12 --server \
+		--port $$((30480+$$2)) --botmatch res://$$0 --seed $$1 --no-replay --gun-matrix-cache --no-live-mods \
+		--metrics build/scenarios/$$n.s$$1.json > build/scenarios/$$n.s$$1.log 2>&1; true'
 	python3 tools/botmatch/scenario_report.py build/scenarios tools/scenarios --only "$(ONLY)" $(if $(TRACE),--trace)
 
 # A scenario from a replay snapshot (default: newest replay, 9:30), then SNAP_N runs of it against the recorded ending.

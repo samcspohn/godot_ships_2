@@ -196,16 +196,15 @@ func _breakdown(i: int, j: int) -> String:
 	var model := BotGunnery.damage_model(them)
 	var fp := them.fire_manager.fparams.p() as DOTParams
 	var rows := PackedStringArray(["## %s shooting %s (aspect %.1f°; one full fire = %.1f%% HP)\n" % [_names[i], _names[j], asp, 100.0 * fp.dmg_rate * fp.dur],
-		"| km | AP dps | of which fire | HE dps | of which fire | dodge | sec dps | total dps | TTK s |", "|---|---|---|---|---|---|---|---|---|"])
+		"| km | AP dps | of which fire | HE dps | of which fire | sec dps | total dps | TTK s |", "|---|---|---|---|---|---|---|---|"])
 	var r := 2000.0
 	while r <= us.artillery_controller.get_params()._range:
 		var e: Dictionary = model.get_expected(us.get_instance_id(), them.get_instance_id(), r, asp)
 		var fire_dps: float = float(e.get("he_fire_ev", 0.0)) * float(e.get("he_dps", 0.0)) / maxf(float(e.get("he_ev", 1.0)), 1e-6)
-		var dodge: float = BotBehavior.dodge(them, us, r)
 		var sec: float = BotBehavior._secondary_dps(us, them, r, asp)
 		var total: float = _bots[i].outgoing_dps(them, r, asp)
-		rows.append("| %.0f | %.0f | %.0f | %.0f | %.0f | %.2f | %.0f | %.0f | %s |" % [r / 1000.0, float(e.get("ap_dps", 0.0)), float(e.get("ap_fire_dps", 0.0)), float(e.get("he_dps", 0.0)),
-			fire_dps, dodge, sec, total, _secs(total / them.health_controller.max_hp)])
+		rows.append("| %.0f | %.0f | %.0f | %.0f | %.0f | %.0f | %.0f | %s |" % [r / 1000.0, float(e.get("ap_dps", 0.0)), float(e.get("ap_fire_dps", 0.0)), float(e.get("he_dps", 0.0)),
+			fire_dps, sec, total, _secs(total / them.health_controller.max_hp)])
 		r += 2000.0
 	return "\n".join(rows) + "\n"
 

@@ -202,6 +202,7 @@ impl ProjectileManager {
                     d.set("landing_vx", e.landing_vx);
                     d.set("landing_vz", e.landing_vz);
                     d.set("threat_half_len", e.threat_half_len);
+                    d.set("is_he", e.is_he);
                     result.push(&d.to_variant());
                 }
             }

@@ -15,6 +15,9 @@ var borderless_window: bool = false
 var minimap_size_idx: int = 2
 # Dictionary of ship path -> upgrades (each upgrades entry is slot_index -> upgrade_path)
 var ship_config = {}
+## The editor's last played scenario {data, path, control}; `from_scenario` while its match runs.
+var last_scenario: Dictionary = {}
+var from_scenario: bool = false
 
 func _ready() -> void:
 	load_settings()
