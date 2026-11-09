@@ -135,6 +135,7 @@ func _load_ship_buttons():
 		{"name": "Montana", "path": "res://assets/Ships/Montana/Montana.tscn"},
 		{"name": "Vermont", "path": "res://assets/Ships/Vermont/Montana_t11.tscn"},
 		{"name": "MLK-16-130", "path": "res://assets/Ships/MLK-16-130/MLK-16-130.tscn"},
+		{"name": "MLK-24-130", "path": "res://assets/Ships/Bigensk.tscn"},
 	]
 
 	for ship_data in available_ships:

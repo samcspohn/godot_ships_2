@@ -221,6 +221,7 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 
 # Battle end screen
 var match_ended: bool = false
+const SCENARIO_EDITOR_SCENE := "res://src/port/scenario_editor/scenario_editor.tscn"
 var _options_menu: Control = null
 
 # Match timer (local countdown, corrected by server sync)
@@ -405,7 +406,15 @@ func _ready():
 	# Setup options menu
 	_options_menu = $OptionsMenu
 	_options_menu.get_node("Panel/VBox/ResumeButton").pressed.connect(_hide_options_menu)
-	_options_menu.get_node("Panel/VBox/QuitMatchButton").pressed.connect(_on_quit_match_pressed)
+	var quit_btn: Button = _options_menu.get_node("Panel/VBox/QuitMatchButton")
+	quit_btn.pressed.connect(_on_quit_match_pressed)
+	if GameSettings.from_scenario:
+		var scen_btn := Button.new()
+		scen_btn.text = "Return to Scenarios"
+		scen_btn.custom_minimum_size = quit_btn.custom_minimum_size
+		scen_btn.pressed.connect(_on_quit_match_pressed.bind(SCENARIO_EDITOR_SCENE))
+		quit_btn.add_sibling(scen_btn)
+		quit_btn.get_parent().move_child(scen_btn, quit_btn.get_index())
 	var _bw_check: CheckBox = _options_menu.get_node("Panel/VBox/BorderlessWindowCheck")
 	_bw_check.button_pressed = GameSettings.borderless_window
 	_bw_check.toggled.connect(_on_borderless_window_toggled)
@@ -510,7 +519,7 @@ func _hide_options_menu() -> void:
 	if player_controller.mouse_captured:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-func _on_quit_match_pressed() -> void:
+func _on_quit_match_pressed(scene: String = "res://src/port/main_menu/main_menu.tscn") -> void:
 	match_ended = true  # Prevent _on_match_ended from redirecting to battle_end_screen
 	if server:
 		server.player_quit_match.rpc_id(1)
@@ -527,7 +536,7 @@ func _on_quit_match_pressed() -> void:
 		camera_controller.queue_free()
 	ProjectileManager.clear_all()
 	(TorpedoManager as _TorpedoManager).clear_all()
-	get_tree().change_scene_to_file.call_deferred("res://src/port/main_menu/main_menu.tscn")
+	get_tree().change_scene_to_file.call_deferred(scene)
 
 func _on_borderless_window_toggled(pressed: bool) -> void:
 	GameSettings.borderless_window = pressed

@@ -131,6 +131,43 @@ impl StanceSim {
     }
 
     /// One dodge candidate's hull positions every `every` seconds over `horizon`, for SkillStance's land check.
+    /// SkillStance._track_slices and _track_torps over `track` ([x, z, heading, speed] per cfg.dt): {slices ([on, by, dark]
+    /// x slice), torps, missing ([shooter, range, aspect] of row cells not in cfg.rows)}. cfg as stance_price::Pricer / Torps.
+    #[func]
+    fn track_price(track: PackedFloat64Array, cfg: VarDictionary) -> VarDictionary {
+        let pr = crate::combat::stance_price::Pricer::new(&cfg);
+        let t = track.as_slice();
+        let mut out = VarDictionary::new();
+        out.set("slices", &PackedFloat64Array::from(pr.slices(t).as_slice()));
+        let window = cfg.get("window").and_then(|v| v.try_to::<f64>().ok()).unwrap_or(f64::INFINITY);
+        out.set("torps", crate::combat::stance_price::Torps::new(&cfg, pr.dt()).sum(t, window));
+        out.set("missing", &pr.missing());
+        out
+    }
+
+    /// SkillStance._track_incoming over `track`: {steps (PackedFloat32Array), missing}; cfg as track_price plus dark_w.
+    #[func]
+    fn track_incoming(track: PackedFloat64Array, cfg: VarDictionary) -> VarDictionary {
+        let pr = crate::combat::stance_price::Pricer::new(&cfg);
+        let t = track.as_slice();
+        let dark_w = cfg.get("dark_w").and_then(|v| v.try_to::<f64>().ok()).unwrap_or(1.0);
+        let mut steps = pr.incoming(t, dark_w);
+        let torps = crate::combat::stance_price::Torps::new(&cfg, pr.dt()).per_step(t, (t.len() / 4) as f64 * pr.dt());
+        for (o, v) in steps.iter_mut().zip(torps) {
+            *o += v;
+        }
+        let mut out = VarDictionary::new();
+        out.set("steps", &PackedFloat32Array::from(steps.as_slice()));
+        out.set("missing", &pr.missing());
+        out
+    }
+
+    /// The dodge's pick among cfg.cands, best first (stance_price::dodge_search).
+    #[func]
+    fn dodge_search(cfg: VarDictionary) -> VarDictionary {
+        crate::combat::stance_price::dodge_search(&cfg)
+    }
+
     #[func]
     fn dodge_track(params: PackedFloat32Array, state: PackedFloat32Array, cand: Vector3, horizon: f32, every: f32) -> PackedVector2Array {
         let (Some(p), Some(h0)) = (ship_params(params.as_slice()), start_hull(state.as_slice())) else {
@@ -225,7 +262,7 @@ impl StanceSim {
     }
 }
 
-fn ship_params(v: &[f32]) -> Option<ShipParams> {
+pub(crate) fn ship_params(v: &[f32]) -> Option<ShipParams> {
     if v.len() < 19 {
         return None;
     }
@@ -236,7 +273,7 @@ fn ship_params(v: &[f32]) -> Option<ShipParams> {
     })
 }
 
-fn start_hull(s: &[f32]) -> Option<Hull> {
+pub(crate) fn start_hull(s: &[f32]) -> Option<Hull> {
     (s.len() >= 8).then(|| Hull { pos: Vector2::new(s[0], s[1]), vel: Vector2::new(s[2], s[3]), heading: s[4], yaw: s[5],
         rudder: s[6], power: s[7] })
 }
@@ -258,35 +295,41 @@ fn sail(p: &ShipParams, h0: Hull, c: Vector3, horizon: f32, track: &mut Vec<Hull
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn shell_cost(sh: &[f32], track: &[Hull], hull: Rect2, cit: Rect2, top: f64, ref_cal: f64, cit_w: f64, aspect_w: &[f32]) -> f64 {
-    let mut cost = 0.0;
     let n_shells = sh.len() / 7;
-    let n_asp = if n_shells > 0 { aspect_w.len() / n_shells } else { 0 };
-    for (j, s) in sh.chunks_exact(7).enumerate() {
+    sh.chunks_exact(7).enumerate().map(|(j, s)| {
         let k = ((s[4] / PHYSICS_DT).round().max(0.0) as usize).min(track.len() - 1);
-        let (ax, az, ah) = (track[k].pos.x as f64, track[k].pos.y as f64, track[k].heading as f64);
-        let (fx, fz) = (ah.sin(), ah.cos());
-        let (sx, sz) = (-ah.cos(), ah.sin());
-        let (wx, wz) = (s[0] as f64 - ax, s[1] as f64 - az);
-        let (vx, vz) = (s[2] as f64, s[3] as f64);
-        let vl = (vx * vx + vz * vz).sqrt();
-        let (dx, dz) = if vl > 1e-3 { (vx / vl, vz / vl) } else { (0.0, 0.0) };
-        // threat_half_len encodes the sine of the fall's angle from vertical.
-        let f = ((s[5] as f64 - 15.0) / 35.0).clamp(0.0, 0.99);
-        let run = top * f / (1.0 - f * f).sqrt();
-        let (ux, uz) = (wx - dx * run, wz - dz * run);
-        let a = (ux * sx + uz * sz, ux * fx + uz * fz);
-        let b = (wx * sx + wz * sz, wx * fx + wz * fz);
-        if segment_in(a, b, hull) {
-            // Off our bow, the bearing the shell comes from: what it meets there.
-            let w = if n_asp > 1 {
-                let off = diff(ah, (-vx).atan2(-vz)).abs();
-                let i = ((off / PI * (n_asp - 1) as f64).round() as usize).min(n_asp - 1);
-                aspect_w[j * n_asp + i] as f64
-            } else { 1.0 };
-            cost += w * (s[6] as f64 / ref_cal).powi(3) * (1.0 + if segment_in(a, b, cit) { cit_w } else { 0.0 });
-        }
+        shell_hit(s, j, &track[k], hull, cit, top, ref_cal, cit_w, aspect_w, n_shells)
+    }).sum()
+}
+
+/// Shell j's weight if it strikes the hull at `at` (see dodge_costs), else 0.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn shell_hit(s: &[f32], j: usize, at: &Hull, hull: Rect2, cit: Rect2, top: f64, ref_cal: f64, cit_w: f64,
+        aspect_w: &[f32], n_shells: usize) -> f64 {
+    let n_asp = if n_shells > 0 { aspect_w.len() / n_shells } else { 0 };
+    let (ax, az, ah) = (at.pos.x as f64, at.pos.y as f64, at.heading as f64);
+    let (fx, fz) = (ah.sin(), ah.cos());
+    let (sx, sz) = (-ah.cos(), ah.sin());
+    let (wx, wz) = (s[0] as f64 - ax, s[1] as f64 - az);
+    let (vx, vz) = (s[2] as f64, s[3] as f64);
+    let vl = (vx * vx + vz * vz).sqrt();
+    let (dx, dz) = if vl > 1e-3 { (vx / vl, vz / vl) } else { (0.0, 0.0) };
+    // threat_half_len encodes the sine of the fall's angle from vertical.
+    let f = ((s[5] as f64 - 15.0) / 35.0).clamp(0.0, 0.99);
+    let run = top * f / (1.0 - f * f).sqrt();
+    let (ux, uz) = (wx - dx * run, wz - dz * run);
+    let a = (ux * sx + uz * sz, ux * fx + uz * fz);
+    let b = (wx * sx + wz * sz, wx * fx + wz * fz);
+    if !segment_in(a, b, hull) {
+        return 0.0;
     }
-    cost
+    // Off our bow, the bearing the shell comes from: what it meets there.
+    let w = if n_asp > 1 {
+        let off = diff(ah, (-vx).atan2(-vz)).abs();
+        let i = ((off / PI * (n_asp - 1) as f64).round() as usize).min(n_asp - 1);
+        aspect_w[j * n_asp + i] as f64
+    } else { 1.0 };
+    w * (s[6] as f64 / ref_cal).powi(3) * (1.0 + if segment_in(a, b, cit) { cit_w } else { 0.0 })
 }
 
 /// Whether segment a-b crosses `r` (Liang-Barsky).

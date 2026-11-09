@@ -32,6 +32,7 @@ var _look_anchor: Vector2
 var _layer: CanvasLayer
 var _minimap: Minimap
 var _tags: Dictionary = {}
+var _menu: Control
 
 
 func _ready() -> void:
@@ -64,6 +65,7 @@ func _ready() -> void:
 	_hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	_hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_hud)
+	_build_menu()
 
 	ProjectileManager.set_camera(self)
 	TorpedoManager.camera = self
@@ -94,6 +96,70 @@ func _on_match_ended(winning_team: int) -> void:
 	(TorpedoManager as _TorpedoManager).clear_all()
 	queue_free()
 	get_tree().change_scene_to_file.call_deferred("res://src/ui/battle_end_screen.tscn")
+
+
+func _build_menu() -> void:
+	_menu = Control.new()
+	_menu.visible = false
+	_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_layer.add_child(_menu)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu.add_child(center)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _rounded(Color(0.08, 0.1, 0.14, 0.95), Color(0.4, 0.45, 0.55)))
+	center.add_child(panel)
+	var vbox := VBoxContainer.new()
+	vbox.custom_minimum_size = Vector2(260, 0)
+	vbox.add_theme_constant_override("separation", 14)
+	panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "Options"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 20)
+	vbox.add_child(title)
+	_menu_button(vbox, "Resume", func() -> void: _menu.visible = false)
+	var bw := CheckBox.new()
+	bw.text = "Fullscreen (Borderless)"
+	bw.button_pressed = GameSettings.borderless_window
+	bw.toggled.connect(_on_borderless_toggled)
+	vbox.add_child(bw)
+	if GameSettings.from_scenario and not CmdArgs.has("--spectate"):
+		_menu_button(vbox, "Return to Scenarios", _leave.bind("res://src/port/scenario_editor/scenario_editor.tscn"))
+	var quit := _menu_button(vbox, "Quit" if CmdArgs.has("--spectate") else "Quit Match", _leave.bind("res://src/port/main_menu/main_menu.tscn"))
+	quit.add_theme_color_override("font_color", Color(1, 0.5, 0.5))
+
+
+func _menu_button(parent: Control, text: String, on_pressed: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(0, 40)
+	b.pressed.connect(on_pressed)
+	parent.add_child(b)
+	return b
+
+
+func _on_borderless_toggled(pressed: bool) -> void:
+	GameSettings.borderless_window = pressed
+	GameSettings.apply_display_settings()
+	GameSettings.save_settings()
+
+
+func _leave(scene: String) -> void:
+	if CmdArgs.has("--spectate"):
+		get_tree().quit()
+		return
+	_Utils.match_ended.disconnect(_on_match_ended)
+	set_process(false)
+	NetworkManager.disconnect_network()
+	ProjectileManager.clear_all()
+	(TorpedoManager as _TorpedoManager).clear_all()
+	queue_free()
+	get_tree().change_scene_to_file.call_deferred(scene)
 
 
 func candidates() -> Array[Ship]:
@@ -129,6 +195,8 @@ func cycle(step: int) -> void:
 
 # _input, not _unhandled: ship-tag ProgressBars under the followed ship swallow RMB.
 func _input(event: InputEvent) -> void:
+	if _menu.visible:
+		return
 	if event is InputEventMouseMotion and _looking:
 		_yaw -= event.screen_relative.x * 0.005
 		_pitch = clampf(_pitch - event.screen_relative.y * 0.005, -1.45, 1.2)
@@ -143,6 +211,13 @@ func _input(event: InputEvent) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			_set_looking(false)
+			_menu.visible = not _menu.visible
+			get_viewport().set_input_as_handled()
+			return
+		if _menu.visible:
+			return
 		match event.keycode:
 			KEY_C:
 				cycle(-1 if event.shift_pressed else 1)

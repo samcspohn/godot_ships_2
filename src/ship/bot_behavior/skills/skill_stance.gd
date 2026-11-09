@@ -11,6 +11,7 @@ extends BotSkill
 
 const ASPECT_STEP_DEG: float = 5.0
 const ASPECTS: int = 37
+static var _ASPECT_DEGS := PackedFloat64Array(range(ASPECTS).map(func(i): return i * ASPECT_STEP_DEG))
 const RANGE_BUCKET_M: float = 250.0
 ## In range of us, but not shown to be aiming here (axis_now's unseen contacts).
 const BYSTANDER_WEIGHT: float = 0.5
@@ -29,8 +30,6 @@ const ESCAPE_DT: float = 1.0
 const ESCAPE_REPRICE_S: float = 1.0
 ## At full speed this share of what would land misses; slower, proportionally less.
 const DODGE_AT_SPEED: float = 0.2
-## Citadel damage counts this much extra.
-const CITADEL_W: float = 1.0
 ## Firing headings this close in turn are a tie, broken toward the route.
 const SIDE_TIE: float = deg_to_rad(10.0)
 ## A request not fired by its turn plus this is dropped for a reload.
@@ -81,9 +80,36 @@ var _juke: bool = false
 var _fire: StringName = &""
 var _fire_deadline: float = INF
 var _fire_cooldown: float = -INF
-## Shooter instance id -> {"t": built at, range bucket: [rows, raw]}; dropped after TABLE_TTL_S.
+## Shooter instance id -> {"t": built at, "sig": _row_sig, range bucket: _bucket's entry}; dropped when its inputs
+## change, or after TABLE_TTL_S.
 var _tables: Dictionary = {}
-const TABLE_TTL_S: float = 5.0
+const TABLE_TTL_S: float = 30.0
+## _target_sig of us at the last survey.
+var _me_sig: int = 0
+
+## What a row's cells are built from, beyond range and aspect: our pools and fires (point-table live inputs), our HP
+## (the baked summary's), the shooter's shell read, live guns and whether its tables are done.
+func _row_sig(shooter: Ship, read: int) -> int:
+	var key := Vector2i(shooter.get_instance_id(), read)
+	var c = _sig_cache.get(key)
+	if c != null:
+		return c
+	var live := 0
+	if shooter.artillery_controller != null:
+		for g in shooter.artillery_controller.guns:
+			live += int(not g.disabled)
+	var sig := hash([_me_sig, read, live, BotGunnery.point_tables_ready(shooter, _me)])
+	_sig_cache[key] = sig
+	return sig
+
+## _row_sig per (shooter id, read), cleared with each survey and redodge.
+var _sig_cache: Dictionary = {}
+
+
+static func _target_sig(ship: Ship) -> int:
+	var hp = ship.health_controller
+	var q: int = roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0
+	return hash([BotGunnery._saturation_sig(ship), q])
 var _me: Ship = null
 var _clock: SalvoClock = null
 ## bearing, rows, weight, group (on, by, dark), spread (dark: believed-position radius), reload, next (seconds to its next landing).
@@ -104,6 +130,7 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	var hdg: float = ctx.behavior._get_ship_heading()
 	if not threatened and not _quiet(ctx):
 		reset()
+		_base = {"off": true, "route": route, "ctx": ctx, "fields": _fields(intent)}
 		return _dodge_off(intent, ctx, route, hdg)
 	_active = true
 	_throttle = 1.0
@@ -137,23 +164,65 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 			aimed = true
 	elif threatened and not _clear_ahead(ctx, _heading, _throttle < 0.0):
 		_on_route = true
+	_base = {"off": false, "heading": _heading, "throttle": _throttle, "on_route": _on_route, "aimed": aimed, "ctx": ctx,
+		"fields": _fields(intent)}
+	return _dodge_tail(intent, ctx, hdg, aimed)
+
+
+## The intent fields apply writes after the dodge.
+static func _fields(intent: NavIntent) -> Array:
+	return [intent.target_heading, intent.heading_weight, intent.throttle_override, intent.force_reverse, intent.forbid_reverse]
+
+
+## What apply left before its dodge, for redodge: {} while stance is off.
+var _base: Dictionary = {}
+
+## The dodge planned again over apply's last lie, for fresh shells between full updates; null with none to plan over.
+func redodge() -> NavIntent:
+	if _base.is_empty():
+		return null
+	var ctx: SkillContext = _base.ctx
+	if ctx == null or not is_instance_valid(ctx.ship) or ctx.ship.team == null:
+		return null
+	var f: Array = _base.fields
+	var intent := NavIntent.new()
+	intent.target_heading = f[0]
+	intent.heading_weight = f[1]
+	intent.throttle_override = f[2]
+	intent.force_reverse = f[3]
+	intent.forbid_reverse = f[4]
+	_me_sig = _target_sig(ctx.ship)
+	_sig_cache.clear()
+	_pack_cache.clear()
+	var hdg: float = ctx.behavior._get_ship_heading()
+	if _base.off:
+		return _dodge_off(intent, ctx, _base.route, hdg)
+	_heading = _base.heading
+	_throttle = _base.throttle
+	_on_route = _base.on_route
+	return _dodge_tail(intent, ctx, hdg, _base.aimed)
+
+
+func _dodge_tail(intent: NavIntent, ctx: SkillContext, hdg: float, aimed: bool) -> NavIntent:
 	_juke = _dodge(ctx)
-	if _juke:
-		_heading = _dodge_h
-		_throttle = _dodge_t
-		_on_route = false
-	if _on_route:
+	var o: PackedFloat64Array = _planner.tail(false, PackedFloat64Array([_heading, _throttle, float(_on_route), float(aimed),
+		float(is_finite(_duel_h)), hdg, _route, PROGRESS_CONE, float(_turning), _turn_way, TURN_LEAD, float(_juke)]))
+	return _apply_tail(intent, o)
+
+
+## _planner.tail's answer into the stance and `intent`.
+func _apply_tail(intent: NavIntent, o: PackedFloat64Array) -> NavIntent:
+	_heading = o[0]
+	_throttle = o[1]
+	_on_route = o[2] != 0.0
+	if o[3] == 0.0:
 		return intent
-	_to_cone(hdg)
 	intent.target_heading = _heading
 	intent.heading_weight = 1.0
-	# A duel is fought under way: the navigator would brake for a destination stance is not sailing to.
-	if (_juke or aimed) and _throttle > 0.0:
-		intent.throttle_override = maxi(roundi(_throttle * 4.0), 1)
-	elif is_finite(_duel_h) and _throttle > 0.0:
-		intent.throttle_override = 4
-	intent.force_reverse = _throttle < 0.0
-	intent.forbid_reverse = _throttle >= 0.0
+	if o[4] >= 0.0:
+		intent.throttle_override = int(o[4])
+	intent.force_reverse = o[5] != 0.0
+	intent.forbid_reverse = o[6] != 0.0
 	return intent
 
 
@@ -190,7 +259,7 @@ func debug_text() -> String:
 	if is_finite(_duel_h):
 		lie = "DUEL " + _duel_name + _setup_tag()
 	return "Stance %s %.0f° %s%s%s%s%s | turn %.0f astern %.0f | %d guns on us" % [lie, rad_to_deg(_heading), gear,
-		" TURNING" if _turning else "", "", " " + _fire if _fire != &"" else "", " DODGE %s %.1f>%.1f" % [_dodge_kind, _dodge_cost.x, _dodge_cost.y] if _juke else "",
+		" TURNING" if _turning else "", "", " " + _fire if _fire != &"" else "", " DODGE %s %.1f>%.1f" % [_planner.kind(), _planner.cost().x, _planner.cost().y] if _juke else "",
 		_turn_cost, _astern_cost, _shooters.size()]
 
 
@@ -199,6 +268,7 @@ func _setup_tag() -> String:
 
 
 func reset() -> void:
+	_base = {}
 	_duel_live = false
 	_set_up = false
 	_duel_h = INF
@@ -252,6 +322,7 @@ func _lie_on_axis(ctx: SkillContext, intent: NavIntent, route: float, hdg: float
 		if SimClock.now() == _priced_at:
 			if cheaper:
 				GunneryCalibration.on_veto(ctx.ship, not _turning)
+		if SimClock.now() == _priced_at and GunneryCalibration.can_open(ctx.ship):
 			var track: Array = _turn_track if _turning else _back_track
 			var split := _track_split(track, _vmax, ctx.ship.team.team_id, _window_s, _swing_s)
 			split["learn"] = DamageExpectation.price(ctx.ship, "turn" if _turning else "astern", split.slices_on, split.slices_by,
@@ -502,11 +573,9 @@ func _track_split(track: Array, vmax: float, team_id: int, window_s: float, earl
 ## `kind`'s salvos along `track` in `window_s`, sliced and priced by DamageExpectation (learned turn-outs).
 func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, rows: StringName, window_s: float,
 		stops: Dictionary = {}, skip_s: float = 0.0) -> float:
-	var s := _track_slices(track, vmax, team_id, rows, window_s, stops, skip_s)
-	var torps: float = 0.0
-	if rows == &"rows":
-		for v in _track_torps(track, window_s):
-			torps += v
+	var r := _track_native(track, vmax, team_id, rows, window_s, stops, skip_s)
+	var s: Array = _split_slices(r.slices)
+	var torps: float = float(r.torps) if rows == &"rows" else 0.0
 	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT)) + torps
 
 
@@ -514,40 +583,95 @@ func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id
 ## shooters on us, bystanders and unspotted enemies.
 func _track_slices(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary = {},
 		skip_s: float = 0.0) -> Array:
-	var slices: Array = DamageExpectation.TURNOUT_SLICES_S
-	var out := {"on": [], "by": [], "dark": []}
-	for g in out:
-		(out[g] as Array).resize(slices.size())
-		(out[g] as Array).fill(0.0)
-	var end: float = minf(track.size() * ESCAPE_DT, window_s)
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	var masks := {}
-	for sh in _shooters:
-		var reload: float = sh.reload
-		var t: float = float(sh.next)
-		while t < skip_s:
-			t += reload
-		var into: Array = out[sh.group]
-		var stop: float = minf(end, float(stops.get(sh.id, INF)))
-		while t < stop:
-			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
-			var at: Vector2 = track[k][0]
-			var to: Vector2 = sh.pos - at
-			var bit: int = int(sh.bit)
-			if bit >= 0 and field != null and not masks.has(k):
-				masks[k] = field.exposure_mask(team_id, at)
-			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
-			var reach: float = _reach_share(sh, to.length())
-			if reach > 0.0 and not shadowed:
-				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				var si: int = 0
-				while si < slices.size() - 1 and t >= slices[si]:
-					si += 1
-				var row := _row_at(sh, to.length(), rows)
-				if not row.is_empty():
-					into[si] += reload * float(sh.weight) * reach * row[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
-			t += reload
-	return [out.on, out.by, out.dark]
+	return _split_slices(_track_native(track, vmax, team_id, rows, window_s, stops, skip_s).slices)
+
+
+static func _split_slices(flat: PackedFloat64Array) -> Array:
+	var n: int = DamageExpectation.TURNOUT_SLICES_S.size()
+	return [flat.slice(0, n), flat.slice(n, 2 * n), flat.slice(2 * n, 3 * n)]
+
+
+const _GROUP_INDEX := {&"on": 0, &"by": 1, &"dark": 2}
+const _MISSING_ROUNDS: int = 8
+
+## StanceSim.track_price over `track`, the rows it reaches filled as _row_at would.
+func _track_native(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary,
+		skip_s: float) -> Dictionary:
+	var flat := _pack_track(track)
+	var cfg := _price_cfg(vmax, team_id, rows, window_s, stops, skip_s)
+	var r: Dictionary = StanceSim.track_price(flat, cfg)
+	for i in _MISSING_ROUNDS:
+		if (r.missing as PackedFloat64Array).is_empty():
+			break
+		_fill_rows(cfg, r.missing, rows)
+		r = StanceSim.track_price(flat, cfg)
+	return r
+
+
+static func _pack_track(track: Array) -> PackedFloat64Array:
+	var flat := PackedFloat64Array()
+	flat.resize(track.size() * 4)
+	for k in track.size():
+		var q: Array = track[k]
+		flat[4 * k] = (q[0] as Vector2).x
+		flat[4 * k + 1] = (q[0] as Vector2).y
+		flat[4 * k + 2] = q[1]
+		flat[4 * k + 3] = q[2]
+	return flat
+
+
+func _price_cfg(vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary, skip_s: float) -> Dictionary:
+	var sh := PackedFloat64Array()
+	var rws := []
+	for s in _shooters:
+		sh.append_array([(s.pos as Vector2).x, (s.pos as Vector2).y, s.weight, _GROUP_INDEX[s.group], s.bit, s.spread, s.range,
+			s.reload, s.next, float(stops.get(s.id, INF))])
+		rws.append(_row_dict(s, rows))
+	return {"shooters": sh, "rows": rws, "slices": PackedFloat64Array(DamageExpectation.TURNOUT_SLICES_S), "vmax": vmax,
+		"at_speed": DODGE_AT_SPEED, "team": team_id, "field": NavigationMapManager.get_reach_field(), "window": window_s,
+		"skip": skip_s, "dt": ESCAPE_DT, "aspects": ASPECTS, "aspect_step": ASPECT_STEP_DEG, "bucket_m": RANGE_BUCKET_M,
+		"torps": _torp_pack, "torp_hull": _torp_hull}
+
+
+static func _rows_index(rows: StringName) -> int:
+	return 0 if rows == &"rows" else 2 if rows == &"hit" else 1
+
+
+## `sh`'s cached row buckets while _rows would still serve them.
+func _row_dict(sh: Dictionary, rows: StringName) -> Dictionary:
+	var d := {}
+	var by: Dictionary = _tables.get(sh.id, {})
+	if by.is_empty() or not is_instance_valid(sh.ship) or SimClock.now() - float(by.t) > TABLE_TTL_S:
+		return d
+	if int(by.sig) != _row_sig(sh.ship, _clock.shell_read(sh.ship) if _clock != null else SalvoClock.SHELL_UNKNOWN):
+		return d
+	var k := _rows_index(rows)
+	for b in by:
+		if b is int:
+			d[b] = by[b][k]
+	return d
+
+
+## The row buckets track_price reported missing ([shooter, range] pairs), built as _row_at builds them.
+func _fill_rows(cfg: Dictionary, missing: PackedFloat64Array, rows: StringName, into: String = "rows") -> void:
+	var cells := {}
+	for j in range(0, missing.size(), 3):
+		var i: int = int(missing[j])
+		var sh: Dictionary = _shooters[i]
+		var r: float = missing[j + 1]
+		if _me != null and is_instance_valid(sh.ship):
+			var key: int = i * 1000000 + int(r / RANGE_BUCKET_M)
+			if not cells.has(key):
+				cells[key] = [i, _bucket(_me, sh.ship, r), []]
+			(cells[key][2] as Array).append(int(missing[j + 2]))
+		else:
+			(cfg[into][i] as Dictionary)[int(r / RANGE_BUCKET_M)] = sh.get(rows, PackedFloat32Array())
+	var touched := {}
+	for c in cells.values():
+		_fill_cells(_me, (_shooters[c[0]] as Dictionary).ship, c[1], PackedInt32Array(c[2]))
+		touched[c[0]] = true
+	for i in touched:
+		cfg[into][i] = _row_dict(_shooters[i], rows)
 
 
 ## Share of `sh`'s believed positions from which it reaches `dist` away: all or none for a gun we see.
@@ -749,22 +873,10 @@ func _dodge_off(intent: NavIntent, ctx: SkillContext, route: float, hdg: float) 
 		return intent
 	_active = true
 	_juke = true
-	_heading = _dodge_h
-	_throttle = _dodge_t
-	intent.target_heading = _heading
-	intent.heading_weight = 1.0
-	if _throttle > 0.0:
-		intent.throttle_override = roundi(_throttle * 4.0)
-	intent.force_reverse = _throttle < 0.0
-	intent.forbid_reverse = _throttle >= 0.0
-	return intent
+	return _apply_tail(intent, _planner.tail(true, PackedFloat64Array([_heading, _throttle, float(_on_route), 0.0, 0.0, hdg,
+		_route, PROGRESS_CONE, float(_turning), _turn_way, TURN_LEAD, 1.0])))
 
 
-## Rudder orders and throttles tried against the shells in the air.
-## Full rudder held this long either way, then centred (0: centred now); the hull swings on as it answers.
-const DODGE_HOLDS := [0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 99.0]
-const DODGE_THROTTLES := [1.0, 0.75, 0.5, 0.0, -1.0]
-const DODGE_LAND_EVERY_S: float = 1.0
 ## A citadel shell counts this many hull shells more; a shell weighs its caliber cubed over this one's.
 const DODGE_CIT_W: float = 3.0
 const DODGE_REF_CAL: float = 300.0
@@ -776,154 +888,69 @@ const DODGE_GEAR_W: float = 0.2
 ## The dodge takes the helm only when it saves this many shells over the lie.
 const DODGE_MIN_GAIN: float = 0.5
 const DODGE_LAND_STEP: int = 4
-var _dodge_h: float = INF
-var _dodge_t: float = 1.0
-var _dodge_until: float = -INF
-## Shell id and landing time of every shell the plan saw: ids are reused.
-var _dodge_seen: Dictionary = {}
-var _dodge_cost := Vector2.ZERO
-var _dodge_kind: String = ""
-var _dodge_kinds: PackedStringArray = []
 ## The salvos still to come are priced this long past the shells in the air, as turn and astern are.
 const DODGE_PRICE_S: float = 20.0
 
 ## Whether an enemy shell lands near `ship` that the last dodge plan did not see.
 func shells_fresh(ship: Ship) -> bool:
-	var now: float = SimClock.now()
-	for sh in ProjectileManager.get_shells_near_position(Vector2(ship.global_position.x, ship.global_position.z), SHELL_QUERY_M, ship.team.team_id):
-		if not _dodge_seen.has(Vector2i(int(sh.shell_id), roundi((now + float(sh.time_remaining)) * 2.0))):
-			return true
-	return false
+	return _planner.fresh(BotGunnery._projectile_native(), Vector2(ship.global_position.x, ship.global_position.z),
+		SHELL_QUERY_M, ship.team.team_id, SimClock.now())
 
+var _planner := DodgePlanner.new()
 
 ## The heading and throttle, held until its shells land, that the fewest enemy shells in the air hit; re-planned as new
 ## shells are fired. False when the lie does as well.
 func _dodge(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
-	var now: float = SimClock.now()
-	var shells: Array = ProjectileManager.get_shells_near_position(
-		Vector2(ship.global_position.x, ship.global_position.z), SHELL_QUERY_M, ship.team.team_id)
-	var seen := {}
-	var fresh := false
-	var horizon: float = 0.0
-	var big: float = 0.0
-	for sh in shells:
-		var key := Vector2i(int(sh.shell_id), roundi((now + float(sh.time_remaining)) * 2.0))
-		seen[key] = true
-		fresh = fresh or not _dodge_seen.has(key)
-		horizon = maxf(horizon, float(sh.time_remaining))
-		if float(sh.caliber) > big:
-			big = float(sh.caliber)
-			_fall_half = float(sh.threat_half_len)
-	if not fresh and now < _dodge_until:
-		return is_finite(_dodge_h)
-	_dodge_seen = seen
-	_dodge_h = INF
-	if shells.is_empty():
-		_dodge_until = -INF
-		return false
-	_dodge_until = now + horizon
-	var hdg: float = ctx.behavior._get_ship_heading()
-	var hull := _hull_box(ship)
-	var cit := _citadel_box(ship)
-	var clearance: float = ctx.behavior._get_ship_clearance()
-	var top: float = (ship.movement_controller.ship_height - ship.movement_controller.ship_draft) * DODGE_TOP
-	if ctx.navigator == null:
-		return false
-	var params: PackedFloat32Array = ctx.navigator.get_debug_arc_inputs()
-	var state := _hull_state(ship)
-	var cands := PackedVector3Array([Vector3(_heading, -1.0, _power(_throttle))])
-	var throttles := PackedFloat32Array([_throttle])
-	for hold in DODGE_HOLDS:
-		for side in ([0.0] if hold == 0.0 else [-1.0, 1.0]):
-			for thr in DODGE_THROTTLES:
-				cands.append(Vector3(side, hold, _power(thr)))
-				throttles.append(thr)
-	var out: PackedFloat32Array = StanceSim.dodge_costs(_pack_shells(shells), hull, cit, top, DODGE_REF_CAL, DODGE_CIT_W,
-		params, state, cands, horizon, _shell_aspects(ship, shells))
-	var cost := _dodge_window_costs(ctx, shells, out, cands, throttles, params, state, horizon)
-	var w: float = float(cost[cost.size() - 1])
-	var score := func(i: int) -> float:
-		return cost[i] + w * (DODGE_OFF_W * absf(angle_difference(_heading, out[2 * i + 1])) + DODGE_GEAR_W * absf(throttles[i] - _throttle))
-	var order: Array = range(cands.size())
-	order.sort_custom(func(i, j): return score.call(i) < score.call(j))
-	# Land is checked only down the ranking: the rest never needs it.
-	var lie_clear := true
-	for i in order:
-		if i != 0 and not _in_cone(out[2 * i + 1], throttles[i]):
-			continue
-		var clear := true
-		for q in StanceSim.dodge_track(params, state, cands[i], horizon, DODGE_LAND_EVERY_S):
-			if NavigationMapManager.get_distance(Vector3(q.x, 0.0, q.y)) < clearance:
-				clear = false
-				break
-		if i == 0:
-			lie_clear = clear
-		if not clear:
-			continue
-		if i != 0 and (not lie_clear or score.call(i) <= cost[0] - DODGE_MIN_GAIN * w):
-			_dodge_h = out[2 * i + 1]
-			_dodge_t = throttles[i]
-			_dodge_kind = _dodge_kinds[i]
-		_dodge_cost = Vector2(cost[0], score.call(i)) / w
-		break
-	_dodge_why(ctx, "dodge" if is_finite(_dodge_h) else "dodge_lie")
-	return is_finite(_dodge_h)
-
-
-## Per candidate: the shells in the air that strike (dodge_costs' weight, made HP by the shooters' shell damage) plus the
-## salvos after them over DODGE_PRICE_S along its track, range and aspect priced, the lie's way made good short of it charged
-## as astern's is; last, HP per weight unit. Without a known shooter, the weights alone.
-func _dodge_window_costs(ctx: SkillContext, shells: Array, out: PackedFloat32Array, cands: PackedVector3Array,
-		throttles: PackedFloat32Array, params: PackedFloat32Array, state: PackedFloat32Array, horizon: float) -> PackedFloat32Array:
-	var n: int = cands.size()
-	var cost := PackedFloat32Array()
-	cost.resize(n + 1)
-	_dodge_kinds.resize(n)
-	for i in n:
-		cost[i] = out[2 * i]
-		var c: Vector3 = cands[i]
-		_dodge_kinds[i] = "lie" if i == 0 else "astern" if throttles[i] < 0.0 else "turn" if c.y > 0.0 \
-			else "forward" if throttles[i] > 0.0 else "stop"
-	cost[n] = 1.0
-	var dmg := {}
+	var pm: Object = BotGunnery._projectile_native()
+	var at := Vector2(ship.global_position.x, ship.global_position.z)
+	var state: int = _planner.check(pm, at, SHELL_QUERY_M, ship.team.team_id, SimClock.now())
+	if state < 2 or ctx.navigator == null:
+		return state == 1
+	var cfg := _price_cfg(maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, &"rows", 0.0, {}, 0.0)
+	var bearings := PackedFloat64Array()
+	var hit_rows := []
+	var cals := PackedFloat64Array()
+	var dmgs := PackedFloat64Array()
 	for sh in _shooters:
-		if is_instance_valid(sh.ship) and not sh.ship.artillery_controller.guns.is_empty():
-			var p: ShellParams = sh.ship.artillery_controller.guns[0].get_shell()
-			dmg[roundi(p.caliber)] = p.damage
-	var hp := 0.0
-	var wt := 0.0
-	for sh in shells:
-		var cal: int = roundi(float(sh.caliber))
-		if dmg.has(cal):
-			hp += float(dmg[cal])
-			wt += pow(float(sh.caliber) / DODGE_REF_CAL, 3.0)
-	if wt <= 0.0:
-		return cost
-	var per_w: float = hp / wt
-	var window: float = horizon + DODGE_PRICE_S
-	var paths: PackedVector3Array = StanceSim.dodge_paths(params, state, cands, window, ESCAPE_DT)
-	var m: int = int(window / ESCAPE_DT) + 1
-	if paths.size() < n * m:
-		return cost
-	var vmax: float = maxf(ctx.ship.movement_controller.max_speed, 1.0)
-	var start := Vector2(paths[0].x, paths[0].y)
-	# Made good along the lie's heading, not along wherever its own track ends: a lie still turning round ends behind it.
-	var lie_dir := Vector2(sin(_heading), cos(_heading)) * (-1.0 if _throttle < 0.0 else 1.0)
-	var lie_made: float = (Vector2(paths[m - 1].x, paths[m - 1].y) - start).dot(lie_dir)
-	var team_id: int = ctx.ship.team.team_id
-	for i in n:
-		var track: Array = []
-		for k in m:
-			var q: Vector3 = paths[i * m + k]
-			var prev: Vector3 = paths[i * m + maxi(k - 1, 0)]
-			track.append([Vector2(q.x, q.y), q.z, Vector2(q.x - prev.x, q.y - prev.y).length() / ESCAPE_DT])
-		var made: float = ((track[-1][0] as Vector2) - start).dot(lie_dir)
-		var short_s: float = maxf(lie_made - made, 0.0) / vmax
-		var later: float = _priced(ctx, "dodge", track, vmax, team_id, &"rows", window, {}, horizon)
-		cost[i] = (out[2 * i] * per_w + later) * (1.0 + short_s / window)
-	cost[n] = per_w
-	return cost
+		var ok: bool = is_instance_valid(sh.ship)
+		bearings.append(float(sh.bearing) if ok else NAN)
+		hit_rows.append(_row_dict(sh, &"hit"))
+		var p: ShellParams = sh.ship.artillery_controller.guns[0].get_shell() if ok and not sh.ship.artillery_controller.guns.is_empty() else null
+		cals.append(p.caliber if p != null else NAN)
+		dmgs.append(p.damage if p != null else 0.0)
+	cfg.merge({"params": ctx.navigator.get_debug_arc_inputs(), "state": _hull_state(ship), "hull": _hull_box(ship),
+		"cit": _citadel_box(ship), "top": (ship.movement_controller.ship_height - ship.movement_controller.ship_draft) * DODGE_TOP,
+		"ref_cal": DODGE_REF_CAL, "cit_w": DODGE_CIT_W, "heading": _heading, "throttle": _throttle, "off_w": DODGE_OFF_W,
+		"gear_w": DODGE_GEAR_W, "min_gain": DODGE_MIN_GAIN, "route": _route, "cone": PROGRESS_CONE,
+		"map": NavigationMapManager.get_map(), "clearance": ctx.behavior._get_ship_clearance(), "at": at,
+		"bearings": bearings, "hit_rows": hit_rows, "shell_cal": cals, "shell_dmg": dmgs, "source_match": SalvoClock.SOURCE_MATCH,
+		"price_s": DODGE_PRICE_S, "coef_full": _price_coef(ship, "dodge")}, true)
+	var r := {}
+	for i in _MISSING_ROUNDS + 1:
+		r = _planner.plan(cfg, i == _MISSING_ROUNDS)
+		if r.is_empty() or r.has("picked"):
+			break
+		if not (r.get("missing_hit", PackedFloat64Array()) as PackedFloat64Array).is_empty():
+			_fill_rows(cfg, r.missing_hit, &"hit", "hit_rows")
+		if not (r.missing as PackedFloat64Array).is_empty():
+			_fill_rows(cfg, r.missing, &"rows")
+	if r.is_empty():
+		return false
+	var out: bool = is_finite(_planner.heading())
+	_dodge_why(ctx, "dodge" if out else "dodge_lie")
+	return out
+
+## DamageExpectation.price as per-slice [on, by, dark, constant] weights; DodgePlanner scales the constant to its window.
+static func _price_coef(ship: Ship, kind: String) -> PackedFloat64Array:
+	var f := DamageExpectation.turnout(ship, kind)
+	var out := PackedFloat64Array()
+	for i in DamageExpectation.TURNOUT_SLICES_S.size():
+		if f.is_empty():
+			out.append_array([1.0, 1.0, DamageExpectation.DARK_TAKEN[mini(ship.ship_class, 2)], 0.0])
+		else:
+			out.append_array([f[0][i], f[1][i], f[2][i], float(f[3][i])])
+	return out
 
 
 ## Stance and duel only choose how to lie while making way toward the next waypoint: the motion they order stays
@@ -1003,6 +1030,22 @@ func _torp_survey(ctx: SkillContext) -> Array[Dictionary]:
 	return out
 
 
+var _torp_pack := PackedFloat64Array()
+var _torp_hull := PackedFloat64Array()
+
+## _torp_shooters and our hull as StanceSim reads them for _track_torps.
+func _pack_torps(ship: Ship) -> void:
+	_torp_pack = PackedFloat64Array()
+	for sh in _torp_shooters:
+		_torp_pack.append_array([(sh.pos as Vector2).x, (sh.pos as Vector2).y, sh.range, sh.fan, sh.dmg, sh.vt, sh.det, sh.bear])
+	var mc = ship.movement_controller
+	var p: MovementParams = mc._p()
+	var reach: float = sqrt(2.0 * p.turning_circle_radius * mc.ship_length)
+	_torp_hull = PackedFloat64Array([mc.ship_length, mc.ship_beam, reach,
+		maxf(BotBehavior.TORP_COURSE_SHIFTS * reach / maxf(mc.max_speed, 1.0), 1.0), p.rudder_response_time,
+		BotBehavior.TORP_LANE_RAD, BotBehavior.TORP_DODGE_KEEP])
+
+
 ## Per step of `track` (to `window_s`): HP from enemy spreads, BotBehavior.torpedo_curve's lanes at the hull shown,
 ## stepped aside from at its speed then; each shooter's spread arrives within its bear and run, one spread at most.
 func _track_torps(track: Array, window_s: float) -> PackedFloat32Array:
@@ -1049,34 +1092,6 @@ func _hull_state(ship: Ship) -> PackedFloat32Array:
 	return PackedFloat32Array([ship.global_position.x, ship.global_position.z, ship.linear_velocity.x, ship.linear_velocity.z,
 		atan2(f.x, f.z), ship.angular_velocity.y, mv.rudder_input, mv.engine_power])
 
-
-## get_shells_near_position entries as StanceSim.dodge_costs reads them.
-## Per shell in `shells`, what a hit of it does at each aspect off our bow over its alpha, from the shooter it comes
-## from (by bearing, as SalvoClock credits it) and the shell it is read to load; all 1 from an unknown one.
-func _shell_aspects(ship: Ship, shells: Array) -> PackedFloat32Array:
-	var out := PackedFloat32Array()
-	var at := Vector2(ship.global_position.x, ship.global_position.z)
-	for s in shells:
-		var from: float = atan2(-float(s.landing_vx), -float(s.landing_vz))
-		var row := PackedFloat32Array()
-		var best: float = SalvoClock.SOURCE_MATCH
-		for sh in _shooters:
-			var d: float = absf(angle_difference(from, float(sh.bearing)))
-			if d < best and is_instance_valid(sh.ship):
-				best = d
-				row = _row_at(sh, (sh.pos as Vector2).distance_to(at), &"hit")
-		if row.size() != ASPECTS:
-			row = PackedFloat32Array()
-			row.resize(ASPECTS)
-			row.fill(1.0)
-		out.append_array(row)
-	return out
-
-static func _pack_shells(shells: Array) -> PackedFloat32Array:
-	var out := PackedFloat32Array()
-	for sh in shells:
-		out.append_array([sh.landing_x, sh.landing_z, sh.landing_vx, sh.landing_vz, sh.time_remaining, sh.threat_half_len, sh.caliber])
-	return out
 
 static func _clear_track(track: PackedVector3Array, clearance: float) -> bool:
 	for k in range(0, track.size(), DODGE_LAND_STEP):
@@ -1206,6 +1221,11 @@ static func dps_at(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float)
 ## (-1, 0) unknown.
 static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
 	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if BotGunnery.point_tables_on() else {}
+	return _expected_of(e, ship, shooter, range_m, aspect_deg)
+
+
+## _expected from a point-table answer `e` ({}: the baked summary).
+static func _expected_of(e: Dictionary, ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
 	if e.is_empty():
 		var model := BotGunnery.damage_model(ship)
 		BotGunnery.damage_model(shooter)
@@ -1215,29 +1235,6 @@ static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: flo
 	var he: bool = float(e.he_dps) > float(e.ap_dps)
 	var dps: float = float(e.he_dps) if he else float(e.ap_dps)
 	return Vector2(dps, dps * float(e.get("he_heal" if he else "ap_heal", 0.5)))
-
-
-## Dps of `shooter`'s shell `read` (SalvoClock.shell_read; unknown: the worse for us at this aspect), from its point
-## table (live pools, real dispersion) once built, else the baked summary; AP alone, without lighting fires first:
-## (citadel hits counted CITADEL_W extra, as it takes HP); z, that shell's damage per hit over its alpha. x -1 unknown.
-static func _effective(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float, read: int = SalvoClock.SHELL_UNKNOWN) -> Vector3:
-	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if BotGunnery.point_tables_on() else {}
-	if e.is_empty():
-		var model := BotGunnery.damage_model(ship)
-		BotGunnery.damage_model(shooter)
-		e = model.get_expected(shooter.get_instance_id(), ship.get_instance_id(), range_m, aspect_deg)
-	if e.is_empty():
-		return Vector3(-1.0, -1.0, 1.0)
-	var ap_raw: float = float(e.get("ap_pure_dps", e.ap_dps))
-	var ap := ap_raw * (1.0 + CITADEL_W * float(e.get("ap_cit", 0.0)))
-	var he := float(e.he_dps) * (1.0 + CITADEL_W * float(e.get("he_cit", 0.0)))
-	var p: GunParams = shooter.artillery_controller.get_params()
-	var rate: float = float(e.ap_dps) / maxf(float(e.ap_ev), 1e-6)
-	if read == SalvoClock.SHELL_AP or (read == SalvoClock.SHELL_UNKNOWN and ap >= he):
-		var alpha_ap: float = p.shell1.damage if p.shell1 != null else 1.0
-		return Vector3(ap, ap_raw, ap_raw / rate / maxf(float(e.get("ap_landed", 1.0)), 0.01) / maxf(alpha_ap, 1.0))
-	var alpha_he: float = p.shell2.damage if p.shell2 != null else 1.0
-	return Vector3(he, float(e.he_dps), float(e.he_dps) / rate / maxf(float(e.get("he_landed", 1.0)), 0.01) / maxf(alpha_he, 1.0))
 
 
 ## Main and secondary dps on us at this range; one closing from past its range counts at its range.
@@ -1284,8 +1281,12 @@ func _survey(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
 	_shooters = []
 	_me = ship
+	_me_sig = _target_sig(ship)
+	_sig_cache.clear()
+	_pack_cache.clear()
 	_clock = ctx.behavior.salvo_clock
 	_torp_shooters = _torp_survey(ctx)
+	_pack_torps(ship)
 	if not ship.is_detected() or ship.team == null or ctx.server == null:
 		return false
 	var weight := {}
@@ -1377,35 +1378,51 @@ static func _guns_free(ctx: SkillContext) -> bool:
 ## Calibrated effective incoming dps per aspect step from `shooter`, cached per range bucket (with the
 ## unweighted dps alongside); empty unknown.
 func _rows(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
+	var e := _bucket(ship, shooter, range_m)
+	_fill_cells(ship, shooter, e, _ALL_ASPECTS)
+	return e[0]
+
+
+## `shooter`'s cache entry for range_m's bucket: [rows, raw, hit, range built at, calibration, shell read], cells NAN
+## until _fill_cells, all three empty once a cell is unknown.
+func _bucket(ship: Ship, shooter: Ship, range_m: float) -> Array:
 	var id := shooter.get_instance_id()
 	var bucket := int(range_m / RANGE_BUCKET_M)
 	var now: float = SimClock.now()
 	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
+	var sig := _row_sig(shooter, read)
 	var by: Dictionary = _tables.get(id, {})
-	if by.is_empty() or now - float(by.t) > TABLE_TTL_S or int(by.read) != read:
-		by = {"t": now, "read": read}
+	if by.is_empty() or now - float(by.t) > TABLE_TTL_S or int(by.sig) != sig:
+		by = {"t": now, "sig": sig}
 		_tables[id] = by
 	if by.has(bucket):
-		return by[bucket][0]
-	var row := PackedFloat32Array()
-	var raw := PackedFloat32Array()
-	var hit := PackedFloat32Array()
-	row.resize(ASPECTS)
-	raw.resize(ASPECTS)
-	hit.resize(ASPECTS)
-	var cal: float = BotGunnery.calibration(shooter, ship, range_m)
-	for i in ASPECTS:
-		var e := _effective(ship, shooter, range_m, i * ASPECT_STEP_DEG, read)
-		if e.x < 0.0:
-			row = PackedFloat32Array()
-			raw = PackedFloat32Array()
-			hit = PackedFloat32Array()
-			break
-		row[i] = e.x * cal
-		raw[i] = e.y * cal
-		hit[i] = e.z * cal
-	by[bucket] = [row, raw, hit]
-	return row
+		return by[bucket]
+	var nan := PackedFloat32Array()
+	nan.resize(ASPECTS)
+	nan.fill(NAN)
+	var e := [nan, nan.duplicate(), nan.duplicate(), range_m, BotGunnery.calibration(shooter, ship, range_m), read]
+	by[bucket] = e
+	return e
+
+
+static var _ALL_ASPECTS := PackedInt32Array(range(ASPECTS))
+
+## Fills `cells` (aspect indices) of entry `e` still NAN.
+func _fill_cells(ship: Ship, shooter: Ship, e: Array, cells: PackedInt32Array) -> void:
+	if (e[0] as PackedFloat32Array).is_empty():
+		return
+	var pack: Dictionary = _pack_cache.get(shooter.get_instance_id(), {}) if ship == _me else {}
+	if pack.is_empty():
+		pack = BotGunnery.stance_cell_pack(shooter, ship)
+		if ship == _me:
+			_pack_cache[shooter.get_instance_id()] = pack
+	var notes: PackedInt32Array = BotGunnery._projectile_native().stance_cells(e, cells, pack, ASPECT_STEP_DEG)
+	for k in range(1, notes.size(), 2):
+		BotGunnery._note_point_batch(notes[0], notes[k], notes[k + 1] == 1, pack.keys[k / 2])
+
+
+## _fill_cells as one fresh survey's inputs, per shooter id; cleared with _sig_cache.
+var _pack_cache: Dictionary = {}
 
 
 ## `sh`'s rows (&"rows", &"raw" or &"hit": damage per hit over alpha) at `dist` from it, out to its reach; empty unknown.
@@ -1681,19 +1698,36 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	var hp_t: float = maxf(t.health_controller.current_hp, 1.0)
 	var dealt := PackedFloat32Array()
 	dealt.resize(n)
+	var fire_k := PackedInt32Array()
+	var fire_n := PackedInt32Array()
+	var ranges := PackedFloat64Array()
 	for k in mini(n, masks.size()):
 		var time: float = (k + 1) * ESCAPE_DT
 		var d: float = pos[k].distance_to(tpos[k])
 		if d > gp._range or masks[k] == 0:
 			continue
-		# As dps_curve and the trade price it: the target angled to bear its guns, not as it lies now.
-		var asp: float = BotBehavior.guns_bear_aspect(t)
-		var per_gun: float = maxf(_expected(t, ship, d, asp).x, 0.0) * DamageExpectation.salvo_factor(ship, t, d, asp) \
-			* gp.reload_time / maxf(live, 1)
+		var guns := 0
 		for i in ready.size():
 			if ready[i] <= time and masks[k] & (1 << i) != 0:
-				dealt[k] += per_gun
+				guns += 1
 				ready[i] = time + gp.reload_time
+		if guns > 0:
+			fire_k.append(k)
+			fire_n.append(guns)
+			ranges.append(d)
+	if not fire_k.is_empty():
+		# As dps_curve and the trade price it: the target angled to bear its guns, not as it lies now.
+		var asp: float = BotBehavior.guns_bear_aspect(t)
+		var aspects := PackedFloat64Array()
+		aspects.resize(ranges.size())
+		aspects.fill(asp)
+		var pts: Array = BotGunnery.expected_points_pairs(ship, t, ranges, aspects) if BotGunnery.point_tables_on() else []
+		for j in fire_k.size():
+			var d: float = ranges[j]
+			var per_gun: float = maxf(_expected_of(pts[j] if not pts.is_empty() else {}, t, ship, d, asp).x, 0.0) \
+				* DamageExpectation.salvo_factor(ship, t, d, asp) * gp.reload_time / maxf(live, 1)
+			for g in fire_n[j]:
+				dealt[fire_k[j]] += per_gun
 	_add_torpedoes(ctx, t, at0, hdg0, pos, hdgs, tpos, dealt)
 	var asp_t: float = BotBehavior.guns_bear_aspect(t)
 	for k in n:
@@ -1804,34 +1838,16 @@ func _add_torpedoes(ctx: SkillContext, t: Ship, at0: Vector2, hdg0: float, pos: 
 
 ## Raw HP landing on us at each step of `track`, as _track_slices books it (unspotted shooters at DARK_TAKEN).
 func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary, ship_class: int) -> PackedFloat32Array:
-	var out := PackedFloat32Array()
-	out.resize(track.size())
-	var end: float = track.size() * ESCAPE_DT
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	var masks := {}
-	for sh in _shooters:
-		var t: float = float(sh.next)
-		var stop: float = minf(end, float(stops.get(sh.id, INF)))
-		var w: float = float(sh.weight) * (DamageExpectation.DARK_TAKEN[mini(ship_class, 2)] if sh.group == &"dark" else 1.0)
-		while t < stop:
-			var k: int = clampi(int(t / ESCAPE_DT), 0, track.size() - 1)
-			var at: Vector2 = track[k][0]
-			var to: Vector2 = sh.pos - at
-			var bit: int = int(sh.bit)
-			if bit >= 0 and field != null and not masks.has(k):
-				masks[k] = field.exposure_mask(team_id, at)
-			var shadowed: bool = bit >= 0 and field != null and int(masks[k]) & (1 << bit) == 0
-			var reach: float = _reach_share(sh, to.length())
-			if reach > 0.0 and not shadowed:
-				var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y)))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-				var row := _row_at(sh, to.length(), &"raw")
-				if not row.is_empty():
-					out[k] += float(sh.reload) * w * reach * row[a] * (1.0 - DODGE_AT_SPEED * float(track[k][2]) / vmax)
-			t += float(sh.reload)
-	var torps := _track_torps(track, track.size() * ESCAPE_DT)
-	for k in out.size():
-		out[k] += torps[k]
-	return out
+	var flat := _pack_track(track)
+	var cfg := _price_cfg(vmax, team_id, &"raw", INF, stops, 0.0)
+	cfg["dark_w"] = DamageExpectation.DARK_TAKEN[mini(ship_class, 2)]
+	var r: Dictionary = StanceSim.track_incoming(flat, cfg)
+	for i in _MISSING_ROUNDS:
+		if (r.missing as PackedFloat64Array).is_empty():
+			break
+		_fill_rows(cfg, r.missing, &"raw")
+		r = StanceSim.track_incoming(flat, cfg)
+	return r.steps
 
 
 ## Real over predicted damage per "<our class>><target class>", fitted by tools/botmatch/duel_cal.py from
@@ -1930,8 +1946,6 @@ const SETUP_DODGE_THROTTLES := [1.0, 0.5, 0.0]
 const SETUP_GRID := [-0.6, 0.0, 0.6]
 const SETUP_GUN_W: float = 2.0
 const SETUP_REPRICE_S: float = 2.0
-## threat_half_len of the heaviest shell last seen coming at us: how flat the made-up salvo falls.
-var _fall_half: float = 30.0
 var _set_up: bool = false
 var _setup_off: float = 0.0
 var _setup_at: float = -INF
@@ -1974,7 +1988,7 @@ func _pick_setup(ctx: SkillContext, d: Ship, gp: GunParams, at: Vector2, from: V
 	for off in SETUP_OFFS:
 		var h: float = wrapf(_heading + deg_to_rad(off), -PI, PI)
 		var aim: Vector2 = at + Vector2(sin(h), cos(h)) * speed * tof
-		var f: float = clampf((_fall_half - 15.0) / 35.0, 0.05, 0.99)
+		var f: float = clampf((_planner.fall_half() - 15.0) / 35.0, 0.05, 0.99)
 		var along: float = half.y * f / sqrt(1.0 - f * f)
 		var fall: Vector2 = (aim - from).normalized()
 		var across := Vector2(-fall.y, fall.x)
@@ -1983,7 +1997,7 @@ func _pick_setup(ctx: SkillContext, d: Ship, gp: GunParams, at: Vector2, from: V
 			for j in SETUP_GRID:
 				var p: Vector2 = aim + across * half.x * i + fall * along * j
 				shells.append({"landing_x": p.x, "landing_z": p.y, "landing_vx": fall.x, "landing_vz": fall.y,
-					"time_remaining": tof, "threat_half_len": _fall_half, "caliber": gp.shell1.caliber})
+					"time_remaining": tof, "threat_half_len": _planner.fall_half(), "caliber": gp.shell1.caliber})
 		var dodge := INF
 		for o2 in SETUP_DODGE_OFFS:
 			for thr in SETUP_DODGE_THROTTLES:

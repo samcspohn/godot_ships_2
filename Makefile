@@ -2,7 +2,7 @@ GODOTS_BIN := $(HOME)/.local/share/godot/app_userdata/Godots/versions/Godot_v4_7
 GODOT ?= $(if $(shell command -v godot),godot,$(GODOTS_BIN))
 ARGS ?=
 JOBS ?= $(shell nproc)
-HULLS ?= $(wildcard assets/Ships/*/*.tscn)
+HULLS ?= $(wildcard assets/Ships/*/*.tscn assets/Ships/*.tscn)
 
 .PHONY: native bake sim smoke ab watch learn
 

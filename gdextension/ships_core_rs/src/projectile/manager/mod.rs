@@ -17,6 +17,7 @@ mod lifecycle;
 mod survey;
 mod point_store;
 mod point_worker;
+mod stance_cells;
 pub(crate) mod util;
 
 /// Matches GDScript HitResult.
@@ -786,6 +787,45 @@ impl ProjectileManager {
                 b.visited as f32, p.x, p.y, p.z][..]));
         }
         out
+    }
+
+    /// `point_best` at each (ranges[i], aspects[i]) (q[0], q[1] ignored): 8 floats per pair, point -1 where
+    /// unanswered; empty without the table.
+    #[func]
+    pub(crate) fn point_best_pairs(&self, key: GString, q: PackedFloat64Array, ranges: PackedFloat64Array,
+            aspects: PackedFloat64Array, w: PackedFloat32Array, fires: PackedFloat32Array) -> PackedFloat32Array {
+        let mut out = PackedFloat32Array::new();
+        let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
+        let Some(t) = t else { return out };
+        if q.len() < 5 {
+            return out;
+        }
+        let f: Vec<(Vector3, bool)> = fires.as_slice().chunks_exact(4)
+            .map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
+        let g = t.read().unwrap();
+        if w.len() < g.n_comp {
+            return out;
+        }
+        let mut v = Vec::with_capacity(aspects.len() * 8);
+        for (&r, &a) in ranges.as_slice().iter().zip(aspects.as_slice()) {
+            match g.best(r, a, w.as_slice(), q[2], q[3], q[4], &f) {
+                Some(b) => {
+                    let p = g.points[b.point];
+                    v.extend_from_slice(&[b.point as f32, b.value as f32, b.damage as f32, b.landed as f32,
+                        b.visited as f32, p.x, p.y, p.z]);
+                }
+                None => v.extend_from_slice(&[-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            }
+        }
+        out.extend_array(&PackedFloat32Array::from(v.as_slice()));
+        out
+    }
+
+    /// SkillStance._fill_cells natively; see stance_cells::fill.
+    #[func]
+    pub(crate) fn stance_cells(&self, mut e: VarArray, cells: PackedInt32Array, pack: VarDictionary, step_deg: f64)
+            -> PackedInt32Array {
+        stance_cells::fill(self, &mut e, &cells, &pack, step_deg)
     }
 
     /// The built buckets of `key`: bucket index -> PackedFloat32Array (probes).

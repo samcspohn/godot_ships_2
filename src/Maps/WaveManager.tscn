@@ -29,7 +29,7 @@ shader_parameter/glint_max = 2.0
 shader_parameter/glint_tail = 0.35
 shader_parameter/glint_var_ref = 0.0
 shader_parameter/glint_aniso_fade = Vector2(12, 48)
-shader_parameter/deep = Color(0.079363935, 0.1603103, 0.26821762, 1)
+shader_parameter/deep = Color(0.06255259, 0.13529137, 0.22880116, 1)
 shader_parameter/shallow = Color(0.30779997, 0.42579004, 0.57, 1)
 shader_parameter/scatter_color = Color(0.14117648, 0.29803923, 0.37254903, 1)
 shader_parameter/crest_height = 2.0
@@ -49,7 +49,7 @@ shader_parameter/whitecap_j_low = 0.45
 shader_parameter/whitecap_j_high = 0.75
 shader_parameter/whitecap_max_lod = 3.0
 shader_parameter/foam_color = Color(0.86, 0.9, 0.92, 1)
-shader_parameter/bubble_color = Color(0.21801168, 0.36881834, 0.51142585, 1)
+shader_parameter/bubble_color = Color(0.7134, 0.79335, 0.82, 1)
 shader_parameter/foam_amount = 1.0
 shader_parameter/foam_tex_scale = 9.0
 shader_parameter/foam_detail_scale = 2.3
@@ -92,7 +92,7 @@ ocean_material = SubResource("ShaderMaterial_uhea1")
 
 [node name="OceanFFT" type="Node" parent="." unique_id=1754264585]
 script = ExtResource("3_uhea1")
-wind = Vector2(6, 3)
+wind = Vector2(5, 2)
 wind_spread = 1.5
 disp_scale = 1.6
 metadata/_custom_type_script = "uid://c2annbqth63wg"

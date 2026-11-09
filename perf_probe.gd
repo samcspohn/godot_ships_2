@@ -22,8 +22,8 @@ func _initialize() -> void:
 		spreads.append(0.0 if i % 2 == 0 else 800.0); weights.append(1.0 if i % 2 == 0 else 0.5); fs.append(0.0)
 		danger[100 + i] = 1.0; spot[100 + i] = 12000.0; value[100 + i] = 1.0; reveal[100 + i] = 1.0
 	var t0 := Time.get_ticks_usec()
-	var st: Dictionary = field.update_team(0, ids, origins, speeds, drags, ranges, gh, spreads, weights, fs, 15000.0, 10.0, 50.0)
-	print("update_team %.1f ms (rust total %.1f ms)" % [(Time.get_ticks_usec() - t0) / 1000.0, float(st.get("total_us", 0.0)) / 1000.0])
+	field.update_team(0, ids, origins, speeds, drags, ranges, gh, spreads, weights, fs, 15000.0, 10.0, 50.0)
+	print("update_team %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
 	var here := Vector2(-2000.0, -6000.0)
 	var opts := {
 		"enemy_danger": danger, "enemy_spot": spot, "enemy_value": value, "enemy_reveal": reveal,

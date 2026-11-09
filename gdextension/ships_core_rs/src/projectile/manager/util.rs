@@ -4,7 +4,7 @@ use godot::classes::{Engine, Node, PhysicsDirectSpaceState3D, Resource};
 
 use std::collections::BTreeMap;
 
-use super::{ArmorRayCacheEntry, ProjectileManager, SHELL_GRID_CELL, SHELL_GRID_MIN, SHELL_GRID_DIM};
+use super::{ArmorRayCacheEntry, ProjectileManager, ShellLandingEntry, SHELL_GRID_CELL, SHELL_GRID_MIN, SHELL_GRID_DIM};
 use crate::projectile::armor::{NativeArmorInteraction, RaycastCache};
 use crate::nav::map::NavigationMap;
 use crate::projectile::data::ProjectileData;
@@ -161,53 +161,51 @@ impl ProjectileManager {
 
     pub(crate) fn get_shells_near_position_impl(&self, position: Vector2, radius: f32, exclude_team_id: i32) -> VarArray {
         let mut result = VarArray::new();
+        for (e, time_remaining) in self.shells_near(position, radius, exclude_team_id) {
+            let mut d = VarDictionary::new();
+            d.set("shell_id", e.shell_id);
+            d.set("landing_x", e.landing_x);
+            d.set("landing_z", e.landing_z);
+            d.set("time_remaining", time_remaining);
+            d.set("caliber", e.caliber);
+            d.set("landing_vx", e.landing_vx);
+            d.set("landing_vz", e.landing_vz);
+            d.set("threat_half_len", e.threat_half_len);
+            d.set("is_he", e.is_he);
+            result.push(&d.to_variant());
+        }
+        result
+    }
 
+    /// Landings within `radius` of `position` not fired by `exclude_team_id`, with their seconds to impact.
+    pub(crate) fn shells_near(&self, position: Vector2, radius: f32, exclude_team_id: i32) -> Vec<(ShellLandingEntry, f32)> {
+        let mut out = Vec::new();
         let min_gx = 0.max(((position.x - radius - SHELL_GRID_MIN) / SHELL_GRID_CELL) as i32);
         let max_gx = (SHELL_GRID_DIM - 1).min(((position.x + radius - SHELL_GRID_MIN) / SHELL_GRID_CELL) as i32);
         let min_gz = 0.max(((position.y - radius - SHELL_GRID_MIN) / SHELL_GRID_CELL) as i32);
         let max_gz = (SHELL_GRID_DIM - 1).min(((position.y + radius - SHELL_GRID_MIN) / SHELL_GRID_CELL) as i32);
-
         let radius_sq = radius * radius;
-
         for gz in min_gz..=max_gz {
             for gx in min_gx..=max_gx {
-                let cell = &self.shell_grid[(gz * SHELL_GRID_DIM + gx) as usize];
-                for &sid in cell {
-                    let Some(e) = self.shell_landings.get(&sid) else {
-                        continue;
-                    };
-
+                for &sid in &self.shell_grid[(gz * SHELL_GRID_DIM + gx) as usize] {
+                    let Some(e) = self.shell_landings.get(&sid) else { continue };
                     if e.team_id == exclude_team_id {
                         continue;
                     }
-
                     let dx = e.landing_x - position.x;
                     let dz = e.landing_z - position.y;
                     if dx * dx + dz * dz > radius_sq {
                         continue;
                     }
-
                     // fire_time and time_to_impact are both raw seconds; no scaling needed
                     let time_remaining = e.fire_time + e.time_to_impact - self.current_time as f32;
-                    if time_remaining <= 0.0 {
-                        continue;
+                    if time_remaining > 0.0 {
+                        out.push((*e, time_remaining));
                     }
-
-                    let mut d = VarDictionary::new();
-                    d.set("shell_id", e.shell_id);
-                    d.set("landing_x", e.landing_x);
-                    d.set("landing_z", e.landing_z);
-                    d.set("time_remaining", time_remaining);
-                    d.set("caliber", e.caliber);
-                    d.set("landing_vx", e.landing_vx);
-                    d.set("landing_vz", e.landing_vz);
-                    d.set("threat_half_len", e.threat_half_len);
-                    d.set("is_he", e.is_he);
-                    result.push(&d.to_variant());
                 }
             }
         }
-        result
+        out
     }
 
     /// Fill in the armour-path autoloads if they are not cached yet.

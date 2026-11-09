@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 19
+const SOLVER_VERSION: int = 20
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -1531,6 +1531,115 @@ static func _expected_points(shooter: Ship, target: Ship, range_m: float, aspect
 	var he_ev: float = float(b[1]["damage"]) * float(b[1]["size"]) + he_fire
 	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": he_fire, "he_landed": b[1]["landed"], "ap_landed": b[0]["landed"],
 		"ap_dps": ap_ev * rate, "he_dps": he_ev * rate}
+
+
+## _expected_points at each of `aspects`, one native call per shell; {} where unanswered.
+static func expected_points_row(shooter: Ship, target: Ship, range_m: float, aspects: PackedFloat64Array) -> Array:
+	var ranges := PackedFloat64Array()
+	ranges.resize(aspects.size())
+	ranges.fill(range_m)
+	return expected_points_pairs(shooter, target, ranges, aspects)
+
+
+## _expected_points at each (ranges[i], aspects[i]), one native call per shell; {} where unanswered.
+static func expected_points_pairs(shooter: Ship, target: Ship, ranges: PackedFloat64Array, aspects: PackedFloat64Array) -> Array:
+	var n := ranges.size()
+	var out := []
+	out.resize(n)
+	out.fill({})
+	var mounts_at := {}
+	var any := false
+	for i in n:
+		if not mounts_at.has(ranges[i]):
+			mounts_at[ranges[i]] = _batteries(shooter, KIND_MAIN, ranges[i])
+		any = any or not (mounts_at[ranges[i]] as Array).is_empty()
+	if not any:
+		return out
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var rows := []
+	var shells := []
+	for ammo in 2:
+		var key := _point_table(shooter, target, ammo)
+		var shell: ShellParams = p.shell1 if ammo == 0 else p.shell2
+		if key == "" or shell == null:
+			for i in n:
+				_note_point_query(false, key)
+			return out
+		var live := _pt_live_inputs(target, shell.damage)
+		var he: bool = shell.type == ShellParams.ShellType.HE
+		var q := PackedFloat64Array([0.0, 0.0, shell.damage, _raw_fire_chance(shell, target) if he else 0.0,
+			fire_dps(target) * fire_burn_s(target) if he else 0.0])
+		var t0 := Time.get_ticks_usec()
+		var r: PackedFloat32Array = _projectile_native().point_best_pairs(key, q, ranges, aspects, live[1], live[2])
+		_rt["lookup_ms"] = float(_rt["lookup_ms"]) + (Time.get_ticks_usec() - t0) / 1000.0
+		for i in n:
+			_note_point_query(r.size() > i * 8 and r[i * 8] >= 0.0, key)
+		rows.append(r)
+		shells.append(shell)
+	var ap_size: float = HPManager.size_mod(target.mass, (shells[0] as ShellParams).caliber)
+	var he_size: float = HPManager.size_mod(target.mass, (shells[1] as ShellParams).caliber)
+	var fire_share_chance: float = _raw_fire_chance(shells[1], target)
+	var a: PackedFloat32Array = rows[0]
+	var h: PackedFloat32Array = rows[1]
+	for i in n:
+		var mounts: Array = mounts_at[ranges[i]]
+		var o := i * 8
+		if mounts.is_empty() or a.size() <= o or h.size() <= o or a[o] < 0.0 or h[o] < 0.0:
+			continue
+		var rate: float = mounts[0]["rate"]
+		var ap_ev: float = a[o + 2] * ap_size
+		var he_fire: float = (h[o + 1] - h[o + 2]) * salvo_fire_share(int(mounts[0]["guns"]), h[o + 3], fire_share_chance)
+		var he_ev: float = h[o + 2] * he_size + he_fire
+		out[i] = {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": he_fire, "he_landed": h[o + 3], "ap_landed": a[o + 3],
+			"ap_dps": ap_ev * rate, "he_dps": he_ev * rate}
+	return out
+
+
+## SkillStance._fill_cells' inputs for ProjectileManager.stance_cells: expected_points_pairs' per (shooter, target)
+## values, and the baked model as the fallback.
+static func stance_cell_pack(shooter: Ship, target: Ship) -> Dictionary:
+	var p: GunParams = shooter.artillery_controller.get_params()
+	var d := {"model": damage_model(target), "shooter": shooter.get_instance_id(), "hull": target.get_instance_id(),
+		"alpha_ap": p.shell1.damage if p.shell1 != null else 1.0, "alpha_he": p.shell2.damage if p.shell2 != null else 1.0,
+		"keys": PackedStringArray()}
+	damage_model(shooter)
+	var mounts := _batteries(shooter, KIND_MAIN, 0.0)
+	if mounts.is_empty():
+		return d
+	d.rate = mounts[0]["rate"]
+	d.guns = mounts[0]["guns"]
+	d.max_range = p._range
+	if not point_tables_on():
+		return d
+	var shells := []
+	for ammo in 2:
+		var key := _point_table(shooter, target, ammo)
+		var shell: ShellParams = p.shell1 if ammo == 0 else p.shell2
+		if key == "" or shell == null:
+			d.keys.append("")
+			return d
+		d.keys.append(key)
+		var live := _pt_live_inputs(target, shell.damage)
+		var he: bool = shell.type == ShellParams.ShellType.HE
+		d["q%d" % ammo] = PackedFloat64Array([0.0, 0.0, shell.damage, _raw_fire_chance(shell, target) if he else 0.0,
+			fire_dps(target) * fire_burn_s(target) if he else 0.0])
+		d["w%d" % ammo] = live[1]
+		d.fires = live[2]
+		shells.append(shell)
+	d.ap_size = HPManager.size_mod(target.mass, (shells[0] as ShellParams).caliber)
+	d.he_size = HPManager.size_mod(target.mass, (shells[1] as ShellParams).caliber)
+	d.fire_chance = _raw_fire_chance(shells[1], target)
+	return d
+
+
+## `n` _note_point_query calls on `key`, `served` of them served, the first as `first`.
+static func _note_point_batch(n: int, served: int, first: bool, key: String) -> void:
+	if n <= 0 or not point_tables_on():
+		return
+	_note_point_query(first, key)
+	_rt["queries"] = int(_rt["queries"]) + n - 1
+	_rt["served"] = int(_rt["served"]) + served - int(first)
+	_rt["fallback"] = int(_rt["fallback"]) + n - served - int(not first)
 
 
 ## _score's answer from the point tables; empty when either shell's table is missing.

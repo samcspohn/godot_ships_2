@@ -119,62 +119,25 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 	_citadel_v_frac = maxf(v_frac, 0.01)
 
 
-## erf approximation, max |error| < 1.5e-7  (Abramowitz & Stegun 7.1.26).
-static func _erf(x: float) -> float:
-	const P  := 0.3275911
-	const A1 := 0.254829592
-	const A2 := -0.284496736
-	const A3 := 1.421413741
-	const A4 := -1.453152027
-	const A5 := 1.061405429
-	var t := 1.0 / (1.0 + P * absf(x))
-	var poly := t * (A1 + t * (A2 + t * (A3 + t * (A4 + t * A5))))
-	return signf(x) * (1.0 - poly * exp(-x * x))
-
-
-## erfinv approximation, max |error| < 1.2e-4  (Winitzki 2008, eq. 4).
-static func _erfinv(x: float) -> float:
-	const A := 0.147
-	const TWO_OVER_PI_A := 2.0 / (PI * A)
-	var w := log(maxf(1.0 - x * x, 1e-30))
-	var inner := TWO_OVER_PI_A + w * 0.5
-	return signf(x) * sqrt(sqrt(inner * inner - w / A) - inner)
-
-
-## Generate SHELL_COUNT independent samples from N(0, 1/s²) truncated to [-1, 1].
-## Stratified across SHELL_COUNT equal CDF bins then Fisher-Yates shuffled.
-## With SHELL_COUNT = 4, bins [0,.25) [.25,.5) [.5,.75) [.75,1) map to
-## large-negative, small-negative, small-positive, large-positive — guaranteeing
-## exactly 2 negative + 2 positive and 2 inner + 2 outer values per call.
-## erf_bound = erf(s / sqrt(2)), precomputed by the caller.
-func _generate_axis(s: float, erf_bound: float) -> PackedFloat64Array:
-	var arr := PackedFloat64Array()
-	arr.resize(SHELL_COUNT)
-	var inv_s_sqrt2 := sqrt(2.0) / s
-	for i in SHELL_COUNT:
-		var u_low  := float(i)     / SHELL_COUNT
-		var u_high := float(i + 1) / SHELL_COUNT
-		var u := u_low + randf() * (u_high - u_low)
-		# Invert the CDF of the truncated Gaussian on [-1, 1]:
-		#   F(x) = 0.5 + 0.5 * erf(x * s / sqrt(2)) / erf_bound
-		#   x    = sqrt(2)/s * erfinv(erf_bound * (2u - 1))
-		arr[i] = inv_s_sqrt2 * _erfinv(erf_bound * (2.0 * u - 1.0))
-	for i in range(SHELL_COUNT - 1, 0, -1):
-		var j := randi_range(0, i)
-		var tmp := arr[i]
-		arr[i] = arr[j]
-		arr[j] = tmp
-	return arr
-
-
+# 2D N(0, 1/s²) truncated to the unit disk, stratified in radial CDF and in angle so a salvo always
+# spans inner/outer and all sides. Radial CDF: (1 - exp(-s²r²/2)) / (1 - exp(-s²/2)).
 func _new_salvo(sigma: float) -> void:
 	_shell_index = 0
 	var s := maxf(sigma, 0.01)
-	# erf(s / sqrt(2)) = fraction of the full Gaussian within ±1 std-dev of the
-	# truncation boundary; used as the CDF normalisation constant for each axis.
-	var erf_bound := _erf(s / sqrt(2.0))
-	_h_offsets = _generate_axis(s, erf_bound)
-	_v_offsets = _generate_axis(s, erf_bound)
+	var mass := 1.0 - exp(-0.5 * s * s)
+	var radial_bins: Array[int] = []
+	for i in SHELL_COUNT:
+		radial_bins.append(i)
+	radial_bins.shuffle()
+	var rot := randf() * TAU
+	_h_offsets.resize(SHELL_COUNT)
+	_v_offsets.resize(SHELL_COUNT)
+	for i in SHELL_COUNT:
+		var u := (radial_bins[i] + randf()) / SHELL_COUNT
+		var r := sqrt(-2.0 * log(maxf(1.0 - u * mass, 1e-30))) / s
+		var ang := rot + (i + randf()) * TAU / SHELL_COUNT
+		_h_offsets[i] = r * cos(ang)
+		_v_offsets[i] = r * sin(ang)
 	citadel_guarantee_counter += SHELL_COUNT
 
 	if _citadel_guarantee_enabled and citadel_guarantee_counter >= CITADEL_GUARANTEE_NUM:

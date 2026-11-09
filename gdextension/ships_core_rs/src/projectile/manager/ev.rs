@@ -1,5 +1,5 @@
 use super::survey::{
-    blob_header, erf, rd_u16, resolve_codes, AxisW, BlobHdr, Leaves, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
+    blob_header, rd_u16, resolve_codes, AxisW, BlobHdr, DiskKernel, Leaves, DISK_STRIPS, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
     CELL_SECTION_SHIFT, CELL_TURRET, MM_MISS,
 };
 
@@ -117,11 +117,11 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
     let weights = (0..ND)
         .map(|d| {
             let (hh, hv, s) = disp_of(d);
-            let erf_bound = erf(s / std::f64::consts::SQRT_2);
+            let kern = DiskKernel::new(s);
             g.push(guarantee_share(k.guarantee, k.ellipse, s));
             Weights {
-                u: aim_u.iter().map(|&a| leaves.u_weights(a, hh, s, erf_bound, &guar_h)).collect(),
-                v: aim_v.iter().map(|&a| leaves.v_weights(a, hv, s, erf_bound, &guar_v)).collect(),
+                u: aim_u.iter().map(|&a| leaves.u_weights(a, hh, &kern, &guar_h)).collect(),
+                v: aim_v.iter().map(|&a| leaves.v_weights(a, hv, &kern, &guar_v)).collect(),
             }
         })
         .collect();
@@ -135,31 +135,28 @@ pub(crate) fn guarantee_share(frac: f64, ellipse: (f64, f64), sigma: f64) -> f64
         return 0.0;
     }
     let (ea, eb) = (ellipse.0.max(0.01), ellipse.1.max(0.01) * 0.785);
-    let erf_bound = erf(sigma / std::f64::consts::SQRT_2);
-    let cdf = |x: f64| super::survey::trunc_gauss_cdf(x, sigma, erf_bound);
-    let p_in = (cdf(ea) - cdf(-ea)) * (cdf(eb) - cdf(-eb));
-    frac * (1.0 - p_in).powi(3)
+    frac * (1.0 - DiskKernel::new(sigma).p_in(ea, eb)).powi(3)
 }
 
 /// Across-row sums of one value array under one aim column's weights.
 #[derive(Default)]
 struct Pass {
-    r: Vec<f64>,
-    s: Vec<f64>,
+    r: [Vec<f64>; DISK_STRIPS],
+    s: [Vec<f64>; DISK_STRIPS],
     rq: Vec<f64>,
     sq: Vec<f64>,
 }
 
 impl Pass {
     fn run(&mut self, l: &Leaves, u: &AxisW, m: &[f64], g: f64) {
-        l.u_pass(&u.w, &u.wf, m, &mut self.r, &mut self.s);
+        l.u_pass_disk(u, m, &mut self.r, &mut self.s);
         if g > 0.0 {
-            l.u_pass(&u.q, &u.qf, m, &mut self.rq, &mut self.sq);
+            l.u_pass(&u.q, &u.qf, &u.qruns, m, &mut self.rq, &mut self.sq);
         }
     }
 
     fn at(&self, l: &Leaves, v: &AxisW, g: f64) -> f64 {
-        let a = l.v_pass(&v.w, &v.wf, &self.r, &self.s);
+        let a: f64 = (0..DISK_STRIPS).map(|j| l.v_pass(&v.w[j], &v.wf[j], &self.r[j], &self.s[j])).sum();
         let b = if g > 0.0 { l.v_pass(&v.q, &v.qf, &self.rq, &self.sq) } else { 0.0 };
         (1.0 - g) * a + g * b
     }
@@ -170,6 +167,7 @@ impl Pass {
 fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -> [Cell; ND] {
     let mut out = [Cell::default(); ND];
     let mut pass = Pass::default();
+    let (pay, hit, heavy, medium) = (&l.leaves.masked(pay)[..], &l.leaves.masked(hit)[..], &l.leaves.masked(heavy)[..], &l.leaves.masked(medium)[..]);
     for (d, w) in l.weights.iter().enumerate() {
         let g = l.g[d];
         let mut best = (f64::NEG_INFINITY, 0usize, 0usize);

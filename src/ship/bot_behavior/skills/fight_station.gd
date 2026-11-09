@@ -311,7 +311,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	var holding: bool = _has_station and not _chasing and not _push.has("push_i") and not _picked_push
 	mo.held = Vector2(_station.x, _station.z) if holding else Vector2.INF
 	var t0 := Time.get_ticks_usec()
-	var r: Dictionary = vis.fight_search(here, pos, mo)
+	var r: Dictionary = _fight_search(vis, here, pos, mo)
 	_tm.append(Time.get_ticks_usec() - t0)
 	_tc.append(int(r.get("cells", 0)))
 	if _tm.size() % 1000 == 0:
@@ -344,6 +344,10 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	_adopt(Vector3(p.x, 0.0, p.y), float(r.score), {})
 	_picked_push = _push.has("push_i")
 	_mark(float(r.score), float(r.value), float(r.harm), int(r.mask), prio, belief)
+
+## Own frame so the native search shows in the profiler.
+static func _fight_search(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dictionary) -> Dictionary:
+	return vis.fight_search(here, pos, mo)
 
 ## The held station's fire on us, share of our trade HP per second; 0 without one.
 func harm_share() -> float:

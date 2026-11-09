@@ -4170,8 +4170,9 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	if shooter.artillery_controller == null:
 		return c
 	var made = _row(_provisional, shooter).get(key)
-	if not c.is_empty() and (made == null or SimClock.now() - float(made) < PROVISIONAL_CURVE_S):
+	if not c.is_empty() and (made == null or SimClock.now() - float(made) < PROVISIONAL_CURVE_S or _provisional_spent()):
 		return c
+	var t0 := Time.get_ticks_usec()
 	c = PackedFloat32Array()
 	_row(_danger_curves, shooter).erase(key)
 	if BotGunnery.point_tables_ready(shooter, target):
@@ -4181,13 +4182,35 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	var aspect: float = guns_bear_aspect(target)
 	var p = shooter.artillery_controller.get_params()
 	var sec_mod: float = HPManager.size_mod(target.mass, secondary_caliber(shooter))
+	var ranges := PackedFloat64Array()
 	var r := POINT_BLANK_M
 	while r <= p._range:
-		c.append(maxf(SkillStance._expected(target, shooter, r, aspect).x, 0.0) * DamageExpectation.salvo_factor(shooter, target, r, aspect)
-			+ _secondary_dps(shooter, target, r, aspect) * sec_mod)
+		ranges.append(r)
 		r += DESIRED_STEP_M
+	var aspects := PackedFloat64Array()
+	aspects.resize(ranges.size())
+	aspects.fill(aspect)
+	var pts: Array = BotGunnery.expected_points_pairs(shooter, target, ranges, aspects) if BotGunnery.point_tables_on() else []
+	for i in ranges.size():
+		var e: Dictionary = pts[i] if not pts.is_empty() else {}
+		c.append(maxf(SkillStance._expected_of(e, target, shooter, ranges[i], aspect).x, 0.0)
+			* DamageExpectation.salvo_factor(shooter, target, ranges[i], aspect) + _secondary_dps(shooter, target, ranges[i], aspect) * sec_mod)
 	row[key] = c
+	if made != null:
+		_provisional_us += Time.get_ticks_usec() - t0
 	return c
+
+## Rebuilds of due provisional curves stop for the physics frame past this; they serve the old curve meanwhile.
+const PROVISIONAL_FRAME_US: int = 2000
+static var _provisional_frame: int = -1
+static var _provisional_us: int = 0
+
+static func _provisional_spent() -> bool:
+	var f := Engine.get_physics_frames()
+	if f != _provisional_frame:
+		_provisional_frame = f
+		_provisional_us = 0
+	return _provisional_us >= PROVISIONAL_FRAME_US
 
 ## [shooter id, target id] -> dps_curve's most from each range or any nearer, should `shooter` close, fading by e per PRIORITY_CLOSE_S of its sailing; out to PRIORITY_DANGER_MAX_M.
 static var _danger_curves: Dictionary = {}

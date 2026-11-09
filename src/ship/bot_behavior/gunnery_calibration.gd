@@ -162,6 +162,14 @@ static func on_veto(ship: Ship, vetoed: bool) -> void:
 	v.vetoed += int(vetoed)
 
 
+## Probes feed only the match metrics; none is opened while one is open for `ship`.
+static func can_open(ship: Ship) -> bool:
+	if not CmdArgs.has("--metrics"):
+		return false
+	_close_due(SimClock.now())
+	return not _open.has(ship.get_instance_id())
+
+
 static func open_probe(ship: Ship, kind: StringName, pred: float, dur: float, early_s: float, split: Dictionary, on_ids: Array, by_ids: Array,
 		dark_ids: Array) -> void:
 	var now: float = SimClock.now()

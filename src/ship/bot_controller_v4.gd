@@ -338,10 +338,11 @@ func _physics_process(delta: float) -> void:
 		elif periodic_behavior_due or stale_behavior_due or _last_intent == null:
 			should_query_behavior = true
 
-		if should_query_behavior:
-			should_query_behavior = false
-			_behavior_timer = 0.0
-			_update_nav_intent()
+	# Due from a slot, held while this frame's full updates are spent.
+	if should_query_behavior and (_last_intent == null or _full_update_free()):
+		should_query_behavior = false
+		_behavior_timer = 0.0
+		_update_nav_intent()
 
 	# Gun suppression is decided at intent cadence but the guns fire every frame;
 	# a policy cached while lit would fire the first salvo after going dark.
@@ -353,8 +354,13 @@ func _physics_process(delta: float) -> void:
 	# A salvo's flight is only seconds: the dodge cannot wait for the slot.
 	if behavior != null and Engine.get_physics_frames() % DODGE_CHECK_FRAMES == bot_id % DODGE_CHECK_FRAMES \
 			and _behavior_timer > 0.0 and behavior._skill_stance.shells_fresh(_ship):
-		_behavior_timer = 0.0
-		_update_nav_intent()
+		var it: NavIntent = behavior._skill_stance.redodge()
+		if it != null and _last_intent != null:
+			_last_intent.target_heading = it.target_heading
+			_last_intent.heading_weight = it.heading_weight
+			_last_intent.throttle_override = it.throttle_override
+			_last_intent.force_reverse = it.force_reverse
+			_last_intent.forbid_reverse = it.forbid_reverse
 
 	# =========================================================================
 	# TIER 3 — path update (every PATH_UPDATE_INTERVAL frames, or immediately
@@ -428,6 +434,22 @@ func _physics_process(delta: float) -> void:
 # ===========================================================================
 # NAVIGATION INTENT
 # ===========================================================================
+
+## Full behavior updates allowed per physics frame across all bots; the rest wait a frame.
+const MAX_FULL_UPDATES_PER_FRAME: int = 2
+static var _full_frame: int = -1
+static var _full_count: int = 0
+
+static func _full_update_free() -> bool:
+	var f := Engine.get_physics_frames()
+	if f != _full_frame:
+		_full_frame = f
+		_full_count = 0
+	if _full_count >= MAX_FULL_UPDATES_PER_FRAME:
+		return false
+	_full_count += 1
+	return true
+
 
 func _update_nav_intent() -> void:
 	_query_nav_intent()

@@ -11,7 +11,7 @@ const SAT_SECTIONS: Array[int] = [2, 3, 4, 5]
 const PEN_CODES: Array[int] = [NativeArmorInteraction.PENETRATION, NativeArmorInteraction.PARTIAL_PEN,
 	NativeArmorInteraction.CITADEL, NativeArmorInteraction.CITADEL_OVERPEN]
 ## Bump when anything that changes stored values changes.
-const VERSION: int = 3
+const VERSION: int = 4
 ## Mean along-track aim error at impact by target class, per DamageExpectation.LEAD_BAND_M band (m, + ahead):
 ## bot aim in the 2026-11-04 point-table A/Bs, 200 12v12 matches. Shells land behind the aim point.
 const LEAD_BIAS_ALONG := {

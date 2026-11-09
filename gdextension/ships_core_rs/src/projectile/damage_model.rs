@@ -28,9 +28,10 @@ struct Shooter {
     rate: f32,
     /// DispersionParams.sigma of the battery, the EV chunks' fourth axis.
     sigma: f32,
-    /// Citadel guarantee: share of salvos and ellipse in half-dispersions (DispersionCalculator).
-    guarantee: f32,
+    /// Citadel guarantee ellipse in half-dispersions (DispersionCalculator).
     ellipse: (f32, f32),
+    /// guarantee_share of the battery.
+    guar_share: f32,
     ammo: [Option<Ammo>; 2],
     /// Shells a salvo fires.
     salvo: f32,
@@ -293,7 +294,7 @@ impl DamageModel {
             let Some((mut v, mut l, (va_h, va_m))) = look(hd_h.hypot(sp), hd_v.hypot(sl)) else { continue };
             let (mut heavy_v, mut medium_v) = (v * va_h, v * va_m);
             // The guarantee's shell lands in a small ellipse round the aim, which the lead error carries off.
-            let g = guarantee_share(s.guarantee as f64, (s.ellipse.0 as f64, s.ellipse.1 as f64), s.sigma as f64) as f32;
+            let g = s.guar_share;
             if g > 0.0 {
                 let gh = (hd_h * s.ellipse.0 * GUAR_H_SD * s.sigma).hypot(sp);
                 let gv = (hd_v * s.ellipse.1 * GUAR_V_SD * s.sigma).hypot(sl);
@@ -378,7 +379,8 @@ impl DamageModel {
                 auto_bounce: b[5] })
         };
         self.grids.retain(|k, _| k.0 != id);
-        self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, sigma, guarantee, ellipse: (ellipse.x, ellipse.y),
+        let guar_share = guarantee_share(guarantee as f64, (ellipse.x as f64, ellipse.y as f64), sigma as f64) as f32;
+        self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, sigma, ellipse: (ellipse.x, ellipse.y), guar_share,
             ammo: [slot(0), slot(1)], salvo: salvo.max(1.0) });
     }
 

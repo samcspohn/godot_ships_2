@@ -999,6 +999,12 @@ impl ReachField {
     }
 
     /// Where the listed enemies can land shells.
+    /// fire_lookup over every enemy of `team`, in exposure_mask's bit order.
+    pub(crate) fn team_fire_lookup(&self, team: i32) -> Option<ReachLookup> {
+        let ids = self.teams.get(&team)?.order.clone();
+        self.fire_lookup(team, &ids)
+    }
+
     pub(crate) fn fire_lookup(&self, team: i32, ids: &[i64]) -> Option<ReachLookup> {
         self.lookup(team, ids, None)
     }

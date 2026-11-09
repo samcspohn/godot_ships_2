@@ -10,13 +10,12 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="7_f0niw"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="8_bnwmv"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="9_uwp4f"]
+[ext_resource type="Resource" uid="uid://cm47q1hvoo4vp" path="res://assets/DEFAULT_SEC_DISP.tres" id="9_ytg8s"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="10_1phaq"]
-[ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="10_ytg8s"]
 [ext_resource type="PackedScene" uid="uid://e1skh7d26jgi" path="res://src/aviation/AviationController.tscn" id="11_r7nol"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="11_wdoen"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="12_86xt5"]
 [ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="12_n0aqy"]
-[ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="12_pqw46"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="13_4ql0v"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="14_iv11n"]
 [ext_resource type="Resource" uid="uid://cv6jnnhx7qnla" path="res://src/Consumable/Registry/GER_T11_HYDRO.tres" id="15_eq5gm"]
@@ -29,7 +28,6 @@
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="25_f0niw"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="26_bnwmv"]
 [ext_resource type="Resource" uid="uid://dh4tqmvx2plbn" path="res://src/artillary/Dispersion/ger_bb_main.tres" id="disp_ger_bb"]
-[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="disp_script"]
 
 [sub_resource type="Resource" id="Resource_ytg8s"]
 script = ExtResource("3_cg1e5")
@@ -81,16 +79,6 @@ traverse_speed = 3.5
 _range = 15900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_disp_4vatr"]
-script = ExtResource("disp_script")
-sigma = 1.0
-h_curve = ExtResource("10_ytg8s")
-v_curve = ExtResource("12_pqw46")
-reference_range = 5000.0
-h_disp = 323.305
-v_disp = 204.856
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
-
 [sub_resource type="Resource" id="Resource_2lqir"]
 script = ExtResource("7_f0niw")
 speed = 1200.0
@@ -126,7 +114,7 @@ script = ExtResource("6_6thso")
 elevation_speed = 50.0
 shell1 = SubResource("Resource_2lqir")
 shell2 = SubResource("Resource_leu1t")
-dispersion = SubResource("Resource_disp_4vatr")
+dispersion = ExtResource("9_ytg8s")
 reload_time = 6.0
 traverse_speed = 50.0
 _range = 5600.0

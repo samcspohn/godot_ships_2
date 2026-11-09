@@ -63,8 +63,8 @@ func _run() -> void:
 	# ── Arm A ───────────────────────────────────────────────────────────────
 	var t0 := Time.get_ticks_usec()
 	for tick in UPDATE_TICKS:
-		reg.update_team(0, ids, _positions(tick), _force_spots(tick))
-		reg.update_team(1, ids, _positions(tick + 7), _force_spots(tick + 7))
+		reg.update_team(0, ids, _positions(tick), _force_spots(tick), PackedFloat32Array())
+		reg.update_team(1, ids, _positions(tick + 7), _force_spots(tick + 7), PackedFloat32Array())
 	var a_us := float(Time.get_ticks_usec() - t0) / float(UPDATE_TICKS)
 	print("")
 	print("A  update_team x2 (per publish tick) : %8.1f us" % a_us)
@@ -81,7 +81,7 @@ func _run() -> void:
 	# ── Arm B ───────────────────────────────────────────────────────────────
 	t0 = Time.get_ticks_usec()
 	for tick in QUERY_TICKS:
-		reg.update_team(0, ids, _positions(tick), _force_spots(tick))
+		reg.update_team(0, ids, _positions(tick), _force_spots(tick), PackedFloat32Array())
 		for nav in navs:
 			nav.get_threat_circle_count()   # refresh only — the isolated rebuild
 	var b_us := float(Time.get_ticks_usec() - t0) / float(QUERY_TICKS)
@@ -141,9 +141,9 @@ func _check_force_spot() -> void:
 		push_error("[threat] no clear bearing at 5000 m from the origin")
 		return
 
-	reg.update_team(0, ids, at, PackedFloat32Array([0.0]))
+	reg.update_team(0, ids, at, PackedFloat32Array([0.0]), PackedFloat32Array())
 	var quiet: Dictionary = nav.adjust_destination_for_threats(dest * 2.4, dest)
-	reg.update_team(0, ids, at, PackedFloat32Array([8000.0]))
+	reg.update_team(0, ids, at, PackedFloat32Array([8000.0]), PackedFloat32Array())
 	var radar: Dictionary = nav.adjust_destination_for_threats(dest * 2.4, dest)
 
 	var quiet_adj: bool = bool(quiet.get("adjusted", false))
@@ -169,7 +169,7 @@ func _time_stamp(reg: ThreatRegistry, navs: Array, ids: PackedInt32Array,
 	var n := 0
 	for tick in STAMP_TICKS:
 		var fs := _force_spots(tick * 3) if with_force_spot else _no_force_spots()
-		reg.update_team(0, ids, _positions(tick * 3), fs)
+		reg.update_team(0, ids, _positions(tick * 3), fs, PackedFloat32Array())
 		for nav in navs:
 			nav.debug_stamp_threats()
 			n += 1
