@@ -334,7 +334,8 @@ static func runtime_job(shooter: Ship, target: Ship, ammo: int, cells: int = 700
 		"shell_step": BotGunnery.SHELL_RANGE_STEP_M, "ranges": rs, "half_disp": hd,
 		"bias": PackedFloat32Array(LEAD_BIAS_ALONG.get(DamageExpectation.class_name_of(target), [])),
 		"lead": DamageExpectation.lead_sigmas(target), "lead_band": DamageExpectation.LEAD_BAND_M, "aspects": aspects,
-		"points": candidate_points(target), "features": BotGunnery.feature_points(target), "mc_off": mc[0], "mc_lead": mc[1],
+		"points": candidate_points(target), "sections": candidate_sections(target), "sat_w": sat_weights(),
+		"features": BotGunnery.feature_points(target), "mc_off": mc[0], "mc_lead": mc[1],
 		"comp": _comp_payouts(), "n_comp": N_COMP, "turret_cap": BotGunnery.DMG_TURRET,
 		"consts": PackedFloat64Array([BotGunnery.LATTICE_CELLS, BotGunnery.LATTICE_MIN, BotGunnery.LATTICE_MAX,
 			BotGunnery.FINE_Y_LO_M, BotGunnery.FINE_Y_HI_M, BotGunnery.FINE_ROW_M, BotGunnery.FINE_ROWS_MAX,
@@ -415,6 +416,48 @@ static func candidate_points(target: Ship) -> PackedVector3Array:
 		var z: float = bb.position.z if t == ArmorPart.Type.BOW else bb.end.z
 		for y in [0.25, 0.5, 0.75]:
 			out.append(Vector3(0.0, lerpf(maxf(bb.position.y, -2.0), bb.end.y, y), z))
+	return out
+
+
+## candidate_points' sections (ArmorPart.Type), point for point.
+static func candidate_sections(target: Ship) -> PackedInt32Array:
+	var types := {}
+	for part in target.armor_parts:
+		if part.get_parent() is MeshInstance3D and part.type != ArmorPart.Type.MODULE:
+			types[part.type] = true
+	var out := PackedInt32Array()
+	for g in FACE_GRID:
+		if types.has(g[0]):
+			for i in int(g[1]) * int(g[2]):
+				out.append(g[0])
+	for t in [ArmorPart.Type.BOW, ArmorPart.Type.STERN]:
+		if types.has(t):
+			out.append_array([t, t, t])
+	return out
+
+
+## Each of `pts` (candidate points, pruned or not) as its section; -1 for none.
+static func sections_of(target: Ship, pts: PackedVector3Array) -> PackedInt32Array:
+	var cand := candidate_points(target)
+	var secs := candidate_sections(target)
+	var out := PackedInt32Array()
+	for p in pts:
+		var s := -1
+		for i in cand.size():
+			if cand[i].distance_squared_to(p) < 1e-4:
+				s = secs[i]
+				break
+		out.append(s)
+	return out
+
+
+## Per PEN_CODES slot, a drained section's component weight: what the hull pool alone still pays, floored.
+static func sat_weights() -> PackedFloat64Array:
+	var base := BotGunnery._base_payouts()
+	var out := PackedFloat64Array()
+	for code in PEN_CODES:
+		var b: float = base[code]
+		out.append(maxf(1.0 - HPManager.SECTION_SHARE, BotGunnery.SATURATED_FLOOR / b) if b > 0.0 else 0.0)
 	return out
 
 

@@ -174,7 +174,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		last_sweep = {"here": from, "axis": axis, "opts": opts, "ms": Time.get_ticks_msec()}
 		var r: Dictionary = {}
 		for i in VERIFY_TRIES:
+			var t0 := Time.get_ticks_usec()
 			r = vis.cover_search(from, axis, opts.pos, opts)
+			BotTiming.add(&"cover_search", t0)
 			if not bool(r.found) or not want or _reaches_lead(ship, opts, aim, r.pos):
 				break
 			_block(r.pos, now)
@@ -328,7 +330,8 @@ static func edge_sim_opts(ship: Ship, g: Dictionary) -> Dictionary:
 	if CmdArgs.has("--no-edge-sim") or ship.artillery_controller == null:
 		return {}
 	return {"sim_shell": ship.artillery_controller.get_shell_params(), "sim_nav": NavigationMapManager.get_map(),
-		"sim_space": ship.get_world_3d().direct_space_state, "sim_gun_h": float(g.get("gun_h", 5.0))}
+		"sim_space": ship.get_world_3d().direct_space_state, "sim_gun_h": float(g.get("gun_h", 5.0)),
+		"sim_range": float(g.get("range", 0.0))}
 
 ## Whether `p` is within CLIP_HALF of each seeing enemy's bearing to `from`, as cover_search clips.
 static func _in_clip(from: Vector2, p: Vector2, clip_pos: PackedVector2Array) -> bool:

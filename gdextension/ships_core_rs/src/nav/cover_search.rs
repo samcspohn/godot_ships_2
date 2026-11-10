@@ -263,7 +263,7 @@ impl VisibilityGrid {
             let edge = !los && inp.sim.is_some()
                 && cq.is_some_and(|c| reach.matrix_edge(i, self, k, q, c).is_some_and(|(_, edge)| edge));
             let hit = match (edge, inp.sim.as_ref(), cq) {
-                (true, Some(sim), Some(c)) => sim.hits(p, self.centres[c], c),
+                (true, Some(sim), Some(c)) => sim.tree(p, self.centres[c], c).unwrap_or_else(|| reach.hits_at(i, q, cq, p, Some(k), los)),
                 _ => reach.hits_at(i, q, cq, p, Some(k), los),
             };
             if hit && e.within_spot(p, q) && (!inp.reach_needs_los || los) {

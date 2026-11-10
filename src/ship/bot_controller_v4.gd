@@ -264,6 +264,7 @@ static var perf_frame: int = 0
 func _physics_process(delta: float) -> void:
 	if _ship == null or movement == null or navigator == null:
 		return
+	var t_bot := Time.get_ticks_usec()
 
 	if Debug.follow_ship == _ship:
 		_emit_debug_draws()
@@ -285,6 +286,7 @@ func _physics_process(delta: float) -> void:
 	# =========================================================================
 
 	if Engine.get_physics_frames() % 2 == bot_id % 2:
+		var t0 := Time.get_ticks_usec()
 		navigator.set_state(
 			_ship.global_position,
 			_ship.linear_velocity,
@@ -302,6 +304,7 @@ func _physics_process(delta: float) -> void:
 			navigator.set_health_fraction(hp_frac)
 
 		_track_shooters()
+		BotTiming.add(&"set_state", t0)
 
 	if not in_update_slot:
 		# _update_obstacles() (called below in the slot) already ends with
@@ -342,7 +345,9 @@ func _physics_process(delta: float) -> void:
 	if should_query_behavior and (_last_intent == null or _full_update_free()):
 		should_query_behavior = false
 		_behavior_timer = 0.0
+		var t0 := Time.get_ticks_usec()
 		_update_nav_intent()
+		BotTiming.add(&"intent", t0)
 
 	# Gun suppression is decided at intent cadence but the guns fire every frame;
 	# a policy cached while lit would fire the first salvo after going dark.
@@ -354,7 +359,9 @@ func _physics_process(delta: float) -> void:
 	# A salvo's flight is only seconds: the dodge cannot wait for the slot.
 	if behavior != null and Engine.get_physics_frames() % DODGE_CHECK_FRAMES == bot_id % DODGE_CHECK_FRAMES \
 			and _behavior_timer > 0.0 and behavior._skill_stance.shells_fresh(_ship):
+		var t0 := Time.get_ticks_usec()
 		var it: NavIntent = behavior._skill_stance.redodge()
+		BotTiming.add(&"redodge", t0)
 		if it != null and _last_intent != null:
 			_last_intent.target_heading = it.target_heading
 			_last_intent.heading_weight = it.heading_weight
@@ -428,7 +435,10 @@ func _physics_process(delta: float) -> void:
 	# 	_emit_debug_draws()
 
 	# --- 9. Behavior tick (target scanning, firing, consumables) ---
+	var t0 := Time.get_ticks_usec()
 	_tick_behavior(delta)
+	BotTiming.add(&"tick_behavior", t0)
+	BotTiming.bot_frame(t_bot)
 
 
 # ===========================================================================

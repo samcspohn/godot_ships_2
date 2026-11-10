@@ -4,6 +4,7 @@ use std::f64::consts::PI;
 use godot::prelude::*;
 
 use crate::combat::stance_price::{adiff, dodge_search};
+use crate::combat::stance_rows::StanceRows;
 use crate::combat::turret::wrapf;
 use crate::projectile::manager::{ProjectileManager, ShellLandingEntry};
 
@@ -97,7 +98,10 @@ impl DodgePlanner {
         let at = cfg.get("at").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or_default();
         let sh = f64s("shooters");
         let bearings = f64s("bearings");
-        let hit_rows: VarArray = cfg.get("hit_rows").and_then(|v| v.try_to().ok()).unwrap_or_default();
+        let store = cfg.get("store").and_then(|v| v.try_to::<Gd<StanceRows>>().ok());
+        let pm = cfg.get("pm").and_then(|v| v.try_to::<Gd<ProjectileManager>>().ok());
+        let asp_step = get("aspect_step", 5.0);
+        let ids: Vec<i64> = cfg.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).map_or_else(Vec::new, |a| a.to_vec());
         let bucket_m = get("bucket_m", 250.0);
         let source_match = get("source_match", 0.0);
 
@@ -125,8 +129,25 @@ impl DodgePlanner {
                 let pos = Vector2::new(sh[i * 10] as f32, sh[i * 10 + 1] as f32);
                 let r = (pos.distance_to(at) as f64).min(sh[i * 10 + 6]);
                 let bucket = (r / bucket_m) as i64;
-                let got = hit_rows.get(i).and_then(|v| v.try_to::<VarDictionary>().ok())
-                    .and_then(|d| d.get(bucket)).and_then(|v| v.try_to::<PackedFloat32Array>().ok());
+                let read = |st: &Gd<StanceRows>, id: i64| st.bind().get(id, bucket as i32, 2).map(|o| o.map(|v| v.to_vec()));
+                let mut got = match (store.as_ref(), ids.get(i)) {
+                    (Some(st), Some(&id)) => read(st, id),
+                    _ => None,
+                };
+                if let (Some(st), Some(pm), Some(&id)) = (store.as_ref(), pm.as_ref(), ids.get(i)) {
+                    let need: Vec<usize> = match &got {
+                        None => (0..ASPECTS).collect(),
+                        Some(Some(v)) => (0..v.len()).filter(|&a| v[a].is_nan()).collect(),
+                        Some(None) => Vec::new(),
+                    };
+                    if !need.is_empty() {
+                        let mut st = st.clone();
+                        let ok = need.iter().all(|&a| st.bind_mut().ensure_cell(&pm.bind(), id, bucket as i32, r, a, asp_step, ASPECTS));
+                        if ok {
+                            got = read(&st, id);
+                        }
+                    }
+                }
                 match got {
                     None => {
                         if asked.insert((i, bucket)) {
@@ -135,7 +156,7 @@ impl DodgePlanner {
                             }
                         }
                     }
-                    Some(v) => {
+                    Some(Some(v)) => {
                         let nan: Vec<usize> = (0..v.len()).filter(|&a| v[a].is_nan()).collect();
                         if !nan.is_empty() {
                             if asked.insert((i, bucket)) {
@@ -144,9 +165,10 @@ impl DodgePlanner {
                                 }
                             }
                         } else if v.len() == ASPECTS {
-                            row = Some(v.to_vec());
+                            row = Some(v);
                         }
                     }
+                    Some(None) => {}
                 }
             }
             aspect_w.extend_from_slice(row.as_deref().unwrap_or(&[1.0; ASPECTS]));
@@ -324,6 +346,11 @@ impl DodgePlanner {
     #[func]
     fn fall_half(&self) -> f64 {
         self.fall_half
+    }
+
+    #[func]
+    fn shell_count(&self) -> i64 {
+        self.shells.len() as i64
     }
 }
 

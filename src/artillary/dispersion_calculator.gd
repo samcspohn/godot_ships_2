@@ -86,7 +86,7 @@ class_name DispersionCalculator
 # 	return dispersed * speed
 
 
-const SHELL_COUNT := 2
+const SHELL_COUNT := 3
 const CITADEL_GUARANTEE_NUM := 4
 var citadel_guarantee_counter = 0
 

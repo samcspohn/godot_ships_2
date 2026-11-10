@@ -37,6 +37,8 @@ pub struct NavigationMap {
     /// coarse island mesh as its tallest vertex everywhere; this is what a
     /// shell-arc model should be tested against.
     pub(crate) height_mid_grid: Vec<f32>,
+    /// World-space island collider triangles reaching above the waterline, for EdgeTrees.
+    pub(crate) collider_tris: Vec<[Vector3; 3]>,
     /// Tallest cell in `height_grid`; bounds the shadow march.
     pub(crate) max_terrain_height: f32,
     pub(crate) grid_width: i32,
@@ -72,6 +74,7 @@ impl IRefCounted for NavigationMap {
             height_grid: Vec::new(),
             shadow_height_grid: Vec::new(),
             height_mid_grid: Vec::new(),
+            collider_tris: Vec::new(),
             max_terrain_height: 0.0,
             grid_width: 0,
             grid_height: 0,

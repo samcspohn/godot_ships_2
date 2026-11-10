@@ -52,6 +52,8 @@ pub(crate) struct Job {
     pub mc_lead: Vec<Vector2>,
     pub comp: Vec<f64>,
     pub n_comp: usize,
+    pub sections: Vec<i32>,
+    pub sat_w: [f32; 4],
     pub turret_cap: f64,
     pub c: Consts,
 }
@@ -176,7 +178,7 @@ impl PointWorker {
         let ranges = usable_ranges(&job);
         let n_aspect = job.aspects.len();
         self.store.write().unwrap().insert(job.key.clone(), Arc::new(RwLock::new(PtTable::new(
-            job.ranges[..ranges].to_vec(), job.aspects.clone(), job.points.clone(), job.n_comp))));
+            job.ranges[..ranges].to_vec(), job.aspects.clone(), job.points.clone(), job.n_comp, job.sections.clone(), job.sat_w))));
         let (m, cv) = &*self.shared;
         let mut g = m.lock().unwrap();
         let seq = g.jobs.len();

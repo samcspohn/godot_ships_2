@@ -1,5 +1,6 @@
 pub mod cover_search;
 pub mod edge_sim;
+pub mod edge_tree;
 pub mod fight_search;
 pub mod forecast;
 pub mod gun_matrix;

@@ -1195,6 +1195,7 @@ impl ReachField {
             return;
         }
         let terrain = Terrain::from_map(&m);
+        crate::nav::edge_tree::start(&m.collider_tris, m.min_x, m.min_z, m.max_x, m.max_z);
         self.field = Some(Arc::new(Field::build(&terrain, cell_mult.max(1))));
         self.terrain = Some(Arc::new(terrain));
         self.planes.lock().unwrap().1.clear();
@@ -1503,6 +1504,38 @@ impl ReachField {
     fn edge_sim_stats(&self) -> PackedInt64Array {
         use crate::nav::edge_sim::{SIMS, SIM_HITS, SIM_NS};
         PackedInt64Array::from(&[SIMS.swap(0, Relaxed) as i64, SIM_HITS.swap(0, Relaxed) as i64, SIM_NS.swap(0, Relaxed) as i64][..])
+    }
+
+    /// Queues the EdgeTrees sectors of `shell` (muzzle `gun_h`, reaching `range`) round the VisibilityGrid cells under
+    /// `targets` that face `shooters`.
+    #[func]
+    fn edge_prefetch(&self, shell: Gd<godot::classes::Resource>, gun_h: f32, range: f32, targets: PackedVector2Array,
+            shooters: PackedVector2Array) {
+        let (Some(t), Some(vis)) = (crate::nav::edge_tree::get(), self.vis.as_ref()) else { return };
+        let key = crate::nav::edge_sim::edge_key(&shell, gun_h);
+        t.register(key, || crate::nav::edge_sim::shell_raw(&shell, gun_h, range));
+        let v = vis.bind();
+        for p in targets.as_slice() {
+            if let Some(c) = v.cell_of(*p) {
+                t.prefetch(key, c as i32, v.centres[c], shooters.as_slice());
+            }
+        }
+    }
+
+    /// EdgeTrees [asked, answered, sectors built, build ns, bytes built, raster ms, sectors held, queued] since the start, then
+    /// SHIPS_EDGECHK's (tree, sim) counts [no/no, no/yes, yes/no, yes/yes].
+    #[func]
+    fn edge_tree_stats(&self) -> PackedInt64Array {
+        let mut out: Vec<i64> = vec![0; 8];
+        if let Some(t) = crate::nav::edge_tree::get() {
+            for (i, s) in t.stats.iter().take(6).enumerate() {
+                out[i] = s.load(Relaxed) as i64;
+            }
+            out[6] = t.held() as i64;
+            out[7] = t.pending() as i64;
+        }
+        out.extend(crate::nav::edge_sim::CHECKS.iter().map(|c| c.load(Relaxed) as i64));
+        PackedInt64Array::from(out.as_slice())
     }
 
     /// reach_mask from exactly `point`, one ray per enemy.

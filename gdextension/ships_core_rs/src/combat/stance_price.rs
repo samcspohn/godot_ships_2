@@ -8,6 +8,7 @@ use std::f64::consts::{PI, TAU};
 
 use godot::prelude::*;
 
+use crate::combat::stance_rows::StanceRows;
 use crate::combat::turret::wrapf;
 use crate::nav::map::NavigationMap;
 use crate::nav::navigator::hull::{rudder_to_heading, Hull, PHYSICS_DT};
@@ -16,6 +17,12 @@ use crate::combat::stance::{shell_hit, ship_params, start_hull};
 use crate::nav::types::ShipParams;
 
 const SH_STRIDE: usize = 10;
+
+/// Temporary dodge profile: [searches, total ns, land_shells ns, hull-step ns, physics steps, shell checks, hits tested].
+pub(crate) static DPROF: [std::sync::atomic::AtomicU64; 7] = [const { std::sync::atomic::AtomicU64::new(0) }; 7];
+fn dprof(i: usize, v: u64) {
+    DPROF[i].fetch_add(v, std::sync::atomic::Ordering::Relaxed);
+}
 const TORP_STRIDE: usize = 8;
 
 /// Godot's angle_difference.
@@ -39,12 +46,18 @@ struct Shooter {
     reload: f64,
     first: f64,
     stop: f64,
+    /// `stop` under window2, for the second kind.
+    stop2: f64,
 }
 
 impl Shooter {
     /// Salvo landings before `end`, by repeated addition as the GDScript stepped them.
     fn times(&self, end: f64) -> impl Iterator<Item = f64> + '_ {
-        let stop = self.stop.min(end);
+        self.times_to(end, self.stop)
+    }
+
+    fn times_to(&self, end: f64, stop: f64) -> impl Iterator<Item = f64> + '_ {
+        let stop = stop.min(end);
         let reload = self.reload;
         std::iter::successors(Some(self.first), move |&t| Some(t + reload)).take_while(move |&t| t < stop && reload > 0.0)
     }
@@ -52,7 +65,14 @@ impl Shooter {
 
 pub(crate) struct Pricer {
     sh: Vec<Shooter>,
-    rows: HashMap<(usize, i32), Vec<f32>>,
+    /// cfg.kind's rows, then cfg.kind2's when given.
+    rows: RefCell<[HashMap<(usize, i32), Vec<f32>>; 2]>,
+    /// With cfg.pm, missing cells are filled through the store as they are met.
+    store: Option<Gd<StanceRows>>,
+    pm: Option<Gd<crate::projectile::manager::ProjectileManager>>,
+    ids: Vec<i64>,
+    kinds: [usize; 2],
+    two: bool,
     /// (shooter, range) of the first visit to each row bucket not given.
     /// (shooter, range, bucket, aspect) of cells not given (absent bucket or NAN cell).
     missing: RefCell<Vec<(usize, f64, i32, usize)>>,
@@ -80,11 +100,13 @@ fn f32s(d: &VarDictionary, k: &str) -> Vec<f32> {
 }
 
 impl Pricer {
-    /// cfg: shooters [x, z, weight, group, bit, spread, range, reload, next, stop] each, rows (per shooter
-    /// {bucket: PackedFloat32Array}), slices, vmax, at_speed, team, field, window, skip, dt, aspects, aspect_step, bucket_m.
+    /// cfg: shooters [x, z, weight, group, bit, spread, range, reload, next, stop] each, store (StanceRows), ids
+    /// (shooter instance ids), kind, kind2 / window2 (optional), slices, vmax, at_speed, team, field, window, skip, dt,
+    /// aspects, aspect_step, bucket_m.
     pub(crate) fn new(cfg: &VarDictionary) -> Self {
         let raw = f64s(cfg, "shooters");
         let (window, skip) = (f(cfg, "window", f64::INFINITY), f(cfg, "skip", 0.0));
+        let window2 = f(cfg, "window2", window);
         let sh: Vec<Shooter> = raw.chunks_exact(SH_STRIDE).map(|s| {
             let reload = s[7];
             let mut t = s[8];
@@ -92,24 +114,26 @@ impl Pricer {
                 t += reload;
             }
             Shooter { x: s[0] as f32, z: s[1] as f32, weight: s[2], group: s[3] as usize, bit: s[4] as i32, spread: s[5],
-                range: s[6], reload, first: t, stop: s[9].min(window) }
+                range: s[6], reload, first: t, stop: s[9].min(window), stop2: s[9].min(window2) }
         }).collect();
-        let mut rows = HashMap::new();
-        if let Some(arr) = cfg.get("rows").and_then(|v| v.try_to::<VarArray>().ok()) {
-            for (i, d) in arr.iter_shared().enumerate() {
-                let Ok(d) = d.try_to::<VarDictionary>() else { continue };
-                for (k, v) in d.iter_shared() {
-                    if let (Ok(b), Ok(r)) = (k.try_to::<i64>(), v.try_to::<PackedFloat32Array>()) {
-                        rows.insert((i, b as i32), r.to_vec());
-                    }
-                }
+        let ids: Vec<i64> = cfg.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).map_or_else(Vec::new, |a| a.to_vec());
+        let store = cfg.get("store").and_then(|v| v.try_to::<Gd<StanceRows>>().ok());
+        let kind = |k: &str| cfg.get(k).and_then(|v| v.try_to::<i64>().ok());
+        let kinds = [kind("kind").unwrap_or(0) as usize, kind("kind2").unwrap_or(1) as usize];
+        let rows = match store.as_ref() {
+            Some(st) => {
+                let st = st.bind();
+                [st.kind_rows(&ids, kinds[0]),
+                    if kind("kind2").is_some() { st.kind_rows(&ids, kinds[1]) } else { HashMap::new() }]
             }
-        }
+            None => [HashMap::new(), HashMap::new()],
+        };
+        let pm = cfg.get("pm").and_then(|v| v.try_to::<Gd<crate::projectile::manager::ProjectileManager>>().ok());
         let field = cfg.get("field").and_then(|v| v.try_to::<Gd<ReachField>>().ok());
         let team = f(cfg, "team", 0.0) as i32;
         let lookup = field.as_ref().and_then(|g| g.bind().team_fire_lookup(team));
         Pricer {
-            sh, rows, missing: RefCell::new(Vec::new()), slices: f64s(cfg, "slices"), vmax: f(cfg, "vmax", 1.0).max(1.0),
+            sh, rows: RefCell::new(rows), store, pm, ids, kinds, two: kind("kind2").is_some(), missing: RefCell::new(Vec::new()), slices: f64s(cfg, "slices"), vmax: f(cfg, "vmax", 1.0).max(1.0),
             at_speed: f(cfg, "at_speed", 0.0), field: field.is_some(), lookup, dt: f(cfg, "dt", 1.0),
             n_asp: f(cfg, "aspects", 37.0) as usize, asp_step: f(cfg, "aspect_step", 5.0), bucket_m: f(cfg, "bucket_m", 250.0),
         }
@@ -137,11 +161,11 @@ impl Pricer {
 
     /// Shooter i's salvo landing at t on a hull at (x, z) heading `hdg` making `speed`: (slice, value).
     fn salvo(&self, i: usize, t: f64, x: f32, z: f32, hdg: f64, speed: f64, mask: &mut Option<u64>) -> Option<(usize, f64)> {
-        self.salvo_w(i, t, x, z, hdg, speed, mask, self.sh[i].weight)
+        self.salvo_w(i, t, x, z, hdg, speed, mask, self.sh[i].weight, 0)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn salvo_w(&self, i: usize, t: f64, x: f32, z: f32, hdg: f64, speed: f64, mask: &mut Option<u64>, weight: f64)
+    fn salvo_w(&self, i: usize, t: f64, x: f32, z: f32, hdg: f64, speed: f64, mask: &mut Option<u64>, weight: f64, kind: usize)
             -> Option<(usize, f64)> {
         let s = &self.sh[i];
         let (tx, tz) = (s.x - x, s.z - z);
@@ -164,7 +188,10 @@ impl Pricer {
         let a = ((deg / self.asp_step).round() as i64).clamp(0, self.n_asp as i64 - 1) as usize;
         let r = dist.min(s.range);
         let b = (r / self.bucket_m) as i32;
-        let cell = self.rows.get(&(i, b)).map(|row| row.get(a).copied());
+        let mut cell = self.rows.borrow()[kind].get(&(i, b)).map(|row| row.get(a).copied());
+        if !matches!(cell, Some(Some(v)) if !v.is_nan()) && !matches!(cell, Some(None)) && self.fill(i, r, b, a) {
+            cell = self.rows.borrow()[kind].get(&(i, b)).map(|row| row.get(a).copied());
+        }
         let v = match cell {
             Some(None) => return None,
             Some(Some(v)) if !v.is_nan() => v as f64,
@@ -179,8 +206,31 @@ impl Pricer {
         Some((self.slice_of(t), s.reload * weight * reach * v * (1.0 - self.at_speed * speed / self.vmax)))
     }
 
+    /// Fills shooter i's cell (bucket b at range r, aspect a) through the store and takes the bucket's rows again.
+    fn fill(&self, i: usize, r: f64, b: i32, a: usize) -> bool {
+        let (Some(st), Some(pm), Some(&id)) = (self.store.as_ref(), self.pm.as_ref(), self.ids.get(i)) else { return false };
+        let mut st = st.clone();
+        let ok = st.bind_mut().ensure_cell(&pm.bind(), id, b, r, a, self.asp_step, self.n_asp);
+        if !ok {
+            return false;
+        }
+        let Some(pair) = st.bind().pair(id, b, self.kinds) else { return false };
+        let mut rows = self.rows.borrow_mut();
+        let [k0, k1] = pair;
+        rows[0].insert((i, b), k0);
+        if self.two {
+            rows[1].insert((i, b), k1);
+        }
+        true
+    }
+
     /// _track_slices over `track` ([x, z, heading, speed] per dt): [on, by, dark] x slice.
     pub(crate) fn slices(&self, track: &[f64]) -> Vec<f64> {
+        self.slices_k(track, 0)
+    }
+
+    /// `slices` in cfg.kind (0) or cfg.kind2 under window2 (1).
+    pub(crate) fn slices_k(&self, track: &[f64], kind: usize) -> Vec<f64> {
         let n = track.len() / 4;
         let ns = self.n_slices();
         let mut out = vec![0.0; 3 * ns];
@@ -190,11 +240,11 @@ impl Pricer {
         let end = n as f64 * self.dt;
         let mut masks: HashMap<usize, Option<u64>> = HashMap::new();
         for (i, s) in self.sh.iter().enumerate() {
-            for t in s.times(end) {
+            for t in s.times_to(end, if kind == 0 { s.stop } else { s.stop2 }) {
                 let k = ((t / self.dt) as i64).clamp(0, n as i64 - 1) as usize;
                 let p = &track[4 * k..4 * k + 4];
                 let m = masks.entry(k).or_insert(None);
-                if let Some((si, v)) = self.salvo(i, t, p[0] as f32, p[1] as f32, p[2], p[3], m) {
+                if let Some((si, v)) = self.salvo_w(i, t, p[0] as f32, p[1] as f32, p[2], p[3], m, s.weight, kind) {
                     out[s.group * ns + si] += v;
                 }
             }
@@ -217,7 +267,7 @@ impl Pricer {
                 let k = ((t / self.dt) as i64).clamp(0, n as i64 - 1) as usize;
                 let p = &track[4 * k..4 * k + 4];
                 let m = masks.entry(k).or_insert(None);
-                if let Some((_, v)) = self.salvo_w(i, t, p[0] as f32, p[1] as f32, p[2], p[3], m, w) {
+                if let Some((_, v)) = self.salvo_w(i, t, p[0] as f32, p[1] as f32, p[2], p[3], m, w, 0) {
                     out[k] = (out[k] as f64 + v) as f32;
                 }
             }
@@ -340,6 +390,9 @@ struct Search<'a> {
     pr: &'a Pricer,
     tp: &'a Torps,
     shells: Vec<f32>,
+    /// Shell indices by landing physics step: step k's are land_order[land_at[k]..land_at[k + 1]], ascending.
+    land_at: Vec<usize>,
+    land_order: Vec<usize>,
     aspect_w: Vec<f32>,
     hull: Rect2,
     cit: Rect2,
@@ -375,10 +428,15 @@ impl Search<'_> {
         while r.step < target {
             let t = r.step as f32 * PHYSICS_DT;
             let c = r.c;
+            let t0 = std::time::Instant::now();
             let rudder = if c.y < 0.0 { rudder_to_heading(&r.hull, &self.p, c.x, c.z < 0.0) } else if t < c.y { c.x } else { 0.0 };
             r.hull.step(&self.p, rudder, c.z, PHYSICS_DT);
             r.step += 1;
+            let t1 = std::time::Instant::now();
             self.land_shells(r);
+            dprof(3, (t1 - t0).as_nanos() as u64);
+            dprof(2, t1.elapsed().as_nanos() as u64);
+            dprof(4, 1);
             if r.step == self.n_h {
                 r.out_h = Some(r.hull.heading);
             }
@@ -421,11 +479,15 @@ impl Search<'_> {
 
     fn land_shells(&self, r: &mut Run) {
         let n = self.shells.len() / 7;
-        for (j, s) in self.shells.chunks_exact(7).enumerate() {
-            let k = ((s[4] / PHYSICS_DT).round().max(0.0) as usize).min(self.n_h);
-            if k == r.step {
-                r.air += shell_hit(s, j, &r.hull, self.hull, self.cit, self.top, self.ref_cal, self.cit_w, &self.aspect_w, n);
-            }
+        if r.step > self.n_h {
+            return;
+        }
+        let (lo, hi) = (self.land_at[r.step], self.land_at[r.step + 1]);
+        dprof(5, (hi - lo) as u64);
+        for &j in &self.land_order[lo..hi] {
+            dprof(6, 1);
+            let s = &self.shells[7 * j..7 * j + 7];
+            r.air += shell_hit(s, j, &r.hull, self.hull, self.cit, self.top, self.ref_cal, self.cit_w, &self.aspect_w, n);
         }
     }
 }
@@ -452,6 +514,14 @@ impl Ord for Open {
 /// The dodge: the lie (candidate 0) priced whole, then the others best first by what they have cost so far, each
 /// sailed on only while it could still beat the best finished one and the lie by min_gain.
 pub(crate) fn dodge_search(cfg: &VarDictionary) -> VarDictionary {
+    let t_all = std::time::Instant::now();
+    let out = dodge_search_inner(cfg);
+    dprof(0, 1);
+    dprof(1, t_all.elapsed().as_nanos() as u64);
+    out
+}
+
+fn dodge_search_inner(cfg: &VarDictionary) -> VarDictionary {
     let mut out = VarDictionary::new();
     let (Some(p), Some(h0)) = (ship_params(&f32s(cfg, "params")), start_hull(&f32s(cfg, "state"))) else { return out };
     let cands: Vec<Vector3> = cfg.get("cands").and_then(|v| v.try_to::<PackedVector3Array>().ok()).map_or_else(Vec::new, |a| a.to_vec());
@@ -483,8 +553,19 @@ pub(crate) fn dodge_search(cfg: &VarDictionary) -> VarDictionary {
         }
     }
     let map = cfg.get("map").and_then(|v| v.try_to::<Gd<NavigationMap>>().ok());
+    let shells = f32s(cfg, "shells");
+    let land_k: Vec<usize> = shells.chunks_exact(7).map(|s| ((s[4] / PHYSICS_DT).round().max(0.0) as usize).min(n_h)).collect();
+    let mut land_order: Vec<usize> = (0..land_k.len()).collect();
+    land_order.sort_by_key(|&j| (land_k[j], j));
+    let mut land_at = vec![0usize; n_h + 2];
+    for &k in &land_k {
+        land_at[k + 1] += 1;
+    }
+    for k in 0..=n_h {
+        land_at[k + 1] += land_at[k];
+    }
     let sr = Search {
-        p, pr: &pr, tp: &tp, shells: f32s(cfg, "shells"), aspect_w: f32s(cfg, "aspect_w"),
+        p, pr: &pr, tp: &tp, shells, land_at, land_order, aspect_w: f32s(cfg, "aspect_w"),
         hull: cfg.get("hull").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
         cit: cfg.get("cit").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
         top: f(cfg, "top", 0.0), ref_cal: f(cfg, "ref_cal", 300.0), cit_w: f(cfg, "cit_w", 0.0),

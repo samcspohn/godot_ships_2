@@ -30,6 +30,7 @@ impl NavigationMap {
         let mut land_mask = vec![false; total_usize];
         let mut height_grid = vec![0.0f32; total_usize];
         let mut height_mid = vec![0.0f32; total_usize];
+        let mut tris: Vec<[Vector3; 3]> = Vec::new();
 
         let island_count = island_bodies.len();
         godot_print!("[NavigationMap] Processing {} island bodies...", island_count);
@@ -64,6 +65,7 @@ impl NavigationMap {
                             // rasterize_triangle now internally filters by Y > 0
                             if v0.y.max(v1.y).max(v2.y) > 0.0 {
                                 above_water_tris += 1;
+                                tris.push([v0, v1, v2]);
                             }
                             self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid, &mut height_mid);
                         }
@@ -89,6 +91,7 @@ impl NavigationMap {
                                 let v0 = shape_transform * points[0];
                                 let v1 = shape_transform * points[p];
                                 let v2 = shape_transform * points[p + 1];
+                                tris.push([v0, v1, v2]);
                                 self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid, &mut height_mid);
                             }
                         }
@@ -102,6 +105,7 @@ impl NavigationMap {
                 let shape = match shape.try_cast::<BoxShape3D>() {
                     Ok(box_shape) => {
                         let half_extents = box_shape.get_size() * 0.5;
+                        tris.extend(box_tris(shape_transform, half_extents));
                         self.rasterize_box(
                             Vector3::new(0.0, 0.0, 0.0),
                             half_extents,
@@ -119,6 +123,7 @@ impl NavigationMap {
                 let shape = match shape.try_cast::<SphereShape3D>() {
                     Ok(sphere) => {
                         let radius = sphere.get_radius();
+                        tris.extend(box_tris(shape_transform, Vector3::new(radius, radius, radius)));
                         self.rasterize_sphere(
                             Vector3::new(0.0, 0.0, 0.0),
                             radius,
@@ -136,6 +141,7 @@ impl NavigationMap {
                 if let Ok(cylinder) = shape.try_cast::<CylinderShape3D>() {
                     let radius = cylinder.get_radius();
                     let height = cylinder.get_height();
+                    tris.extend(box_tris(shape_transform, Vector3::new(radius, height * 0.5, radius)));
                     self.rasterize_cylinder(
                         Vector3::new(0.0, 0.0, 0.0),
                         radius,
@@ -191,6 +197,7 @@ impl NavigationMap {
         }
         self.height_mid_grid = height_mid;
         self.height_grid = height_grid;
+        self.collider_tris = tris;
         let mut max_terrain_height = 0.0f32;
         for h in &self.height_grid {
             max_terrain_height = max_terrain_height.max(*h);
@@ -832,4 +839,15 @@ impl NavigationMap {
             }
         }
     }
+}
+
+/// The 12 triangles of a box of `half` extents under `t`: spheres and cylinders stand in as their bounding box.
+fn box_tris(t: Transform3D, half: Vector3) -> Vec<[Vector3; 3]> {
+    let c = |i: usize| t * Vector3::new(
+        if i & 1 != 0 { half.x } else { -half.x },
+        if i & 2 != 0 { half.y } else { -half.y },
+        if i & 4 != 0 { half.z } else { -half.z },
+    );
+    let faces = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]];
+    faces.iter().flat_map(|f| [[c(f[0]), c(f[1]), c(f[2])], [c(f[0]), c(f[2]), c(f[3])]]).collect()
 }

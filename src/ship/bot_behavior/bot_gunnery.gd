@@ -1446,7 +1446,8 @@ static func _point_table(shooter: Ship, target: Ship, ammo: int) -> String:
 	var aspects := PackedFloat64Array()
 	for ai in t.n_aspect:
 		aspects.append(_aspect_center(ai))
-	_projectile_native().point_table_put(key, t.ranges, aspects, t.points, PointTableScript.N_COMP, t.buckets)
+	_projectile_native().point_table_put(key, t.ranges, aspects, t.points, PointTableScript.N_COMP, t.buckets,
+		PointTableScript.sections_of(target, t.points), PointTableScript.sat_weights())
 	_point_tables[key] = true
 	return key
 
@@ -1454,8 +1455,36 @@ static func _point_table(shooter: Ship, target: Ship, ammo: int) -> String:
 ## Per (target, shell damage, saturation signature): [component weights, fire array] for point_best.
 static var _pt_live: Dictionary = {}
 
+## Bit i set: PointTable.SAT_SECTIONS[i]'s pool is spent.
+static func saturation_mask(target: Ship) -> int:
+	var hp = target.health_controller
+	if hp == null:
+		return 0
+	var mask := 0
+	for i in PointTableScript.SAT_SECTIONS.size():
+		var part: HpPartMod = null
+		match PointTableScript.SAT_SECTIONS[i]:
+			int(ArmorPart.Type.CASEMATE): part = hp.casemate
+			int(ArmorPart.Type.BOW): part = hp.bow
+			int(ArmorPart.Type.STERN): part = hp.stern
+			int(ArmorPart.Type.SUPERSTRUCTURE): part = hp.superstructure
+		if part != null and part.current_pool <= 0.0:
+			mask |= 1 << i
+	return mask
+
+
+## What a point-table answer depends on in `target`: its saturation mask and which fires burn.
+static func point_sig(target: Ship) -> int:
+	var sig := saturation_mask(target)
+	var fm = target.fire_manager
+	if fm != null:
+		for f in fm.fires:
+			sig = sig * 2 + int(f != null and (f as Fire).lifetime > 0.0)
+	return sig
+
+
 static func _pt_live_inputs(target: Ship, damage: float) -> Array:
-	var sig := _saturation_sig(target)
+	var sig := point_sig(target)
 	var ck := "%d|%d" % [target.get_instance_id(), roundi(damage)]
 	var c: Array = _pt_live.get(ck, [])
 	if not c.is_empty() and int(c[0]) == sig:
@@ -1466,7 +1495,7 @@ static func _pt_live_inputs(target: Ship, damage: float) -> Array:
 			if f != null:
 				var pos: Vector3 = (f as Fire).position
 				fires.append_array([pos.x, pos.y, pos.z, 1.0 if (f as Fire).lifetime > 0.0 else 0.0])
-	c = [sig, PointTableScript.comp_weights(target, damage), fires]
+	c = [sig, saturation_mask(target), fires]
 	if _pt_live.size() > 512:
 		_pt_live.clear()
 	_pt_live[ck] = c
@@ -1601,7 +1630,9 @@ static func stance_cell_pack(shooter: Ship, target: Ship) -> Dictionary:
 	var p: GunParams = shooter.artillery_controller.get_params()
 	var d := {"model": damage_model(target), "shooter": shooter.get_instance_id(), "hull": target.get_instance_id(),
 		"alpha_ap": p.shell1.damage if p.shell1 != null else 1.0, "alpha_he": p.shell2.damage if p.shell2 != null else 1.0,
-		"keys": PackedStringArray()}
+		"keys": PackedStringArray(), "cal_row": PackedFloat64Array(CALIBRATION[mini(shooter.ship_class, 2)][mini(target.ship_class, 2)]),
+		"cal_edges": PackedFloat64Array(CALIBRATION_BANDS_M), "cal_band_m": DamageExpectation.RANGE_BAND_M,
+		"cal_ab": DamageExpectation.salvo_affine(shooter, target, int(p._range / DamageExpectation.RANGE_BAND_M) + 2)}
 	damage_model(shooter)
 	var mounts := _batteries(shooter, KIND_MAIN, 0.0)
 	if mounts.is_empty():
@@ -1623,7 +1654,7 @@ static func stance_cell_pack(shooter: Ship, target: Ship) -> Dictionary:
 		var he: bool = shell.type == ShellParams.ShellType.HE
 		d["q%d" % ammo] = PackedFloat64Array([0.0, 0.0, shell.damage, _raw_fire_chance(shell, target) if he else 0.0,
 			fire_dps(target) * fire_burn_s(target) if he else 0.0])
-		d["w%d" % ammo] = live[1]
+		d.sat = live[1]
 		d.fires = live[2]
 		shells.append(shell)
 	d.ap_size = HPManager.size_mod(target.mass, (shells[0] as ShellParams).caliber)

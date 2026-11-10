@@ -76,6 +76,30 @@ static func salvo_factor(shooter: Ship, target: Ship, range_m: float, aspect_deg
 	return _shrink((t.salvo_pair as Dictionary).get("%s|%s|%s" % [shooter.ship_name, target.ship_name, tail], {}), cls)
 
 
+## salvo_factor at any aspect as root -> a + b * root per range band (`bands` of them): [a0, b0, a1, b1, ...].
+static func salvo_affine(shooter: Ship, target: Ship, bands: int) -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	var t := table()
+	for b in bands:
+		var ab := PackedFloat64Array([0.0, 1.0])
+		if not t.is_empty():
+			var tail := "%d|*" % b
+			ab = _shrink_affine((t.salvo_class as Dictionary).get("%s|%s|%s" % [class_name_of(shooter), class_name_of(target), tail], {}), ab)
+			ab = _shrink_affine((t.salvo_pair as Dictionary).get("%s|%s|%s" % [shooter.ship_name, target.ship_name, tail], {}), ab)
+		out.append_array(ab)
+	return out
+
+
+## _shrink over a parent that is a + b * root.
+static func _shrink_affine(cell: Dictionary, parent: PackedFloat64Array) -> PackedFloat64Array:
+	var n: float = float(cell.get("n", 0.0))
+	var pred: float = float(cell.get("pred", 0.0))
+	if n <= 0.0 or pred <= 0.0:
+		return parent
+	var w: float = n / (n + PRIOR_SALVOS)
+	return PackedFloat64Array([w * float(cell.real) / pred + (1.0 - w) * parent[0], (1.0 - w) * parent[1]])
+
+
 ## Share of `shooter`'s main-battery shells that land on `target` at this range and aspect (NAN: as it
 ## lies now): the model's landed share at its aim, times what matches measured over it.
 static func hit_rate(shooter: Ship, target: Ship, range_m: float, aspect_deg: float = NAN) -> float:

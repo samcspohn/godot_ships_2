@@ -23,7 +23,7 @@ struct Ev {
     he_landed: f64,
 }
 
-struct Pack {
+pub(crate) struct Pack {
     shooter: i64,
     hull: i64,
     model: Option<Gd<DamageModel>>,
@@ -34,15 +34,20 @@ struct Pack {
     max_range: f64,
     keys: PackedStringArray,
     q: [PackedFloat64Array; 2],
-    w: [PackedFloat32Array; 2],
+    sat: i64,
     fires: Vec<(Vector3, bool)>,
     ap_size: f64,
     he_size: f64,
     fire_chance: f64,
+    /// BotGunnery.calibration: CALIBRATION's row over its band edges, then a + b * that per learned range band.
+    cal_row: Vec<f64>,
+    cal_edges: Vec<f64>,
+    cal_band_m: f64,
+    cal_ab: Vec<f64>,
 }
 
 impl Pack {
-    fn read(d: &VarDictionary) -> Pack {
+    pub(crate) fn read(d: &VarDictionary) -> Pack {
         let f = |k: &str| d.get(k).map(|v| v.to_f64()).unwrap_or(0.0);
         let fires: PackedFloat32Array = d.get("fires").and_then(|v| v.try_to().ok()).unwrap_or_default();
         Pack {
@@ -57,14 +62,43 @@ impl Pack {
             keys: d.get("keys").and_then(|v| v.try_to().ok()).unwrap_or_default(),
             q: [d.get("q0").and_then(|v| v.try_to().ok()).unwrap_or_default(),
                 d.get("q1").and_then(|v| v.try_to().ok()).unwrap_or_default()],
-            w: [d.get("w0").and_then(|v| v.try_to().ok()).unwrap_or_default(),
-                d.get("w1").and_then(|v| v.try_to().ok()).unwrap_or_default()],
+            sat: d.get("sat").map(|v| v.to_i64()).unwrap_or(0),
             fires: fires.as_slice().chunks_exact(4).map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect(),
             ap_size: f("ap_size"),
             he_size: f("he_size"),
             fire_chance: f("fire_chance"),
+            cal_row: f64s(d, "cal_row"),
+            cal_edges: f64s(d, "cal_edges"),
+            cal_band_m: f("cal_band_m"),
+            cal_ab: f64s(d, "cal_ab"),
         }
     }
+
+    /// BotGunnery.calibration(shooter, target, range): DamageExpectation.salvo_factor at any aspect.
+    pub(crate) fn cal(&self, range: f64) -> Option<f64> {
+        let (row, e) = (&self.cal_row, &self.cal_edges);
+        if row.is_empty() || e.len() != row.len() || self.cal_band_m <= 0.0 {
+            return None;
+        }
+        let mut root = row[row.len() - 1];
+        if range <= e[0] {
+            root = row[0];
+        } else {
+            for i in 1..e.len() {
+                if range <= e[i] {
+                    root = row[i - 1] + (row[i] - row[i - 1]) * ((range - e[i - 1]) / (e[i] - e[i - 1]));
+                    break;
+                }
+            }
+        }
+        let b = (range / self.cal_band_m) as usize;
+        let (a, k) = (self.cal_ab.get(2 * b).copied()?, self.cal_ab.get(2 * b + 1).copied()?);
+        Some(a + k * root)
+    }
+}
+
+fn f64s(d: &VarDictionary, k: &str) -> Vec<f64> {
+    d.get(k).and_then(|v| v.try_to::<PackedFloat64Array>().ok()).map_or_else(Vec::new, |a| a.to_vec())
 }
 
 fn salvo_fire_share(shells: i64, landed: f64, chance: f64) -> f64 {
@@ -107,11 +141,10 @@ fn points(pm: &ProjectileManager, p: &Pack, range: f64, aspects: &[f64], notes: 
 /// (value, damage, landed) per aspect, as point_best_pairs reports them.
 fn best_row(g: &PtTable, p: &Pack, ammo: usize, range: f64, aspects: &[f64]) -> Vec<Option<(f64, f64, f64)>> {
     let q = &p.q[ammo];
-    let w = &p.w[ammo];
-    if q.len() < 5 || w.len() < g.n_comp {
+    if q.len() < 5 {
         return vec![None; aspects.len()];
     }
-    aspects.iter().map(|&a| g.best(range, a, w.as_slice(), q[2], q[3], q[4], &p.fires)
+    aspects.iter().map(|&a| g.best(range, a, p.sat, q[2], q[3], q[4], &p.fires)
         .map(|b| (b.value as f32 as f64, b.damage as f32 as f64, b.landed as f32 as f64))).collect()
 }
 
@@ -133,52 +166,34 @@ fn effective(e: &Ev, p: &Pack, read: i64) -> (f64, f64, f64) {
     (he, e.he_dps, e.he_dps / rate / e.he_landed.max(0.01) / p.alpha_he.max(1.0))
 }
 
-/// SkillStance._fill_cells: fills the NAN `cells` of entry `e` ([row, raw, hit, range, cal, read]), emptying all three
-/// once one is unknown. Returns the point-query notes: [cells asked, then per shell asked: served, first served].
-pub(super) fn fill(pm: &ProjectileManager, e: &mut VarArray, cells: &PackedInt32Array, pack: &VarDictionary,
-        step_deg: f64) -> PackedInt32Array {
+/// Fills the NAN `cells` (aspect indices) of one range bucket's [row, raw, hit], built at `range`. False once one
+/// is unknown (the bucket then serves nothing); with the point-query notes: [cells asked, then per shell asked: served,
+/// first served].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_cells(pm: &ProjectileManager, row: &mut [Vec<f32>; 3], range: f64, cal: f64, read: i64, p: &Pack,
+        step_deg: f64, cells: &[i32]) -> (bool, Vec<i32>) {
     let mut notes = Vec::new();
-    let mut row: PackedFloat32Array = e.get(0).and_then(|v| v.try_to().ok()).unwrap_or_default();
-    if row.is_empty() {
-        return PackedInt32Array::new();
-    }
     let mut want: Vec<usize> = Vec::new();
-    for &a in cells.as_slice() {
+    for &a in cells {
         let a = a as usize;
-        if a < row.len() && row[a].is_nan() && !want.contains(&a) {
+        if a < row[0].len() && row[0][a].is_nan() && !want.contains(&a) {
             want.push(a);
         }
     }
     if want.is_empty() {
-        return PackedInt32Array::new();
+        return (true, notes);
     }
-    let mut raw: PackedFloat32Array = e.get(1).and_then(|v| v.try_to().ok()).unwrap_or_default();
-    let mut hit: PackedFloat32Array = e.get(2).and_then(|v| v.try_to().ok()).unwrap_or_default();
-    let range = e.get(3).map(|v| v.to_f64()).unwrap_or(0.0);
-    let cal = e.get(4).map(|v| v.to_f64()).unwrap_or(0.0);
-    let read = e.get(5).map(|v| v.to_i64()).unwrap_or(SHELL_UNKNOWN);
-    let p = Pack::read(pack);
     let aspects: Vec<f64> = want.iter().map(|&a| a as f64 * step_deg).collect();
-    let pts = points(pm, &p, range, &aspects, &mut notes);
+    let pts = points(pm, p, range, &aspects, &mut notes);
     if !notes.is_empty() {
         notes.insert(0, want.len() as i32);
     }
-    let notes = PackedInt32Array::from(notes.as_slice());
     for (j, &a) in want.iter().enumerate() {
-        let ev = pts[j].or_else(|| baked(&p, range, aspects[j]));
-        let Some(ev) = ev else {
-            e.set(0, &PackedFloat32Array::new().to_variant());
-            e.set(1, &PackedFloat32Array::new().to_variant());
-            e.set(2, &PackedFloat32Array::new().to_variant());
-            return notes;
-        };
-        let x = effective(&ev, &p, read);
-        row[a] = (x.0 as f32 as f64 * cal) as f32;
-        raw[a] = (x.1 as f32 as f64 * cal) as f32;
-        hit[a] = (x.2 as f32 as f64 * cal) as f32;
+        let Some(ev) = pts[j].or_else(|| baked(p, range, aspects[j])) else { return (false, notes) };
+        let x = effective(&ev, p, read);
+        row[0][a] = (x.0 as f32 as f64 * cal) as f32;
+        row[1][a] = (x.1 as f32 as f64 * cal) as f32;
+        row[2][a] = (x.2 as f32 as f64 * cal) as f32;
     }
-    e.set(0, &row.to_variant());
-    e.set(1, &raw.to_variant());
-    e.set(2, &hit.to_variant());
-    notes
+    (true, notes)
 }

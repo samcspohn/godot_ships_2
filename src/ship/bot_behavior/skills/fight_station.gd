@@ -13,8 +13,6 @@ extends SkillPosition
 ## A station in an island's shadow pulls that enemy's route wall in to this short of it.
 const SHADOW_MARGIN_M := 200.0
 const WINDOW_M := 6000.0
-static var _tm: Array = []
-static var _tc: Array = []
 ## Stations sit this far outside a ring, and this far inside our gun range round a target without one.
 const WALK_MARGIN_M := 150.0
 ## Sailing to a station that costs this share of our HP on the way is not worth starting.
@@ -275,7 +273,9 @@ func _kite(ctx: SkillContext, intent: NavIntent, here: Vector2, enemy: Vector2) 
 ## in the window scores better by the switch margin; searches at most every MARCH_MS.
 func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, rings: PackedFloat32Array,
 		prio: PackedByteArray, live: PackedByteArray, belief: Array[Dictionary], find: PackedFloat32Array) -> void:
+	var t0 := Time.get_ticks_usec()
 	var mo := _march_opts(ctx, belief, live, rings, find)
+	BotTiming.add(&"march_opts", t0)
 	_prio_lit = _ids_in(belief, _bits(prio)).size()
 	if not _has_station and carry.is_finite():
 		var ok: bool = bool(vis.fight_eval(carry, pos, mo).ok)
@@ -302,8 +302,10 @@ func _march(ctx: SkillContext, vis: VisibilityGrid, here: Vector2, pos: PackedVe
 			st.depth.append((_station - ff.enemy_center).dot(ff.forward))
 			st.ahead.append((ctx.ship.global_position - ff.enemy_center).dot(ff.forward))
 			st.dist.append(here.distance_to(Vector2(_station.x, _station.z)))
+	t0 = Time.get_ticks_usec()
 	_route_hp = vis.fight_route_harm(here, Vector2(_station.x, _station.z), pos, mo) / maxf(_harm_price, 0.01) \
 		if _has_station else 0.0
+	BotTiming.add(&"route_harm", t0)
 
 func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dictionary,
 		prio: PackedByteArray, belief: Array[Dictionary]) -> void:
@@ -312,12 +314,7 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 	mo.held = Vector2(_station.x, _station.z) if holding else Vector2.INF
 	var t0 := Time.get_ticks_usec()
 	var r: Dictionary = _fight_search(vis, here, pos, mo)
-	_tm.append(Time.get_ticks_usec() - t0)
-	_tc.append(int(r.get("cells", 0)))
-	if _tm.size() % 1000 == 0:
-		var a := _tm.duplicate(); a.sort()
-		var c := _tc.duplicate(); c.sort()
-		print("FTIME n=%d p50=%d p99=%d max=%d cand p50=%d max=%d" % [a.size(), a[a.size()/2], a[int(a.size()*0.99)], a[-1], c[c.size()/2], c[-1]])
+	BotTiming.add(&"fight_search", t0)
 	_cells = int(r.get("cells", 0))
 	if holding and bool(r.held_ok):
 		_mark(float(r.held_score), float(r.held_value), float(r.held_harm), int(r.held_mask), prio, belief)

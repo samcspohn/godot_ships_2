@@ -126,6 +126,9 @@ func _ready():
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 
 	process_physics_priority = 100 # Run after other scripts
+	BotTiming.on = CmdArgs.has("--bot-timing") or CmdArgs.has("--metrics")
+	if CmdArgs.has("--gd-profile"):
+		EngineDebugger.profiler_enable("scripts", true)
 	# Create the game world as a separate entity
 	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
 	add_child(game_world)
@@ -1352,6 +1355,10 @@ func _broadcast_match_end():
 	for spectator_id in spectators:
 		notify_match_end.rpc_id(spectator_id, winning_team, leaderboard)
 
+	if BotTiming.on:
+		BotTiming.print_table()
+	if CmdArgs.has("--gd-profile"):
+		EngineDebugger.profiler_enable("scripts", false)
 	if bot_match or CmdArgs.has("--metrics"):
 		_write_match_metrics(winning_team, leaderboard, win_reason)
 	# Learned damage expectations come from bots only: humans aim and dodge differently.
@@ -1471,6 +1478,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"stations": SkillPosition.move_summary(),
 		"disengage": SkillDisengage.leg_summary(),
 		"fight": FightStation.stats_summary(),
+		"bot_timing": BotTiming.summary(),
 		"churn": DestChurn.summary(),
 		"dials": BotDials.summary(),
 		"duels": SkillStance.duel_stats,
@@ -1981,6 +1989,9 @@ func _sync_gun_matrices(field: ReachField) -> void:
 		_edge_sim_next = match_elapsed + 60.0
 		var es: PackedInt64Array = field.edge_sim_stats()
 		print("[EdgeSim] at %.0f s: %d sims, %d cached, %.1f ms" % [match_elapsed, es[0], es[1], es[2] / 1e6])
+		var et: PackedInt64Array = field.edge_tree_stats()
+		print("[EdgeTree] at %.0f s: %d of %d answered, %d sectors built (%.1f ms each), %d held, %d queued; check tree/sim nn %d ny %d yn %d yy %d, past range %d/%d" % [
+			match_elapsed, et[1], et[0], et[2], et[3] / 1e6 / maxi(et[2], 1), et[6], et[7], et[8], et[9], et[10], et[11], et[13], et[12] + et[13]])
 	for st in field.gun_matrix_status():
 		var state := "loaded" if int(st.file) == 1 else "saved" if int(st.file) == 3 \
 			else "complete" if int(st.done) == int(st.rows) else ""
@@ -2057,7 +2068,30 @@ func _sweep_reach_fields() -> void:
 			weights.append(REF_WEIGHT)
 		field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
 			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)
+		_prefetch_edge_trees(field, team_ships[team_id], origins)
 	_sync_gun_matrices(field)
+
+
+## Our guns' EdgeTrees sectors round every enemy the team believes in, facing the ships carrying them, built before the
+## shooting needs them.
+func _prefetch_edge_trees(field: ReachField, ships: Array, at: PackedVector2Array) -> void:
+	if CmdArgs.has("--no-edge-sim"):
+		return
+	var guns := {}
+	for ship in ships:
+		if not is_instance_valid(ship) or not ship.is_alive() or ship.artillery_controller == null:
+			continue
+		var shell: Resource = ship.artillery_controller.get_shell_params()
+		if shell == null:
+			continue
+		var g: Dictionary = NavigationMapManager.reach_gun(ship)
+		var key := "%d|%.1f" % [shell.get_instance_id(), float(g.get("gun_h", 5.0))]
+		if not guns.has(key):
+			guns[key] = [shell, g, PackedVector2Array()]
+		(guns[key][2] as PackedVector2Array).append(Vector2(ship.global_position.x, ship.global_position.z))
+	for v in guns.values():
+		var g: Dictionary = v[1]
+		field.edge_prefetch(v[0], float(g.get("gun_h", 5.0)), float(g.get("range", 0.0)), at, v[2])
 
 
 func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:

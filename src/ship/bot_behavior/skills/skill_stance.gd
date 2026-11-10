@@ -25,7 +25,7 @@ const AXIS_CONE: float = deg_to_rad(15.0)
 const END_SWAP: float = deg_to_rad(20.0)
 ## Turning round and backing are each simulated until this far toward the goal, or this long.
 const ESCAPE_M: float = 3000.0
-const ESCAPE_MAX_S: float = 300.0
+const ESCAPE_MAX_S: float = 60.0
 const ESCAPE_DT: float = 1.0
 const ESCAPE_REPRICE_S: float = 1.0
 ## At full speed this share of what would land misses; slower, proportionally less.
@@ -80,9 +80,9 @@ var _juke: bool = false
 var _fire: StringName = &""
 var _fire_deadline: float = INF
 var _fire_cooldown: float = -INF
-## Shooter instance id -> {"t": built at, "sig": _row_sig, range bucket: _bucket's entry}; dropped when its inputs
-## change, or after TABLE_TTL_S.
-var _tables: Dictionary = {}
+## Per shooter, range bucket -> [rows, raw, hit] over every aspect; a shooter's dropped when its _row_sig changes, or
+## after TABLE_TTL_S.
+var _store := StanceRows.new()
 const TABLE_TTL_S: float = 30.0
 ## _target_sig of us at the last survey.
 var _me_sig: int = 0
@@ -106,10 +106,14 @@ func _row_sig(shooter: Ship, read: int) -> int:
 var _sig_cache: Dictionary = {}
 
 
+static func _target_parts(ship: Ship) -> Array:
+	var hp = ship.health_controller
+	return [BotGunnery.point_sig(ship), roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0]
+
 static func _target_sig(ship: Ship) -> int:
 	var hp = ship.health_controller
 	var q: int = roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0
-	return hash([BotGunnery._saturation_sig(ship), q])
+	return hash([BotGunnery.point_sig(ship), q])
 var _me: Ship = null
 var _clock: SalvoClock = null
 ## bearing, rows, weight, group (on, by, dark), spread (dark: believed-position radius), reload, next (seconds to its next landing).
@@ -120,11 +124,48 @@ var _tucked := false
 var _citadel := Rect2()
 
 
+var _did := PackedStringArray()
+
 func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
+	var t_all := Time.get_ticks_usec()
+	_did.clear()
+	_w = {"cells": 0, "fills": 0, "prices": 0, "incoming": 0, "parts": {}}
+	var out := _apply(intent, ctx)
+	var us := Time.get_ticks_usec() - t_all
+	if us > 5000:
+		BotTiming.add_us(StringName("spike:" + ",".join(_did)), us)
+	if BotTiming.on and us > 3000:
+		var groups := {"on": 0, "by": 0, "dark": 0}
+		for sh in _shooters:
+			groups[sh.group] += 1
+		var ship := ctx.ship
+		var arty = ship.artillery_controller
+		var in_range := 0
+		for b in ctx.server._team_belief(ship.team.team_id):
+			if arty != null and Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos) <= arty.get_params()._range:
+				in_range += 1
+		_w.merge({"ship": ship.ship_name, "class": Ship.ShipClass.keys()[ship.ship_class], "did": ",".join(_did),
+			"shooters": groups, "torp_shooters": _torp_shooters.size(), "targets_in_range": in_range,
+			"priorities": ctx.behavior.priorities.size(), "duel": _duel_name if is_finite(_duel_h) else "",
+			"dodge_shells": _planner.shell_count() if _did.has("dodge") else 0, "hp": snappedf(ship.health_controller.current_hp / ship.health_controller.max_hp, 0.01)})
+		BotTiming.worst(&"stance", us, _w)
+	return out
+
+## What the apply in progress did, for BotTiming.worst.
+var _w: Dictionary = {}
+
+func _part(name: String, t0: int) -> void:
+	var p: Dictionary = _w.get("parts", {})
+	p[name] = int(p.get(name, 0)) + Time.get_ticks_usec() - t0
+
+func _apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	if intent == null or ctx.behavior.salvo_clock == null:
 		reset()
 		return intent
+	var t0 := Time.get_ticks_usec()
 	var threatened: bool = _survey(ctx)
+	BotTiming.add(&"st_survey", t0)
+	_part("survey", t0)
 	var route: float = _route_bearing(intent, ctx)
 	_route = route
 	var hdg: float = ctx.behavior._get_ship_heading()
@@ -137,19 +178,28 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	_on_route = not threatened
 	_axis = INF
 	if threatened:
+		t0 = Time.get_ticks_usec()
 		_lie_on_axis(ctx, intent, route, hdg)
+		BotTiming.add(&"st_lie", t0)
+		_part("lie", t0)
 		_to_cone(hdg)
 		_on_route = _route_wins
 		if _on_route:
 			_throttle = 1.0
+		t0 = Time.get_ticks_usec()
 		_duel(ctx, hdg)
+		BotTiming.add(&"st_duel", t0)
+		_part("duel", t0)
 		if is_finite(_duel_h):
 			_on_route = false
 		_setup(ctx, hdg)
 	else:
 		_duel_h = INF
 		_duel_live = false
+	t0 = Time.get_ticks_usec()
 	var fire_h: float = INF if is_finite(_duel_h) or _set_up else _fire_heading(ctx, _heading if threatened and not _on_route else hdg, route, hdg)
+	BotTiming.add(&"st_fire", t0)
+	_part("fire", t0)
 	if not is_finite(fire_h) and _fire == &"guns":
 		_fire = &""
 	var aimed := false
@@ -166,7 +216,11 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		_on_route = true
 	_base = {"off": false, "heading": _heading, "throttle": _throttle, "on_route": _on_route, "aimed": aimed, "ctx": ctx,
 		"fields": _fields(intent)}
-	return _dodge_tail(intent, ctx, hdg, aimed)
+	t0 = Time.get_ticks_usec()
+	var out := _dodge_tail(intent, ctx, hdg, aimed)
+	BotTiming.add(&"st_tail", t0)
+	_part("tail", t0)
+	return out
 
 
 ## The intent fields apply writes after the dodge.
@@ -193,7 +247,6 @@ func redodge() -> NavIntent:
 	intent.forbid_reverse = f[4]
 	_me_sig = _target_sig(ctx.ship)
 	_sig_cache.clear()
-	_pack_cache.clear()
 	var hdg: float = ctx.behavior._get_ship_heading()
 	if _base.off:
 		return _dodge_off(intent, ctx, _base.route, hdg)
@@ -366,6 +419,13 @@ func _route_or_lie(ctx: SkillContext, intent: NavIntent, hdg: float) -> void:
 	if now - _route_priced_at < ESCAPE_REPRICE_S:
 		return
 	_route_priced_at = now
+	var t_rl := Time.get_ticks_usec()
+	_route_or_lie_priced(ctx, intent, hdg)
+	BotTiming.add(&"st_route_lie", t_rl)
+	_part("route_lie", t_rl)
+	_did.append("rl")
+
+func _route_or_lie_priced(ctx: SkillContext, intent: NavIntent, hdg: float) -> void:
 	var mv = ctx.ship.movement_controller
 	var p: MovementParams = mv._p()
 	var vmax: float = maxf(mv.max_speed, 1.0)
@@ -408,15 +468,21 @@ func _sail_route(ctx: SkillContext, intent: NavIntent, hdg: float, vmax: float, 
 	if ctx.navigator == null:
 		return []
 	var start := Vector3(ctx.ship.global_position.x, ctx.ship.global_position.z, hdg)
+	var tq := Time.get_ticks_usec()
 	var paths: PackedVector3Array = StanceSim.route_path(ctx.navigator.get_debug_arc_inputs(), _hull_state(ctx.ship), pts,
 		ROUTE_WP_M, ESCAPE_MAX_S, ESCAPE_DT)
+	BotTiming.add(&"h_route_native", tq)
+	tq = Time.get_ticks_usec()
 	paths.insert(0, start)
-	return _as_track(paths, 0, paths.size())
+	var tr := _as_track(paths, 0, paths.size())
+	BotTiming.add(&"h_convert", tq)
+	return tr
 
 ## The lie sailed ahead at its throttle: swinging onto _heading the short way, then on.
 func _ahead_track(ctx: SkillContext, hdg: float, vmax: float, p: MovementParams) -> Array:
-	var sailed := _helm_tracks(ctx, [[_heading, maxf(_throttle, 0.0), 0.0, INF, 0.0]], ESCAPE_MAX_S)
-	return _cut(ctx, sailed[0], Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, _heading, true)[0]
+	var here := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
+	return _helm_cut(ctx, [[_heading, maxf(_throttle, 0.0), 0.0, INF, 0.0]], ESCAPE_MAX_S,
+		[[here, Vector2.ZERO, INF, _heading, true]])[0][0]
 
 
 ## Per leg [heading, throttle, way (±1 round that way, 0 the short way), then, after_s], sailed on the navigator's hull
@@ -426,12 +492,16 @@ func _helm_tracks(ctx: SkillContext, legs: Array, horizon: float) -> Array:
 	for l in legs:
 		flat.append_array([l[0], _power(l[1]), l[2], l[3], l[4]])
 	var paths := PackedVector3Array()
+	var tq := Time.get_ticks_usec()
 	if ctx.navigator != null:
 		paths = StanceSim.helm_paths(ctx.navigator.get_debug_arc_inputs(), _hull_state(ctx.ship), flat, horizon, ESCAPE_DT)
+	BotTiming.add(&"h_native", tq)
+	tq = Time.get_ticks_usec()
 	var m: int = int(horizon / ESCAPE_DT) + 1
 	var out: Array = []
 	for i in legs.size():
 		out.append(_as_track(paths, i * m, m) if paths.size() >= (i + 1) * m else [])
+	BotTiming.add(&"h_convert", tq)
 	return out
 
 ## helm_paths / route_path points from `from`, `m` of them (the first the start), as [position, heading, speed].
@@ -443,36 +513,38 @@ static func _as_track(paths: PackedVector3Array, from: int, m: int) -> Array:
 		track.append([Vector2(q.x, q.y), q.z, Vector2(q.x - prev.x, q.y - prev.y).length() / ESCAPE_DT])
 	return track
 
-const SWUNG: float = deg_to_rad(3.0)
-
-## `track` ended once `want` is made good along `gdir` (with `swung`, only after the bow is within SWUNG of `final`),
-## empty when it runs aground before `reach` past that swing; with the seconds the swing took.
-func _cut(ctx: SkillContext, track: Array, start: Vector2, gdir: Vector2, want: float, final: float, swung: bool,
-		then: float = INF, after_s: float = 0.0) -> Array:
+## Legs as _helm_tracks, each ended by its `cuts` entry [start, goal dir, want, final, swung, then?, after_s?]: once
+## `want` is made good along the goal dir (with `swung`, only after the bow is within 3° of `final`), empty when it runs
+## aground within a turning circle and a half past that swing. Per leg [track, seconds the swing took].
+func _helm_cut(ctx: SkillContext, legs: Array, horizon: float, cuts: Array) -> Array:
+	var flat := PackedFloat32Array()
+	for l in legs:
+		flat.append_array([l[0], _power(l[1]), l[2], l[3], l[4]])
+	var paths := PackedVector3Array()
+	var tq := Time.get_ticks_usec()
+	if ctx.navigator != null:
+		paths = StanceSim.helm_paths(ctx.navigator.get_debug_arc_inputs(), _hull_state(ctx.ship), flat, horizon, ESCAPE_DT)
+	BotTiming.add(&"h_native", tq)
+	var m: int = int(horizon / ESCAPE_DT) + 1
 	var p: MovementParams = ctx.ship.movement_controller._p()
 	var reach: float = maxf(p.turning_circle_radius * CLEAR_AHEAD_TURNS, CLEAR_AHEAD_MIN_M)
 	var clearance: float = ctx.behavior._get_ship_clearance()
-	var swing_k := -1
-	var first_s := -1.0
-	var after := 0.0
-	for k in track.size():
-		var at: Vector2 = track[k][0]
-		# The second leg is a swing of its own, with its own reach of land checked past it.
-		if is_finite(then) and (k + 1) * ESCAPE_DT >= after_s:
-			first_s = (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else (k + 1) * ESCAPE_DT
-			final = then
-			then = INF
-			swing_k = -1
-			after = 0.0
-		if swing_k < 0 and absf(angle_difference(float(track[k][1]), final)) <= SWUNG:
-			swing_k = k
-		if swing_k >= 0:
-			after += float(track[k][2]) * ESCAPE_DT
-		if after <= reach and NavigationMapManager.get_distance(Vector3(at.x, 0.0, at.y)) < clearance:
-			return [[], 0.0]
-		if (swing_k >= 0 or not swung) and (at - start).dot(gdir) >= want:
-			return [track.slice(0, k + 1), first_s if first_s >= 0.0 else (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else (k + 1) * ESCAPE_DT]
-	return [track, first_s if first_s >= 0.0 else (swing_k + 1) * ESCAPE_DT if swing_k >= 0 else track.size() * ESCAPE_DT]
+	var map = NavigationMapManager.get_map()
+	var out: Array = []
+	for i in legs.size():
+		if paths.size() < (i + 1) * m:
+			out.append([[], 0.0])
+			continue
+		var c: Array = cuts[i]
+		tq = Time.get_ticks_usec()
+		var res: PackedFloat64Array = StanceSim.cut(paths, i * m, m, PackedFloat64Array([(c[0] as Vector2).x, (c[0] as Vector2).y,
+			(c[1] as Vector2).x, (c[1] as Vector2).y, c[2], c[3], 1.0 if c[4] else 0.0, c[5] if c.size() > 5 else INF,
+			c[6] if c.size() > 6 else 0.0, reach, clearance, ESCAPE_DT]), map)
+		BotTiming.add(&"cut", tq)
+		tq = Time.get_ticks_usec()
+		out.append([_as_track(paths, i * m, int(res[0]) + 1) if res[0] >= 0.0 else [], res[1]])
+		BotTiming.add(&"h_convert", tq)
+	return out
 
 
 ## Turning round, either way the land leaves clear, run until as far toward the goal, against backing
@@ -483,6 +555,14 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	if now - _priced_at < ESCAPE_REPRICE_S:
 		return _turn_cost < _astern_cost
 	_priced_at = now
+	var t_ta := Time.get_ticks_usec()
+	var r := _turn_beats_astern_priced(ctx, hdg, near, far, goal, dist, now)
+	BotTiming.add(&"st_turn_astern", t_ta)
+	_part("turn_astern", t_ta)
+	_did.append("ta")
+	return r
+
+func _turn_beats_astern_priced(ctx: SkillContext, hdg: float, near: float, far: float, goal: float, dist: float, now: float) -> bool:
 	var mv = ctx.ship.movement_controller
 	var p: MovementParams = mv._p()
 	var vmax: float = maxf(mv.max_speed, 1.0)
@@ -496,19 +576,23 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	_turn_track = []
 	_vmax = vmax
 	var team_id: int = ctx.ship.team.team_id
-	var sailed := _helm_tracks(ctx, [[far, 1.0, short, INF, 0.0], [far, 1.0, -short, INF, 0.0], [near, -1.0, 0.0, INF, 0.0]], ESCAPE_MAX_S)
+	var cuts := _helm_cut(ctx, [[far, 1.0, short, INF, 0.0], [far, 1.0, -short, INF, 0.0], [near, -1.0, 0.0, INF, 0.0]],
+		ESCAPE_MAX_S, [[start, gdir, want, far, true], [start, gdir, want, far, true], [start, gdir, want, near, false]])
 	for i in 2:
-		var cut := _cut(ctx, sailed[i], start, gdir, want, far, true)
+		var cut: Array = cuts[i]
 		var track: Array = cut[0]
 		if not track.is_empty():
-			var cost := _priced(ctx, "turn", track, vmax, team_id, &"rows", INF)
+			var both := _priced_with_raw(ctx, "turn", track, vmax, team_id, INF, cut[1])
+			# Ended by the horizon short of `want`: the rest at full speed, as backing is charged.
+			var made: float = ((track[-1][0] as Vector2) - start).dot(gdir)
+			var cost: float = both[0] * (1.0 + maxf(want - made, 0.0) / vmax / (track.size() * ESCAPE_DT))
 			if cost < _turn_cost:
 				_turn_cost = cost
 				_turn_way = short if i == 0 else -short
 				_swing_s = cut[1]
-				_turn_hp = _priced(ctx, "turn", track, vmax, team_id, &"raw", _swing_s)
+				_turn_hp = _raw_price(ctx, "turn", track, both[1], _swing_s)
 				_turn_track = track
-	var back: Array = _cut(ctx, sailed[2], start, gdir, want, near, false)[0]
+	var back: Array = cuts[2][0]
 	_back_track = back
 	_window_s = _turn_track.size() * ESCAPE_DT if not _turn_track.is_empty() else back.size() * ESCAPE_DT
 	if _turn_track.is_empty():
@@ -517,8 +601,9 @@ func _turn_beats_astern(ctx: SkillContext, hdg: float, near: float, far: float, 
 	_astern_hp = INF
 	if not back.is_empty():
 		# Same window as the turn; what backing has not covered by its end is sailed on at this rate.
-		_astern_cost = _priced(ctx, "astern", back, vmax, team_id, &"rows", _window_s)
-		_astern_hp = _priced(ctx, "astern", back, vmax, team_id, &"raw", _window_s)
+		var both := _priced_with_raw(ctx, "astern", back, vmax, team_id, _window_s, _window_s)
+		_astern_cost = both[0]
+		_astern_hp = _raw_price(ctx, "astern", back, both[1], _window_s)
 		var k: int = mini(int(_window_s / ESCAPE_DT), back.size()) - 1
 		var made: float = (back[k][0] as Vector2 - start).dot(Vector2(sin(goal), cos(goal))) if k >= 0 else 0.0
 		var short_s: float = maxf(want - made, 0.0) / vmax
@@ -576,7 +661,23 @@ func _priced(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id
 	var r := _track_native(track, vmax, team_id, rows, window_s, stops, skip_s)
 	var s: Array = _split_slices(r.slices)
 	var torps: float = float(r.torps) if rows == &"rows" else 0.0
+	BotTiming.add_us(&"de_price_n", 1)
 	return DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT)) + torps
+
+
+## _priced in rows over `window_s`, with the raw salvos over `raw_s` from the same pass: [cost, raw [on, by, dark]].
+func _priced_with_raw(ctx: SkillContext, kind: String, track: Array, vmax: float, team_id: int, window_s: float,
+		raw_s: float) -> Array:
+	var r := _track_native(track, vmax, team_id, &"rows", window_s, {}, 0.0, raw_s)
+	var s: Array = _split_slices(r.slices)
+	var tq := Time.get_ticks_usec()
+	var c: float = DamageExpectation.price(ctx.ship, kind, s[0], s[1], s[2], minf(window_s, track.size() * ESCAPE_DT)) + float(r.torps)
+	BotTiming.add(&"de_price", tq)
+	return [c, _split_slices(r.slices2)]
+
+## _priced_with_raw's raw salvos priced as `kind` over `raw_s`.
+static func _raw_price(ctx: SkillContext, kind: String, track: Array, raw: Array, raw_s: float) -> float:
+	return DamageExpectation.price(ctx.ship, kind, raw[0], raw[1], raw[2], minf(raw_s, track.size() * ESCAPE_DT))
 
 
 ## [on, by, dark]: `rows` salvos along `track` (as _track_split) per DamageExpectation.TURNOUT_SLICES_S slice, from
@@ -596,15 +697,34 @@ const _MISSING_ROUNDS: int = 8
 
 ## StanceSim.track_price over `track`, the rows it reaches filled as _row_at would.
 func _track_native(track: Array, vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary,
-		skip_s: float) -> Dictionary:
+		skip_s: float, raw_s: float = NAN) -> Dictionary:
+	var tq := Time.get_ticks_usec()
 	var flat := _pack_track(track)
+	BotTiming.add(&"pack_track", tq)
+	tq = Time.get_ticks_usec()
 	var cfg := _price_cfg(vmax, team_id, rows, window_s, stops, skip_s)
+	BotTiming.add(&"q_cfg", tq)
+	if not is_nan(raw_s):
+		cfg["kind2"] = _rows_index(&"raw")
+		cfg["window2"] = raw_s
+	tq = Time.get_ticks_usec()
 	var r: Dictionary = StanceSim.track_price(flat, cfg)
+	BotTiming.add(&"q_price_native", tq)
+	var rounds := 0
 	for i in _MISSING_ROUNDS:
 		if (r.missing as PackedFloat64Array).is_empty():
 			break
-		_fill_rows(cfg, r.missing, rows)
+		rounds += 1
+		BotTiming.add_us(&"q_missing_n", (r.missing as PackedFloat64Array).size() / 3)
+		tq = Time.get_ticks_usec()
+		_fill_rows(r.missing)
+		BotTiming.add(&"q_fill", tq)
+		_w["fills"] = int(_w.get("fills", 0)) + 1
+		tq = Time.get_ticks_usec()
 		r = StanceSim.track_price(flat, cfg)
+		BotTiming.add(&"q_price_native", tq)
+	BotTiming.add_us(&"q_rounds", rounds)
+	_w["prices"] = int(_w.get("prices", 0)) + 1
 	return r
 
 
@@ -622,12 +742,13 @@ static func _pack_track(track: Array) -> PackedFloat64Array:
 
 func _price_cfg(vmax: float, team_id: int, rows: StringName, window_s: float, stops: Dictionary, skip_s: float) -> Dictionary:
 	var sh := PackedFloat64Array()
-	var rws := []
+	var ids := PackedInt64Array()
 	for s in _shooters:
 		sh.append_array([(s.pos as Vector2).x, (s.pos as Vector2).y, s.weight, _GROUP_INDEX[s.group], s.bit, s.spread, s.range,
 			s.reload, s.next, float(stops.get(s.id, INF))])
-		rws.append(_row_dict(s, rows))
-	return {"shooters": sh, "rows": rws, "slices": PackedFloat64Array(DamageExpectation.TURNOUT_SLICES_S), "vmax": vmax,
+		ids.append(s.id)
+	return {"shooters": sh, "store": _store, "ids": ids, "kind": _rows_index(rows), "pm": BotGunnery._projectile_native(),
+		"slices": PackedFloat64Array(DamageExpectation.TURNOUT_SLICES_S), "vmax": vmax,
 		"at_speed": DODGE_AT_SPEED, "team": team_id, "field": NavigationMapManager.get_reach_field(), "window": window_s,
 		"skip": skip_s, "dt": ESCAPE_DT, "aspects": ASPECTS, "aspect_step": ASPECT_STEP_DEG, "bucket_m": RANGE_BUCKET_M,
 		"torps": _torp_pack, "torp_hull": _torp_hull}
@@ -637,23 +758,8 @@ static func _rows_index(rows: StringName) -> int:
 	return 0 if rows == &"rows" else 2 if rows == &"hit" else 1
 
 
-## `sh`'s cached row buckets while _rows would still serve them.
-func _row_dict(sh: Dictionary, rows: StringName) -> Dictionary:
-	var d := {}
-	var by: Dictionary = _tables.get(sh.id, {})
-	if by.is_empty() or not is_instance_valid(sh.ship) or SimClock.now() - float(by.t) > TABLE_TTL_S:
-		return d
-	if int(by.sig) != _row_sig(sh.ship, _clock.shell_read(sh.ship) if _clock != null else SalvoClock.SHELL_UNKNOWN):
-		return d
-	var k := _rows_index(rows)
-	for b in by:
-		if b is int:
-			d[b] = by[b][k]
-	return d
-
-
-## The row buckets track_price reported missing ([shooter, range] pairs), built as _row_at builds them.
-func _fill_rows(cfg: Dictionary, missing: PackedFloat64Array, rows: StringName, into: String = "rows") -> void:
+## The row buckets track_price reported missing ([shooter, range, aspect] triples), built as _row_at builds them.
+func _fill_rows(missing: PackedFloat64Array) -> void:
 	var cells := {}
 	for j in range(0, missing.size(), 3):
 		var i: int = int(missing[j])
@@ -662,16 +768,12 @@ func _fill_rows(cfg: Dictionary, missing: PackedFloat64Array, rows: StringName, 
 		if _me != null and is_instance_valid(sh.ship):
 			var key: int = i * 1000000 + int(r / RANGE_BUCKET_M)
 			if not cells.has(key):
-				cells[key] = [i, _bucket(_me, sh.ship, r), []]
+				cells[key] = [sh.ship, r, []]
 			(cells[key][2] as Array).append(int(missing[j + 2]))
 		else:
-			(cfg[into][i] as Dictionary)[int(r / RANGE_BUCKET_M)] = sh.get(rows, PackedFloat32Array())
-	var touched := {}
+			_store.copy_bucket(sh.id, int(sh.bucket), int(r / RANGE_BUCKET_M))
 	for c in cells.values():
-		_fill_cells(_me, (_shooters[c[0]] as Dictionary).ship, c[1], PackedInt32Array(c[2]))
-		touched[c[0]] = true
-	for i in touched:
-		cfg[into][i] = _row_dict(_shooters[i], rows)
+		_ensure(_me, c[0], c[1], PackedInt32Array(c[2]))
 
 
 ## Share of `sh`'s believed positions from which it reaches `dist` away: all or none for a gun we see.
@@ -781,6 +883,7 @@ func _gun_pick(ctx: SkillContext, t: Ship, arty, gp: GunParams, base: float, hdg
 			idle.append(i)
 	if idle.is_empty():
 		return Vector2(INF, INF)
+	var t_gp := Time.get_ticks_usec()
 	var throttle: float = _throttle if _throttle > 0.0 else 1.0
 	var sailed := _helm_tracks(ctx, [[hs[0], throttle, 0.0, INF, 0.0], [hs[1], throttle, 0.0, INF, 0.0]], GUN_PRICE_S)
 	var at0 := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
@@ -812,6 +915,9 @@ func _gun_pick(ctx: SkillContext, t: Ship, arty, gp: GunParams, base: float, hdg
 				and absf(angle_difference(hdg, hs[c])) < absf(angle_difference(hdg, best))):
 			best_s = minf(fire_s, best_s)
 			best = hs[c]
+	BotTiming.add(&"st_gun_pick", t_gp)
+	_part("gun_pick", t_gp)
+	_did.append("gun")
 	return Vector2(best, best_s)
 
 
@@ -907,15 +1013,25 @@ func _dodge(ctx: SkillContext) -> bool:
 	var state: int = _planner.check(pm, at, SHELL_QUERY_M, ship.team.team_id, SimClock.now())
 	if state < 2 or ctx.navigator == null:
 		return state == 1
+	var t_dg := Time.get_ticks_usec()
+	var out := _dodge_plan(ctx, ship, at)
+	BotTiming.add(&"st_dodge_plan", t_dg)
+	_part("dodge_plan", t_dg)
+	_did.append("dodge")
+	return out
+
+func _dodge_plan(ctx: SkillContext, ship: Ship, at: Vector2) -> bool:
+	for sh in _shooters:
+		if is_instance_valid(sh.ship):
+			_store.validate(sh.id, _row_sig(sh.ship, _clock.shell_read(sh.ship) if _clock != null else SalvoClock.SHELL_UNKNOWN),
+				SimClock.now(), TABLE_TTL_S)
 	var cfg := _price_cfg(maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, &"rows", 0.0, {}, 0.0)
 	var bearings := PackedFloat64Array()
-	var hit_rows := []
 	var cals := PackedFloat64Array()
 	var dmgs := PackedFloat64Array()
 	for sh in _shooters:
 		var ok: bool = is_instance_valid(sh.ship)
 		bearings.append(float(sh.bearing) if ok else NAN)
-		hit_rows.append(_row_dict(sh, &"hit"))
 		var p: ShellParams = sh.ship.artillery_controller.guns[0].get_shell() if ok and not sh.ship.artillery_controller.guns.is_empty() else null
 		cals.append(p.caliber if p != null else NAN)
 		dmgs.append(p.damage if p != null else 0.0)
@@ -924,7 +1040,7 @@ func _dodge(ctx: SkillContext) -> bool:
 		"ref_cal": DODGE_REF_CAL, "cit_w": DODGE_CIT_W, "heading": _heading, "throttle": _throttle, "off_w": DODGE_OFF_W,
 		"gear_w": DODGE_GEAR_W, "min_gain": DODGE_MIN_GAIN, "route": _route, "cone": PROGRESS_CONE,
 		"map": NavigationMapManager.get_map(), "clearance": ctx.behavior._get_ship_clearance(), "at": at,
-		"bearings": bearings, "hit_rows": hit_rows, "shell_cal": cals, "shell_dmg": dmgs, "source_match": SalvoClock.SOURCE_MATCH,
+		"bearings": bearings, "shell_cal": cals, "shell_dmg": dmgs, "source_match": SalvoClock.SOURCE_MATCH,
 		"price_s": DODGE_PRICE_S, "coef_full": _price_coef(ship, "dodge")}, true)
 	var r := {}
 	for i in _MISSING_ROUNDS + 1:
@@ -932,9 +1048,9 @@ func _dodge(ctx: SkillContext) -> bool:
 		if r.is_empty() or r.has("picked"):
 			break
 		if not (r.get("missing_hit", PackedFloat64Array()) as PackedFloat64Array).is_empty():
-			_fill_rows(cfg, r.missing_hit, &"hit", "hit_rows")
+			_fill_rows(r.missing_hit)
 		if not (r.missing as PackedFloat64Array).is_empty():
-			_fill_rows(cfg, r.missing, &"rows")
+			_fill_rows(r.missing)
 	if r.is_empty():
 		return false
 	var out: bool = is_finite(_planner.heading())
@@ -1283,7 +1399,6 @@ func _survey(ctx: SkillContext) -> bool:
 	_me = ship
 	_me_sig = _target_sig(ship)
 	_sig_cache.clear()
-	_pack_cache.clear()
 	_clock = ctx.behavior.salvo_clock
 	_torp_shooters = _torp_survey(ctx)
 	_pack_torps(ship)
@@ -1354,7 +1469,8 @@ func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, w
 	var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
 	var next: float = next_s if not is_nan(next_s) else ctx.behavior.salvo_clock.next_landing(s, now) if group != &"dark" else INF
 	_shooters.append({"id": s.get_instance_id(), "ship": s, "bearing": atan2(to.x, to.y), "rows": rows,
-		"raw": _tables[s.get_instance_id()][int(minf(to.length(), reach) / RANGE_BUCKET_M)][1],
+		"raw": _store.row(s.get_instance_id(), int(minf(to.length(), reach) / RANGE_BUCKET_M), 1),
+		"bucket": int(minf(to.length(), reach) / RANGE_BUCKET_M),
 		"weight": weight, "group": group, "bit": bit, "spread": spread, "threat": _threat(s, ctx.ship, to.length()),
 		"pos": pos, "range": reach, "reload": reload, "next": next if is_finite(next) else reload * 0.5})
 
@@ -1375,54 +1491,68 @@ static func _guns_free(ctx: SkillContext) -> bool:
 	return ctx.behavior.would_fire_guns()
 
 
-## Calibrated effective incoming dps per aspect step from `shooter`, cached per range bucket (with the
-## unweighted dps alongside); empty unknown.
+## Calibrated effective incoming dps per aspect step from `shooter`, cached per range bucket; empty unknown.
 func _rows(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
-	var e := _bucket(ship, shooter, range_m)
-	_fill_cells(ship, shooter, e, _ALL_ASPECTS)
-	return e[0]
+	return _store.row(shooter.get_instance_id(), _ensure(ship, shooter, range_m), 0)
 
 
-## `shooter`'s cache entry for range_m's bucket: [rows, raw, hit, range built at, calibration, shell read], cells NAN
-## until _fill_cells, all three empty once a cell is unknown.
-func _bucket(ship: Ship, shooter: Ship, range_m: float) -> Array:
-	var id := shooter.get_instance_id()
-	var bucket := int(range_m / RANGE_BUCKET_M)
-	var now: float = SimClock.now()
-	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
-	var sig := _row_sig(shooter, read)
-	var by: Dictionary = _tables.get(id, {})
-	if by.is_empty() or now - float(by.t) > TABLE_TTL_S or int(by.sig) != sig:
-		by = {"t": now, "sig": sig}
-		_tables[id] = by
-	if by.has(bucket):
-		return by[bucket]
-	var nan := PackedFloat32Array()
-	nan.resize(ASPECTS)
-	nan.fill(NAN)
-	var e := [nan, nan.duplicate(), nan.duplicate(), range_m, BotGunnery.calibration(shooter, ship, range_m), read]
-	by[bucket] = e
-	return e
-
-
+## range_m's bucket of `shooter`'s rows, `cells` (aspect indices) filled; a new bucket is built at range_m.
 static var _ALL_ASPECTS := PackedInt32Array(range(ASPECTS))
 
-## Fills `cells` (aspect indices) of entry `e` still NAN.
-func _fill_cells(ship: Ship, shooter: Ship, e: Array, cells: PackedInt32Array) -> void:
-	if (e[0] as PackedFloat32Array).is_empty():
-		return
-	var pack: Dictionary = _pack_cache.get(shooter.get_instance_id(), {}) if ship == _me else {}
-	if pack.is_empty():
-		pack = BotGunnery.stance_cell_pack(shooter, ship)
-		if ship == _me:
-			_pack_cache[shooter.get_instance_id()] = pack
-	var notes: PackedInt32Array = BotGunnery._projectile_native().stance_cells(e, cells, pack, ASPECT_STEP_DEG)
+func _ensure(ship: Ship, shooter: Ship, range_m: float, cells: PackedInt32Array = _ALL_ASPECTS) -> int:
+	var id := shooter.get_instance_id()
+	var bucket := int(range_m / RANGE_BUCKET_M)
+	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
+	var vr: int = _store.validate(id, _row_sig(shooter, read), SimClock.now(), TABLE_TTL_S)
+	if vr > 0:
+		var why: int = vr / 100000
+		var tp := _target_parts(_me)
+		var parts := [tp[0], tp[1], read, _live_guns(shooter), BotGunnery.point_tables_ready(shooter, _me)]
+		var last: Array = _sig_parts.get(id, [])
+		if why == 3 and last.size() == 5:
+			var tags := ["saturation", "hp", "read", "live", "ready"]
+			for i in 5:
+				if last[i] != parts[i]:
+					BotTiming.add_us(StringName("q_reset_" + tags[i]), vr % 100000)
+		else:
+			BotTiming.add_us(StringName("q_reset_" + ["", "new", "ttl", "sig?"][why]), vr % 100000)
+		_sig_parts[id] = parts
+	var tq := Time.get_ticks_usec()
+	if not _store.has(id, bucket):
+		_store.create(id, bucket, range_m, BotGunnery.calibration(shooter, ship, range_m), read, ASPECTS)
+		BotTiming.add(&"q_create", tq)
+	if not _store.has_pack(id):
+		tq = Time.get_ticks_usec()
+		var pack := BotGunnery.stance_cell_pack(shooter, ship)
+		BotTiming.add(&"q_pack", tq)
+		_store.set_pack(id, pack, read)
+		_pack_keys[id] = pack.keys
+	tq = Time.get_ticks_usec()
+	var notes: PackedInt32Array = _store.fill(BotGunnery._projectile_native(), id, bucket, cells, ASPECT_STEP_DEG)
+	BotTiming.add(&"q_fill_native", tq)
+	if not notes.is_empty():
+		BotTiming.add_us(&"q_cells_filled", notes[0])
+		_w["cells"] = int(_w.get("cells", 0)) + notes[0]
+		BotTiming.add_us(&"q_us_per_cell", (Time.get_ticks_usec() - tq) / maxi(notes[0], 1))
+	tq = Time.get_ticks_usec()
 	for k in range(1, notes.size(), 2):
-		BotGunnery._note_point_batch(notes[0], notes[k], notes[k + 1] == 1, pack.keys[k / 2])
+		BotGunnery._note_point_batch(notes[0], notes[k], notes[k + 1] == 1, _pack_keys[id][k / 2])
+	BotTiming.add(&"q_notes", tq)
+	return bucket
 
 
-## _fill_cells as one fresh survey's inputs, per shooter id; cleared with _sig_cache.
-var _pack_cache: Dictionary = {}
+var _sig_parts: Dictionary = {}
+
+func _live_guns(shooter: Ship) -> int:
+	var live := 0
+	if shooter.artillery_controller != null:
+		for g in shooter.artillery_controller.guns:
+			live += int(not g.disabled)
+	return live
+
+
+## Per shooter id, the point-table keys of the pack the store holds (for _note_point_batch).
+var _pack_keys: Dictionary = {}
 
 
 ## `sh`'s rows (&"rows", &"raw" or &"hit": damage per hit over alpha) at `dist` from it, out to its reach; empty unknown.
@@ -1430,10 +1560,7 @@ func _row_at(sh: Dictionary, dist: float, rows: StringName) -> PackedFloat32Arra
 	if _me == null or not is_instance_valid(sh.ship):
 		return sh.get(rows, PackedFloat32Array())
 	var r: float = minf(dist, float(sh.range))
-	var row := _rows(_me, sh.ship, r)
-	if rows == &"rows" or row.is_empty():
-		return row
-	return _tables[sh.id][int(r / RANGE_BUCKET_M)][2 if rows == &"hit" else 1]
+	return _store.row(sh.id, _ensure(_me, sh.ship, r), _rows_index(rows))
 
 
 static func _loaded_tubes(ctx: SkillContext) -> Array:
@@ -1508,6 +1635,13 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 		if is_finite(_duel_h):
 			_take_duel()
 		return
+	var t_dl := Time.get_ticks_usec()
+	_duel_priced(ctx, hdg, t, arty, d, tc, now)
+	BotTiming.add(&"st_duel_priced", t_dl)
+	_part("duel_priced", t_dl)
+	_did.append("duel")
+
+func _duel_priced(ctx: SkillContext, hdg: float, t: Ship, arty, d: float, tc: TorpedoController, now: float) -> void:
 	var at := Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
 	var tp := Vector2(t.global_position.x, t.global_position.z)
 	var to_t: float = atan2(tp.x - at.x, tp.y - at.y)
@@ -1537,6 +1671,7 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	options["lie"] = [_heading, _throttle, INF, 0.0]
 	var tracks := {}
 	var lethal := {}
+	var t_tr := Time.get_ticks_usec()
 	for name in options:
 		var o: Array = options[name]
 		var track: Array = _held(_route_track, DUEL_WINDOW_S) if name == "lie" and _route_wins and not _route_track.is_empty() \
@@ -1544,6 +1679,9 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 		if not track.is_empty():
 			tracks[name] = track
 			lethal[name] = _lethal(ctx, t, track)
+	BotTiming.add(&"st_duel_tracks", t_tr)
+	_part("duel_tracks", t_tr)
+	BotTiming.add_us(&"st_duel_nopts", options.size())
 	# A salvo that can sink us rules an option out, unless every option shows one.
 	var safe: bool = lethal.values().has(false)
 	var late := _station_delay(ctx, tracks)
@@ -1553,7 +1691,10 @@ func _duel(ctx: SkillContext, hdg: float) -> void:
 	var best := "lie"
 	var best_score := -INF
 	for name in tracks:
+		var t_sc := Time.get_ticks_usec()
 		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name])
+		BotTiming.add(&"st_duel_score", t_sc)
+		_part("duel_score", t_sc)
 		if is_finite(sc) and late.has(name):
 			sc -= maxf(float(late.net) - sc / DUEL_WINDOW_S, 0.0) * float(late[name])
 		scores[name] = sc
@@ -1668,14 +1809,14 @@ static func _next_gun_s(arty) -> float:
 ## `after_s`. Stopped or astern, the bow held as it lies.
 func _option_track(ctx: SkillContext, hdg: float, h: float, throttle: float, then: float = INF, after_s: float = 0.0) -> Array:
 	var bow: float = hdg if throttle == 0.0 else h
-	var sailed := _helm_tracks(ctx, [[bow, throttle, 0.0, then, after_s]], DUEL_WINDOW_S)
-	return _cut(ctx, sailed[0], Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, bow, true,
-		then, after_s)[0]
+	return _helm_cut(ctx, [[bow, throttle, 0.0, then, after_s]], DUEL_WINDOW_S,
+		[[Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, bow, true, then, after_s]])[0][0]
 
 func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	var ship: Ship = ctx.ship
 	var arty = ship.artillery_controller
 	var gp: GunParams = arty.get_params()
+	var tq := Time.get_ticks_usec()
 	var n: int = track.size()
 	var pos := PackedVector2Array()
 	var hdgs := PackedFloat32Array()
@@ -1688,8 +1829,12 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 		tpos.append(t0 + tv * (k + 1) * ESCAPE_DT)
 	var at0 := Vector2(ship.global_position.x, ship.global_position.z)
 	var hdg0: float = ctx.behavior._get_ship_heading()
+	BotTiming.add(&"ds_prep", tq)
+	tq = Time.get_ticks_usec()
 	var masks: PackedInt64Array = StanceSim.track_bearing(arty.guns, at0, hdg0, pos, hdgs, tpos, gp.traverse_speed, ESCAPE_DT) \
 		if _guns_free(ctx) else PackedInt64Array()
+	BotTiming.add(&"ds_bearing", tq)
+	tq = Time.get_ticks_usec()
 	var live := 0
 	var ready := PackedFloat32Array()
 	for g in arty.guns:
@@ -1728,12 +1873,19 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 				* DamageExpectation.salvo_factor(ship, t, d, asp) * gp.reload_time / maxf(live, 1)
 			for g in fire_n[j]:
 				dealt[fire_k[j]] += per_gun
+	BotTiming.add(&"ds_points", tq)
+	tq = Time.get_ticks_usec()
 	_add_torpedoes(ctx, t, at0, hdg0, pos, hdgs, tpos, dealt)
-	var asp_t: float = BotBehavior.guns_bear_aspect(t)
-	for k in n:
-		var to_t: Vector2 = tpos[k] - pos[k]
-		var brg: float = rad_to_deg(absf(angle_difference(hdgs[k], atan2(to_t.x, to_t.y))))
-		dealt[k] += BotBehavior._secondary_dps(ship, t, to_t.length(), asp_t, brg) * ESCAPE_DT
+	BotTiming.add(&"ds_torps", tq)
+	tq = Time.get_ticks_usec()
+	var flat := _pack_track(track)
+	if is_instance_valid(ship.secondary_controller):
+		var tv0 := Vector2(t.linear_velocity.x, t.linear_velocity.z)
+		dealt = _secondaries(flat, PackedFloat64Array([ship.get_instance_id(), t.get_instance_id(),
+			ship.secondary_controller.get_max_range(), 1.0, 1, 0.0, t0.x, t0.y, tv0.x, tv0.y, -1, n,
+			BotBehavior.guns_bear_aspect(t)]), [[ship, t]], ship.team.team_id, dealt)
+	BotTiming.add(&"ds_sec_out", tq)
+	tq = Time.get_ticks_usec()
 	var sum := 0.0
 	var kill_t := INF
 	for k in n:
@@ -1742,8 +1894,13 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 			kill_t = (k + 1) * ESCAPE_DT
 			break
 	# Unlearned, as dealt is: the learned turn-out prices only one side of the trade.
+	BotTiming.add(&"ds_kill", tq)
+	tq = Time.get_ticks_usec()
 	var taken := _track_incoming(track, maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, {t.get_instance_id(): kill_t}, ship.ship_class)
-	_add_secondaries_in(ship, track, t, kill_t, taken)
+	BotTiming.add(&"ds_incoming", tq)
+	tq = Time.get_ticks_usec()
+	taken = _add_secondaries_in(ship, flat, track.size(), t, kill_t, taken)
+	BotTiming.add(&"ds_sec_in", tq)
 	var hp: float = maxf(ctx.behavior.trade_hp(), 1.0)
 	_last_pred_d = minf(Array(dealt).reduce(func(a, x): return a + x, 0.0), hp_t)
 	_last_pred_t = Array(taken).reduce(func(a, x): return a + x, 0.0)
@@ -1774,40 +1931,53 @@ func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
 	_last_die_s = (die_k + 1) * ESCAPE_DT if die_k >= 0 else INF
 	return _last_dealt - _last_taken - lost + won
 
-## Secondaries of the shooters on us into `taken` along `track`, at the aspect we show each and the bearing it shows us,
-## as _track_incoming books its guns: none behind land from it, the unspotted at DARK_TAKEN; `t` where it is going
-## and silent once it sinks.
-func _add_secondaries_in(ship: Ship, track: Array, t: Ship, kill_t: float, taken: PackedFloat32Array) -> void:
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	var team_id: int = ship.team.team_id
-	var masks := {}
+## Secondaries of the shooters on us added to `taken` along `flat` (_pack_track, `n` steps), at the aspect we show each
+## and the bearing it shows us, as _track_incoming books its guns: none behind land from it, the unspotted at DARK_TAKEN;
+## `t` where it is going and silent once it sinks.
+func _add_secondaries_in(ship: Ship, flat: PackedFloat64Array, n: int, t: Ship, kill_t: float, taken: PackedFloat32Array) -> PackedFloat32Array:
+	var jobs := PackedFloat64Array()
+	var ships: Array = []
 	for sh in _shooters:
 		var e: Ship = sh.get("ship")
 		if not is_instance_valid(e) or not is_instance_valid(e.secondary_controller):
 			continue
-		var reach: float = e.secondary_controller.get_max_range()
 		var w: float = DamageExpectation.DARK_TAKEN[mini(ship.ship_class, 2)] if sh.group == &"dark" else 1.0
-		var e_hdg: float = atan2(-e.global_transform.basis.z.x, -e.global_transform.basis.z.z)
 		var ep: Vector2 = sh.pos
 		var ev := Vector2.ZERO
 		if e == t:
 			ep = Vector2(t.global_position.x, t.global_position.z)
 			ev = Vector2(t.linear_velocity.x, t.linear_velocity.z)
-		var bit: int = int(sh.bit)
-		var stop: int = mini(track.size(), int(kill_t / ESCAPE_DT) if e == t and is_finite(kill_t) else track.size())
-		for k in stop:
-			var at: Vector2 = track[k][0]
-			var to: Vector2 = ep + ev * (k + 1) * ESCAPE_DT - at
-			if to.length() > reach:
-				continue
-			if bit >= 0 and field != null:
-				if not masks.has(k):
-					masks[k] = field.exposure_mask(team_id, at)
-				if int(masks[k]) & (1 << bit) == 0:
-					continue
-			var a: float = rad_to_deg(absf(angle_difference(float(track[k][1]), atan2(to.x, to.y))))
-			var brg: float = rad_to_deg(absf(angle_difference(e_hdg, atan2(-to.x, -to.y))))
-			taken[k] += w * BotBehavior._secondary_dps(e, ship, to.length(), a, brg) * ESCAPE_DT
+		var stop: int = mini(n, int(kill_t / ESCAPE_DT) if e == t and is_finite(kill_t) else n)
+		jobs.append_array([e.get_instance_id(), ship.get_instance_id(), e.secondary_controller.get_max_range(), w, 0,
+			atan2(-e.global_transform.basis.z.x, -e.global_transform.basis.z.z), ep.x, ep.y, ev.x, ev.y, int(sh.bit), stop, 0.0])
+		ships.append([e, ship])
+	if jobs.is_empty():
+		return taken
+	return _secondaries(flat, jobs, ships, ship.team.team_id, taken)
+
+
+## BotBehavior._secondary_dps's cells for the native duel secondaries, shared by every bot.
+static var _sec_cache := SecCache.new()
+
+## `jobs`' secondaries (stance_sec) added into `steps` along `flat`; `ships` [shooter, target] per job fills the cells
+## the cache lacks.
+func _secondaries(flat: PackedFloat64Array, jobs: PackedFloat64Array, ships: Array, team_id: int, steps: PackedFloat32Array) -> PackedFloat32Array:
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var r: Dictionary = StanceSim.secondaries(_sec_cache, flat, jobs, field, team_id, ESCAPE_DT, steps)
+	for i in _MISSING_ROUNDS:
+		var miss: PackedFloat64Array = r.missing
+		if miss.is_empty():
+			break
+		var q := PackedFloat64Array()
+		var v := PackedFloat32Array()
+		for j in range(0, miss.size(), 4):
+			var pair: Array = ships[int(miss[j])]
+			var e: Dictionary = BotGunnery.expected(pair[0], pair[1], miss[j + 1], miss[j + 2], BotGunnery.KIND_SECONDARY, miss[j + 3])
+			q.append_array([(pair[0] as Ship).get_instance_id(), (pair[1] as Ship).get_instance_id(), miss[j + 1], miss[j + 2], miss[j + 3]])
+			v.append(maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0))))
+		_sec_cache.put(q, v)
+		r = StanceSim.secondaries(_sec_cache, flat, jobs, field, team_id, ESCAPE_DT, steps)
+	return r.steps
 
 ## Our spreads into `dealt`: each launcher once loaded and trained, its share of torpedo_curve (the
 ## target's dodge priced in) landing a run's time after launch.
@@ -1842,10 +2012,11 @@ func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary,
 	var cfg := _price_cfg(vmax, team_id, &"raw", INF, stops, 0.0)
 	cfg["dark_w"] = DamageExpectation.DARK_TAKEN[mini(ship_class, 2)]
 	var r: Dictionary = StanceSim.track_incoming(flat, cfg)
+	_w["incoming"] = int(_w.get("incoming", 0)) + 1
 	for i in _MISSING_ROUNDS:
 		if (r.missing as PackedFloat64Array).is_empty():
 			break
-		_fill_rows(cfg, r.missing, &"raw")
+		_fill_rows(r.missing)
 		r = StanceSim.track_incoming(flat, cfg)
 	return r.steps
 

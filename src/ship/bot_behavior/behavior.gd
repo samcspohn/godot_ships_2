@@ -718,16 +718,25 @@ func update_priorities(server: GameServer) -> void:
 	for k in priorities.size():
 		rank[_priority_key(priorities[k])] = k
 	var fresh: Array[Dictionary] = []
+	var us_hit := 0
+	var us_sail := 0
+	var us_score := 0
 	for b in server._team_belief(team_id):
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
 		var d := here.distance_to(b.pos)
+		var t0 := Time.get_ticks_usec()
 		var shoot: bool = d <= _ship.artillery_controller.get_params()._range and _aimable(b.ship) and can_hit_target(b.ship)
+		var t1 := Time.get_ticks_usec()
 		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
+		var t2 := Time.get_ticks_usec()
 		var sc: float = priority_score(b.ship, b.pos, sail, shoot, _team_help(server, b.ship, b.pos), _team_threat(server, b.ship, b.pos))
 		fresh.append({"ship": b.ship, "pos": b.pos, "d": d if shoot else PRIORITY_ROUTE_W * sail,
 			"score": sc * _lone_boost(server, b.ship, b.pos)})
+		us_hit += t1 - t0
+		us_sail += t2 - t1
+		us_score += Time.get_ticks_usec() - t2
 	for r in server.anonymous_refs(team_id):
 		var proxy := _ref_proxy(server, int(r.id))
 		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
@@ -772,6 +781,9 @@ func update_priorities(server: GameServer) -> void:
 			m -= 1
 	priorities = fresh
 	priority = priorities[0] if not priorities.is_empty() else {}
+	BotTiming.add_us(&"prio_can_hit", us_hit)
+	BotTiming.add_us(&"prio_sail", us_sail)
+	BotTiming.add_us(&"prio_score", us_score)
 
 ## 0..1, how well a chase can run `e` down: our speed over its, times how near we see it (its concealment, our hydro
 ## or radar) over how near it sees us; 1 for a slower ship we see first. A faster or stealthier one keeps away.
@@ -2881,6 +2893,8 @@ func smoothed_engagement_range(ctx: SkillContext, snap: bool = false) -> float:
 ## declines the situation, so callers can walk a fallback chain.
 func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
 	var intent: NavIntent = null
+	var t0 := Time.get_ticks_usec()
+	var asked := skill_name
 	# Fight and Disengage are the only things a ship does.
 	match skill_name:
 		&"Disengage":
@@ -2897,6 +2911,7 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 			skill_name = &"Fight"
 		_:
 			push_error("%s asked for skill %s: only Fight and Disengage run" % [_ship.ship_name, skill_name])
+	BotTiming.add(StringName("skill_" + asked), t0)
 	if skill_name == &"Fight":
 		churn.fight_calls += 1
 	if intent != null:
@@ -2980,8 +2995,12 @@ const CORNERED_THREAT: float = 0.9
 func _nav_core(ctx: SkillContext) -> NavIntent:
 	var d := _doc()
 	churn.begin_tick()
+	var t0 := Time.get_ticks_usec()
 	update_priorities(ctx.server)
+	BotTiming.add(&"priorities", t0)
+	t0 = Time.get_ticks_usec()
 	var sit := _build_situation(ctx)
+	BotTiming.add(&"situation", t0)
 	var prev_skill := _active_skill_name
 	var intent: NavIntent = null
 
@@ -2999,9 +3018,14 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_stealth = true
 		wants_to_be_concealed = true
 
+	t0 = Time.get_ticks_usec()
 	update_rings(ctx)
+	BotTiming.add(&"rings", t0)
+	t0 = Time.get_ticks_usec()
 	_trade_now = _smoothed_trade(ctx)
 	dials.update(ctx)
+	BotTiming.add(&"trade_dials", t0)
+	t0 = Time.get_ticks_usec()
 	intent = _held_disengage(ctx, sit)
 	if intent == null:
 		intent = _brawl(ctx, sit)
@@ -3010,6 +3034,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	if intent == null:
 		intent = _committed_intent(ctx, sit)
 	if intent != null:
+		BotTiming.add(&"ladder", t0)
 		_apply_gun_policy(ctx, sit)
 		return _finish_nav(intent, ctx, sit, prev_skill)
 
@@ -3019,6 +3044,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		intent = _select_nav_skill(ctx, sit)
 	if intent == null:
 		intent = _fight(ctx)
+	BotTiming.add(&"ladder", t0)
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
@@ -3493,6 +3519,12 @@ func _trace(intent: NavIntent, ctx: SkillContext, sit: Dictionary) -> void:
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
 func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
+	var t0 := Time.get_ticks_usec()
+	var r := _finish_nav_inner(intent, ctx, sit, prev_skill)
+	BotTiming.add(&"finish", t0)
+	return r
+
+func _finish_nav_inner(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
 	var d := _doc()
 	if _active_skill_name == &"Disengage" and prev_skill != &"Disengage":
 		_dis_since = SimClock.now()
@@ -3508,12 +3540,16 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	if prev_skill == &"Fight" and _active_skill_name != &"Fight":
 		_skill_fight.reset()
 
+	var t0 := Time.get_ticks_usec()
 	salvo_clock.tick(ctx.ship, ctx.server, self)
+	BotTiming.add(&"salvo_clock", t0)
+	t0 = Time.get_ticks_usec()
 	if ctx.ship.visible_to_enemy:
 		_infer_concealed_spotter(ctx.server)
 
 	cant_go_dark = not _probe_concealment(ctx.server)
 	var latched := _dark_hold(ctx)
+	BotTiming.add(&"conceal", t0)
 	hold_fire = not _owns_gun_policy() and ((wants_stealth and not cant_go_dark) or latched)
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
@@ -3530,7 +3566,9 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	dest_heading = intent.target_heading
 	# Every arm, committed ones too: skills choose where, stance how the hull gets there.
 	if _active_skill_name not in d.stance_exclude:
+		t0 = Time.get_ticks_usec()
 		intent = _skill_stance.apply(intent, ctx)
+		BotTiming.add(&"stance", t0)
 	else:
 		_skill_stance.reset()
 	churn.post = Vector2(intent.target_position.x, intent.target_position.z)

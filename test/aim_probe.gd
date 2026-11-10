@@ -319,7 +319,7 @@ func _rt_compare() -> void:
 					ib = k
 			n_b += 1
 			same += int(ia == ib)
-		var w: PackedFloat32Array = PointTableScript.comp_weights(_target, r.shell.damage)
+		var sat: int = BotGunnery.saturation_mask(_target)
 		var he: bool = r.shell.type == ShellParams.ShellType.HE
 		var agree := 0
 		var n_q := 0
@@ -334,7 +334,7 @@ func _rt_compare() -> void:
 				var q := PackedFloat64Array([rr, asp, r.shell.damage, BotGunnery._raw_fire_chance(r.shell, _target) if he else 0.0,
 					BotGunnery.fire_dps(_target) * BotGunnery.fire_burn_s(_target) if he else 0.0])
 				t1 = Time.get_ticks_usec()
-				var bn: PackedFloat32Array = pm.point_best(key, q, w, PackedFloat32Array())
+				var bn: PackedFloat32Array = pm.point_best(key, q, sat, PackedFloat32Array())
 				us_nat += Time.get_ticks_usec() - t1
 				if int(bg["point"]) < 0 and bn.is_empty():
 					continue

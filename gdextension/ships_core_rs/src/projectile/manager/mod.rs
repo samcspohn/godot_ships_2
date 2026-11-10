@@ -17,8 +17,12 @@ mod lifecycle;
 mod survey;
 mod point_store;
 mod point_worker;
-mod stance_cells;
+pub(crate) mod stance_cells;
 pub(crate) mod util;
+
+fn sat_w(v: &[f64]) -> [f32; 4] {
+    std::array::from_fn(|i| v.get(i).copied().unwrap_or(1.0) as f32)
+}
 
 /// Matches GDScript HitResult.
 pub mod hit_result {
@@ -729,6 +733,8 @@ impl ProjectileManager {
             ranges: f64s("ranges"), half_disp: v2s("half_disp"), bias: f64s("bias"), lead: f64s("lead"),
             lead_band: g("lead_band").to_f64(), aspects: f64s("aspects"), points: v3s("points"), features: v3s("features"),
             mc_off: v2s("mc_off"), mc_lead: v2s("mc_lead"), comp: f64s("comp"), n_comp: g("n_comp").to_i32().max(1) as usize,
+            sections: g("sections").try_to::<PackedInt32Array>().map(|a| a.to_vec()).unwrap_or_default(),
+            sat_w: sat_w(&f64s("sat_w")),
             turret_cap: g("turret_cap").to_f64(), c: consts,
         });
         true
@@ -745,12 +751,14 @@ impl ProjectileManager {
         out
     }
 
-    /// Puts a whole table in the store (file mode): `buckets` maps bucket index -> per point n_comp values then landed.
+    /// Puts a whole table in the store (file mode): `buckets` maps bucket index -> per point n_comp values then landed;
+    /// `sections` each point's ArmorPart.Type, `sat_w` PointTable.sat_weights.
     #[func]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn point_table_put(&mut self, key: GString, ranges: PackedFloat32Array, aspects: PackedFloat64Array,
-            points: PackedVector3Array, n_comp: i32, buckets: VarDictionary) {
+            points: PackedVector3Array, n_comp: i32, buckets: VarDictionary, sections: PackedInt32Array, sat_w: PackedFloat64Array) {
         let mut t = point_store::PtTable::new(ranges.as_slice().iter().map(|&x| x as f64).collect(), aspects.as_slice().to_vec(),
-            points.as_slice().to_vec(), n_comp.max(1) as usize);
+            points.as_slice().to_vec(), n_comp.max(1) as usize, sections.to_vec(), self::sat_w(sat_w.as_slice()));
         for (k, v) in buckets.iter_shared() {
             if let Ok(vals) = v.try_to::<PackedFloat32Array>() {
                 t.insert(k.to::<i64>() as usize, vals.as_slice().to_vec());
@@ -765,10 +773,10 @@ impl ProjectileManager {
     }
 
     /// Best point of `key`: `q` = [range m, aspect deg, shell damage, raw fire chance, fire dps x burn s],
-    /// `w` the live weight per component, `fires` [x, y, z, burning] per target fire (target-local). Returns
+    /// `sat` the target's saturation mask, `fires` [x, y, z, burning] per target fire (target-local). Returns
     /// [point, value, damage, landed, visited, x, y, z]; empty while the table or a needed bucket is missing.
     #[func]
-    pub(crate) fn point_best(&self, key: GString, q: PackedFloat64Array, w: PackedFloat32Array, fires: PackedFloat32Array) -> PackedFloat32Array {
+    pub(crate) fn point_best(&self, key: GString, q: PackedFloat64Array, sat: i64, fires: PackedFloat32Array) -> PackedFloat32Array {
         let mut out = PackedFloat32Array::new();
         let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
         let Some(t) = t else { return out };
@@ -778,10 +786,7 @@ impl ProjectileManager {
         let f: Vec<(Vector3, bool)> = fires.as_slice().chunks_exact(4)
             .map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
         let g = t.read().unwrap();
-        if w.len() < g.n_comp {
-            return out;
-        }
-        if let Some(b) = g.best(q[0], q[1], w.as_slice(), q[2], q[3], q[4], &f) {
+        if let Some(b) = g.best(q[0], q[1], sat, q[2], q[3], q[4], &f) {
             let p = g.points[b.point];
             out.extend_array(&PackedFloat32Array::from(&[b.point as f32, b.value as f32, b.damage as f32, b.landed as f32,
                 b.visited as f32, p.x, p.y, p.z][..]));
@@ -793,7 +798,7 @@ impl ProjectileManager {
     /// unanswered; empty without the table.
     #[func]
     pub(crate) fn point_best_pairs(&self, key: GString, q: PackedFloat64Array, ranges: PackedFloat64Array,
-            aspects: PackedFloat64Array, w: PackedFloat32Array, fires: PackedFloat32Array) -> PackedFloat32Array {
+            aspects: PackedFloat64Array, sat: i64, fires: PackedFloat32Array) -> PackedFloat32Array {
         let mut out = PackedFloat32Array::new();
         let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
         let Some(t) = t else { return out };
@@ -803,12 +808,9 @@ impl ProjectileManager {
         let f: Vec<(Vector3, bool)> = fires.as_slice().chunks_exact(4)
             .map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
         let g = t.read().unwrap();
-        if w.len() < g.n_comp {
-            return out;
-        }
         let mut v = Vec::with_capacity(aspects.len() * 8);
         for (&r, &a) in ranges.as_slice().iter().zip(aspects.as_slice()) {
-            match g.best(r, a, w.as_slice(), q[2], q[3], q[4], &f) {
+            match g.best(r, a, sat, q[2], q[3], q[4], &f) {
                 Some(b) => {
                     let p = g.points[b.point];
                     v.extend_from_slice(&[b.point as f32, b.value as f32, b.damage as f32, b.landed as f32,
@@ -819,13 +821,6 @@ impl ProjectileManager {
         }
         out.extend_array(&PackedFloat32Array::from(v.as_slice()));
         out
-    }
-
-    /// SkillStance._fill_cells natively; see stance_cells::fill.
-    #[func]
-    pub(crate) fn stance_cells(&self, mut e: VarArray, cells: PackedInt32Array, pack: VarDictionary, step_deg: f64)
-            -> PackedInt32Array {
-        stance_cells::fill(self, &mut e, &cells, &pack, step_deg)
     }
 
     /// The built buckets of `key`: bucket index -> PackedFloat32Array (probes).

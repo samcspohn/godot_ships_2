@@ -3,4 +3,6 @@ pub mod secondary;
 pub mod spotting;
 pub mod stance;
 pub mod stance_price;
+pub mod stance_rows;
+pub mod stance_sec;
 pub mod turret;

@@ -14,6 +14,9 @@ const TRAINED_RAD: f64 = 0.01;
 /// Heading search resolution: half a degree.
 const STEPS: usize = 720;
 
+/// SkillStance.SWUNG.
+const SWUNG: f64 = 3.0 * PI / 180.0;
+
 fn diff(from: f64, to: f64) -> f64 {
     wrapf(to - from, -PI, PI)
 }
@@ -139,6 +142,9 @@ impl StanceSim {
         let t = track.as_slice();
         let mut out = VarDictionary::new();
         out.set("slices", &PackedFloat64Array::from(pr.slices(t).as_slice()));
+        if cfg.contains_key("kind2") {
+            out.set("slices2", &PackedFloat64Array::from(pr.slices_k(t, 1).as_slice()));
+        }
         let window = cfg.get("window").and_then(|v| v.try_to::<f64>().ok()).unwrap_or(f64::INFINITY);
         out.set("torps", crate::combat::stance_price::Torps::new(&cfg, pr.dt()).sum(t, window));
         out.set("missing", &pr.missing());
@@ -163,6 +169,73 @@ impl StanceSim {
     }
 
     /// The dodge's pick among cfg.cands, best first (stance_price::dodge_search).
+    /// SkillStance._cut over helm_paths' leg at `from` (`m` points, the first the start; heading in z): `c` = [start x,
+    /// z, goal dir x, z, want, final, swung, then, after_s, reach, clearance, dt]. Returns [steps kept, -1 aground;
+    /// seconds the swing took].
+    #[func]
+    fn cut(paths: PackedVector3Array, from: i64, m: i64, c: PackedFloat64Array, map: Option<Gd<crate::nav::map::NavigationMap>>)
+            -> PackedFloat64Array {
+        let ps = paths.as_slice();
+        let (from, m) = (from.max(0) as usize, m.max(0) as usize);
+        if c.len() < 12 || from + m > ps.len() || m == 0 {
+            return PackedFloat64Array::from(&[-1.0, 0.0][..]);
+        }
+        let c = c.as_slice();
+        let (start, gdir) = (Vector2::new(c[0] as f32, c[1] as f32), Vector2::new(c[2] as f32, c[3] as f32));
+        let (want, mut fin, swung, mut then, after_s, reach, clearance, dt) = (c[4], c[5], c[6] != 0.0, c[7], c[8], c[9], c[10], c[11]);
+        let mb = map.as_ref().map(|g| g.bind());
+        let n = m - 1;
+        let mut swing_k: i64 = -1;
+        let mut first_s = -1.0;
+        let mut after = 0.0;
+        let secs = |swing_k: i64, k: usize, first_s: f64| if first_s >= 0.0 { first_s } else if swing_k >= 0 {
+            (swing_k + 1) as f64 * dt } else { k as f64 * dt };
+        for k in 0..n {
+            let q = ps[from + k + 1];
+            let prev = ps[from + k];
+            let at = Vector2::new(q.x, q.y);
+            if then.is_finite() && (k + 1) as f64 * dt >= after_s {
+                first_s = if swing_k >= 0 { (swing_k + 1) as f64 * dt } else { (k + 1) as f64 * dt };
+                fin = then;
+                then = f64::INFINITY;
+                swing_k = -1;
+                after = 0.0;
+            }
+            if swing_k < 0 && crate::combat::stance_price::adiff(q.z as f64, fin).abs() <= SWUNG {
+                swing_k = k as i64;
+            }
+            if swing_k >= 0 {
+                after += (Vector2::new(q.x - prev.x, q.y - prev.y).length() as f64 / dt) * dt;
+            }
+            if after <= reach && mb.as_ref().map_or(10000.0, |mp| mp.get_distance_impl(at.x, at.y)) < clearance as f32 {
+                return PackedFloat64Array::from(&[-1.0, 0.0][..]);
+            }
+            if (swing_k >= 0 || !swung) && ((at - start).dot(gdir) as f64) >= want {
+                return PackedFloat64Array::from(&[(k + 1) as f64, secs(swing_k, k + 1, first_s)][..]);
+            }
+        }
+        PackedFloat64Array::from(&[n as f64, secs(swing_k, n, first_s)][..])
+    }
+
+    /// stance_sec::add over `steps`: {steps, missing ([job, range, aspect, bearing] each)}.
+    #[func]
+    fn secondaries(cache: Gd<crate::combat::stance_sec::SecCache>, track: PackedFloat64Array, jobs: PackedFloat64Array,
+            field: Option<Gd<crate::nav::reach::ReachField>>, team: i32, dt: f64, steps: PackedFloat32Array) -> VarDictionary {
+        let mut st = steps.to_vec();
+        let fb = field.as_ref().map(|f| f.bind());
+        let missing = crate::combat::stance_sec::add(&cache.bind(), track.as_slice(), jobs.as_slice(), fb.as_deref(), team, dt, &mut st);
+        let mut out = VarDictionary::new();
+        out.set("steps", &PackedFloat32Array::from(st.as_slice()));
+        out.set("missing", &PackedFloat64Array::from(missing.as_slice()));
+        out
+    }
+
+    #[func]
+    fn dodge_prof() -> PackedInt64Array {
+        let v: Vec<i64> = crate::combat::stance_price::DPROF.iter().map(|a| a.load(std::sync::atomic::Ordering::Relaxed) as i64).collect();
+        PackedInt64Array::from(v.as_slice())
+    }
+
     #[func]
     fn dodge_search(cfg: VarDictionary) -> VarDictionary {
         crate::combat::stance_price::dodge_search(&cfg)
