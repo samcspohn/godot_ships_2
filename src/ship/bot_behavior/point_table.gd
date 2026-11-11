@@ -310,27 +310,33 @@ func prune(target: Ship, tol: float = 0.03) -> int:
 
 ## The native job for `shooter`'s `ammo` against `target` (_ProjectileManager.point_job_submit), or {} without
 ## a shell or a range to build at.
-static func runtime_job(shooter: Ship, target: Ship, ammo: int, cells: int = 700) -> Dictionary:
-	var p: GunParams = shooter.artillery_controller.get_params()
+## `sub` >= 0: secondary sub-battery `sub` instead of the main battery.
+static func runtime_job(shooter: Ship, target: Ship, ammo: int, cells: int = 700, sub: int = -1) -> Dictionary:
+	var p: GunParams = shooter.artillery_controller.get_params() if sub < 0 else shooter.secondary_controller.sub_controllers[sub].get_params()
 	var sh: ShellParams = p.shell1 if ammo == 0 else p.shell2
 	if sh == null:
 		return {}
+	var mounts_at := func(r: float) -> Array:
+		if sub < 0:
+			return BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, r)
+		var b = BotGunnery.sec_battery(shooter, sub, r)
+		return [] if b == null else [b]
 	var st: Dictionary = BotGunnery._shell_table(sh)
 	var rs := PackedFloat32Array()
 	var hd := PackedVector2Array()
 	for r in RANGES_M:
-		var mounts: Array = BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, r)
+		var mounts: Array = mounts_at.call(r)
 		if mounts.is_empty() or BotGunnery._shell_at(st, r).is_empty():
 			break
 		rs.append(r)
-		hd.append(BotGunnery.table_half_disp(shooter, mounts[0], r))
+		hd.append(BotGunnery.table_half_disp(shooter, mounts[0], r) if sub < 0 else BotGunnery._half_disp(mounts[0], r))
 	if rs.is_empty():
 		return {}
-	var mc := _mc_samples(BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, rs[0]))
+	var mc := _mc_samples(mounts_at.call(rs[0]))
 	var aspects := PackedFloat64Array()
 	for ai in BotGunnery._aspect_edges().size() - 1:
 		aspects.append(BotGunnery._aspect_center(ai))
-	return {"shell": sh, "shell_r": st["r"], "shell_desc": st["desc"], "shell_v": st["v"],
+	return {"shell": sh, "secondary": sub >= 0, "shell_r": st["r"], "shell_desc": st["desc"], "shell_v": st["v"],
 		"shell_step": BotGunnery.SHELL_RANGE_STEP_M, "ranges": rs, "half_disp": hd,
 		"bias": PackedFloat32Array(LEAD_BIAS_ALONG.get(DamageExpectation.class_name_of(target), [])),
 		"lead": DamageExpectation.lead_sigmas(target), "lead_band": DamageExpectation.LEAD_BAND_M, "aspects": aspects,

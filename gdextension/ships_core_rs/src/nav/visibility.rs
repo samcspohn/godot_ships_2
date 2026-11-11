@@ -300,6 +300,50 @@ impl VisibilityGrid {
         self.is_ready()
     }
 
+    /// SearchedWater.update's stamping over its w x h grid of `cell` from `origin`; friends as [x, z, sensor] each.
+    /// Returns the new times followed by the new distances.
+    #[func]
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_search(vis: Option<Gd<VisibilityGrid>>, t: PackedFloat32Array, d: PackedFloat32Array, w: i32, h: i32,
+            origin: Vector2, cell: f32, friends: PackedFloat32Array, reach: f64, now: f64, forget: f64) -> PackedFloat32Array {
+        let mut t = t.to_vec();
+        let mut dist = d.to_vec();
+        let n_cells = (w * h) as usize;
+        if t.len() != n_cells || dist.len() != n_cells {
+            return PackedFloat32Array::new();
+        }
+        let g = vis.as_ref().map(|v| v.bind());
+        let g = g.as_deref().filter(|v| v.is_ready());
+        for f in friends.as_slice().chunks_exact(3) {
+            let at = Vector2::new(f[0], f[1]);
+            let sensor = f[2] as f64;
+            let n = (reach.max(sensor) / cell as f64).ceil() as i32;
+            let cx = ((at.x - origin.x) / cell).floor() as i32;
+            let cy = ((at.y - origin.y) / cell).floor() as i32;
+            let from = g.and_then(|v| v.cell_of(at));
+            for y in (cy - n).max(0)..(cy + n + 1).min(h) {
+                for x in (cx - n).max(0)..(cx + n + 1).min(w) {
+                    let p = origin + Vector2::new(x as f32 + 0.5, y as f32 + 0.5) * cell;
+                    let mut dd = at.distance_to(p) as f64;
+                    if dd < sensor {
+                        dd = 0.0;
+                    } else if dd >= reach {
+                        continue;
+                    } else if let (Some(v), Some(i)) = (g, from) {
+                        if v.cell_of(p).is_some_and(|j| !v.visible_idx(i, j)) {
+                            continue;
+                        }
+                    }
+                    let k = (y * w + x) as usize;
+                    dist[k] = if now - t[k] as f64 > forget { dd as f32 } else { dist[k].min(dd as f32) };
+                    t[k] = now as f32;
+                }
+            }
+        }
+        t.extend_from_slice(&dist);
+        PackedFloat32Array::from(t.as_slice())
+    }
+
     #[func]
     fn get_info(&self) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -461,11 +505,19 @@ impl VisibilityGrid {
         if !self.is_ready() {
             return d;
         }
+        for c in crate::nav::fight_search::FPROF.iter() {
+            c.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        let t_in = std::time::Instant::now();
         let inp = self.hold_inputs(&enemies, &opts);
         let a = FightArgs::from_opts(&opts);
+        let in_us = t_in.elapsed().as_micros() as i64;
         let held = opts.get("held").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::INF);
         let (best, h, chase, weighed) = self.fight_search_impl(from, held, &inp, &a);
         d.set("cells", weighed as i64);
+        let mut prof = vec![in_us];
+        prof.extend(crate::nav::fight_search::FPROF.iter().map(|c| c.load(std::sync::atomic::Ordering::Relaxed) as i64));
+        d.set("prof", &PackedInt64Array::from(prof.as_slice()));
         if let Some((k, score, c)) = best {
             d.set("found", true);
             d.set("pos", self.centres[k]);

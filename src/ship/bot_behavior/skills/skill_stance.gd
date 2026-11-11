@@ -84,11 +84,9 @@ var _fire_cooldown: float = -INF
 ## after TABLE_TTL_S.
 var _store := StanceRows.new()
 const TABLE_TTL_S: float = 30.0
-## _target_sig of us at the last survey.
-var _me_sig: int = 0
 
-## What a row's cells are built from, beyond range and aspect: our pools and fires (point-table live inputs), our HP
-## (the baked summary's), the shooter's shell read, live guns and whether its tables are done.
+## What a row's cells are built from, beyond range and aspect: our saturation and fires, the shooter's shell read, live
+## guns, whether its tables are done, and before then our HP.
 func _row_sig(shooter: Ship, read: int) -> int:
 	var key := Vector2i(shooter.get_instance_id(), read)
 	var c = _sig_cache.get(key)
@@ -98,7 +96,9 @@ func _row_sig(shooter: Ship, read: int) -> int:
 	if shooter.artillery_controller != null:
 		for g in shooter.artillery_controller.guns:
 			live += int(not g.disabled)
-	var sig := hash([_me_sig, read, live, BotGunnery.point_tables_ready(shooter, _me)])
+	var ready: bool = BotGunnery.point_tables_ready(shooter, _me)
+	# HP only moves the baked fallback the rows use before the shooter's point tables are built.
+	var sig := hash([_me_live[0], read, live, ready, -1 if ready else _me_hpq])
 	_sig_cache[key] = sig
 	return sig
 
@@ -106,14 +106,6 @@ func _row_sig(shooter: Ship, read: int) -> int:
 var _sig_cache: Dictionary = {}
 
 
-static func _target_parts(ship: Ship) -> Array:
-	var hp = ship.health_controller
-	return [BotGunnery.point_sig(ship), roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0]
-
-static func _target_sig(ship: Ship) -> int:
-	var hp = ship.health_controller
-	var q: int = roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0
-	return hash([BotGunnery.point_sig(ship), q])
 var _me: Ship = null
 var _clock: SalvoClock = null
 ## bearing, rows, weight, group (on, by, dark), spread (dark: believed-position radius), reload, next (seconds to its next landing).
@@ -245,8 +237,7 @@ func redodge() -> NavIntent:
 	intent.throttle_override = f[2]
 	intent.force_reverse = f[3]
 	intent.forbid_reverse = f[4]
-	_me_sig = _target_sig(ctx.ship)
-	_sig_cache.clear()
+	_refresh_me(ctx.ship)
 	var hdg: float = ctx.behavior._get_ship_heading()
 	if _base.off:
 		return _dodge_off(intent, ctx, _base.route, hdg)
@@ -1021,10 +1012,12 @@ func _dodge(ctx: SkillContext) -> bool:
 	return out
 
 func _dodge_plan(ctx: SkillContext, ship: Ship, at: Vector2) -> bool:
+	var tp := Time.get_ticks_usec()
 	for sh in _shooters:
 		if is_instance_valid(sh.ship):
-			_store.validate(sh.id, _row_sig(sh.ship, _clock.shell_read(sh.ship) if _clock != null else SalvoClock.SHELL_UNKNOWN),
-				SimClock.now(), TABLE_TTL_S)
+			var read: int = _clock.shell_read(sh.ship) if _clock != null else SalvoClock.SHELL_UNKNOWN
+			if _store.validate(sh.id, _row_sig(sh.ship, read), SimClock.now(), TABLE_TTL_S) > 0:
+				_store.set_live(sh.id, _me_live[1], _me_live[2], read)
 	var cfg := _price_cfg(maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, &"rows", 0.0, {}, 0.0)
 	var bearings := PackedFloat64Array()
 	var cals := PackedFloat64Array()
@@ -1042,6 +1035,8 @@ func _dodge_plan(ctx: SkillContext, ship: Ship, at: Vector2) -> bool:
 		"map": NavigationMapManager.get_map(), "clearance": ctx.behavior._get_ship_clearance(), "at": at,
 		"bearings": bearings, "shell_cal": cals, "shell_dmg": dmgs, "source_match": SalvoClock.SOURCE_MATCH,
 		"price_s": DODGE_PRICE_S, "coef_full": _price_coef(ship, "dodge")}, true)
+	BotTiming.add(&"dp_cfg", tp)
+	tp = Time.get_ticks_usec()
 	var r := {}
 	for i in _MISSING_ROUNDS + 1:
 		r = _planner.plan(cfg, i == _MISSING_ROUNDS)
@@ -1051,6 +1046,7 @@ func _dodge_plan(ctx: SkillContext, ship: Ship, at: Vector2) -> bool:
 			_fill_rows(r.missing_hit)
 		if not (r.missing as PackedFloat64Array).is_empty():
 			_fill_rows(r.missing)
+	BotTiming.add(&"dp_plan", tp)
 	if r.is_empty():
 		return false
 	var out: bool = is_finite(_planner.heading())
@@ -1397,13 +1393,17 @@ func _survey(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
 	_shooters = []
 	_me = ship
-	_me_sig = _target_sig(ship)
-	_sig_cache.clear()
+	var tv := Time.get_ticks_usec()
+	_refresh_me(ship)
 	_clock = ctx.behavior.salvo_clock
+	BotTiming.add(&"sv_sig", tv)
+	tv = Time.get_ticks_usec()
 	_torp_shooters = _torp_survey(ctx)
 	_pack_torps(ship)
+	BotTiming.add(&"sv_torps", tv)
 	if not ship.is_detected() or ship.team == null or ctx.server == null:
 		return false
+	tv = Time.get_ticks_usec()
 	var weight := {}
 	for s in ctx.behavior.active_shooters_at_me.keys():
 		weight[s] = 1.0
@@ -1415,6 +1415,8 @@ func _survey(ctx: SkillContext) -> bool:
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	var ids: PackedInt64Array = field.get_team_enemy_ids(ship.team.team_id) if field != null and field.is_built() else PackedInt64Array()
 	var here: int = field.exposure_mask(ship.team.team_id, Vector2(ship.global_position.x, ship.global_position.z)) if not ids.is_empty() else -1
+	BotTiming.add(&"sv_mask", tv)
+	tv = Time.get_ticks_usec()
 	for e in ctx.server.get_valid_targets(ship.team.team_id):
 		if weight.has(e) or not is_instance_valid(e) or e.artillery_controller == null:
 			continue
@@ -1424,8 +1426,10 @@ func _survey(ctx: SkillContext) -> bool:
 		if tucked and (bit < 0 or bit >= 63 or here & (1 << bit) != 0):
 			continue
 		weight[e] = _switch_chance(ctx, e, Vector2(e.global_position.x, e.global_position.z))
+	BotTiming.add(&"sv_weights", tv)
 	if weight.is_empty():
 		return false
+	tv = Time.get_ticks_usec()
 	var now: float = SimClock.now()
 	var at := Vector2(ship.global_position.x, ship.global_position.z)
 	var belief := {}
@@ -1439,6 +1443,8 @@ func _survey(ctx: SkillContext) -> bool:
 		var pos: Vector2 = Vector2(s.global_position.x, s.global_position.z) if seen or not belief.has(s) else belief[s].pos
 		var b: int = ids.find(s.get_instance_id())
 		_add_shooter(ctx, s, pos, &"on" if float(weight[s]) >= 1.0 else &"by", float(weight[s]), b if b < 63 and seen else -1, 0.0, now)
+	BotTiming.add(&"sv_add_seen", tv)
+	tv = Time.get_ticks_usec()
 	var sources: Dictionary = ctx.server.get_unspotted_enemy_sources(ship.team.team_id)
 	var times: Dictionary = ctx.server.get_unspotted_enemy_times(ship.team.team_id)
 	for b in belief.values():
@@ -1456,14 +1462,18 @@ func _survey(ctx: SkillContext) -> bool:
 		if sources.get(e, "") == GameServer.LKP_SOURCE_GUNFIRE and now - float(times.get(e, -INF)) <= reload * GUNFIRE_ACTIVE_RELOADS:
 			next = fposmod(float(times[e]) - now, reload)
 		_add_shooter(ctx, e, b.pos, &"dark", chance, -1, float(b.spread), now, next)
+	BotTiming.add(&"sv_dark", tv)
 	return _shooters.any(func(sh): return sh.group != &"dark")
 
 
 func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, weight: float, bit: int, spread: float, now: float,
 		next_s: float = NAN) -> void:
+	var ta := Time.get_ticks_usec()
 	var to: Vector2 = pos - Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z)
 	var reach: float = s.artillery_controller.get_params()._range
 	var rows := _rows(ctx.ship, s, minf(to.length(), reach))
+	BotTiming.add(&"sa_rows", ta)
+	ta = Time.get_ticks_usec()
 	if rows.is_empty():
 		return
 	var reload: float = maxf(s.artillery_controller.get_params().reload_time, 0.1)
@@ -1473,6 +1483,7 @@ func _add_shooter(ctx: SkillContext, s: Ship, pos: Vector2, group: StringName, w
 		"bucket": int(minf(to.length(), reach) / RANGE_BUCKET_M),
 		"weight": weight, "group": group, "bit": bit, "spread": spread, "threat": _threat(s, ctx.ship, to.length()),
 		"pos": pos, "range": reach, "reload": reload, "next": next if is_finite(next) else reload * 0.5})
+	BotTiming.add(&"sa_rest", ta)
 
 
 ## No gun on us: true while a target is in reach of guns we will fire or of loaded tubes.
@@ -1503,56 +1514,28 @@ func _ensure(ship: Ship, shooter: Ship, range_m: float, cells: PackedInt32Array 
 	var id := shooter.get_instance_id()
 	var bucket := int(range_m / RANGE_BUCKET_M)
 	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
-	var vr: int = _store.validate(id, _row_sig(shooter, read), SimClock.now(), TABLE_TTL_S)
-	if vr > 0:
-		var why: int = vr / 100000
-		var tp := _target_parts(_me)
-		var parts := [tp[0], tp[1], read, _live_guns(shooter), BotGunnery.point_tables_ready(shooter, _me)]
-		var last: Array = _sig_parts.get(id, [])
-		if why == 3 and last.size() == 5:
-			var tags := ["saturation", "hp", "read", "live", "ready"]
-			for i in 5:
-				if last[i] != parts[i]:
-					BotTiming.add_us(StringName("q_reset_" + tags[i]), vr % 100000)
-		else:
-			BotTiming.add_us(StringName("q_reset_" + ["", "new", "ttl", "sig?"][why]), vr % 100000)
-		_sig_parts[id] = parts
+	var sig := _row_sig(shooter, read)
+	var pm := BotGunnery._projectile_native()
 	var tq := Time.get_ticks_usec()
-	if not _store.has(id, bucket):
-		_store.create(id, bucket, range_m, BotGunnery.calibration(shooter, ship, range_m), read, ASPECTS)
-		BotTiming.add(&"q_create", tq)
-	if not _store.has_pack(id):
-		tq = Time.get_ticks_usec()
-		var pack := BotGunnery.stance_cell_pack(shooter, ship)
-		BotTiming.add(&"q_pack", tq)
-		_store.set_pack(id, pack, read)
-		_pack_keys[id] = pack.keys
-	tq = Time.get_ticks_usec()
-	var notes: PackedInt32Array = _store.fill(BotGunnery._projectile_native(), id, bucket, cells, ASPECT_STEP_DEG)
-	BotTiming.add(&"q_fill_native", tq)
-	if not notes.is_empty():
-		BotTiming.add_us(&"q_cells_filled", notes[0])
-		_w["cells"] = int(_w.get("cells", 0)) + notes[0]
-		BotTiming.add_us(&"q_us_per_cell", (Time.get_ticks_usec() - tq) / maxi(notes[0], 1))
-	tq = Time.get_ticks_usec()
-	for k in range(1, notes.size(), 2):
-		BotGunnery._note_point_batch(notes[0], notes[k], notes[k + 1] == 1, _pack_keys[id][k / 2])
-	BotTiming.add(&"q_notes", tq)
+	if _store.ensure(pm, id, bucket, range_m, sig, SimClock.now(), TABLE_TTL_S, read, _me_live[1], _me_live[2], cells,
+			ASPECT_STEP_DEG, ASPECTS) < 0:
+		_store.set_pack(id, BotGunnery.stance_cell_pack(shooter, ship), read)
+		_store.ensure(pm, id, bucket, range_m, sig, SimClock.now(), TABLE_TTL_S, read, _me_live[1], _me_live[2], cells,
+			ASPECT_STEP_DEG, ASPECTS)
+	BotTiming.add(&"q_ensure", tq)
 	return bucket
 
 
-var _sig_parts: Dictionary = {}
+## Our point-table live inputs (BotGunnery._pt_live_inputs: [point_sig, saturation mask, fires]) and HP step, as of the
+## last survey or redodge.
+var _me_live: Array = [0, 0, PackedFloat32Array()]
+var _me_hpq: int = 0
 
-func _live_guns(shooter: Ship) -> int:
-	var live := 0
-	if shooter.artillery_controller != null:
-		for g in shooter.artillery_controller.guns:
-			live += int(not g.disabled)
-	return live
-
-
-## Per shooter id, the point-table keys of the pack the store holds (for _note_point_batch).
-var _pack_keys: Dictionary = {}
+func _refresh_me(ship: Ship) -> void:
+	_me_live = BotGunnery._pt_live_inputs(ship, 0.0)
+	var hp = ship.health_controller
+	_me_hpq = roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0
+	_sig_cache.clear()
 
 
 ## `sh`'s rows (&"rows", &"raw" or &"hit": damage per hit over alpha) at `dist` from it, out to its reach; empty unknown.
@@ -1690,11 +1673,25 @@ func _duel_priced(ctx: SkillContext, hdg: float, t: Ship, arty, d: float, tc: To
 	var scores := {}
 	var best := "lie"
 	var best_score := -INF
+	var scored: Array = []
 	for name in tracks:
-		var t_sc := Time.get_ticks_usec()
-		var sc: float = -INF if safe and lethal[name] else _duel_score(ctx, t, tracks[name])
-		BotTiming.add(&"st_duel_score", t_sc)
-		_part("duel_score", t_sc)
+		if not (safe and lethal[name]):
+			scored.append(name)
+	var t_sc := Time.get_ticks_usec()
+	var res := _duel_scores(ctx, t, tracks, scored)
+	BotTiming.add(&"st_duel_scores", t_sc)
+	_part("duel_score", t_sc)
+	for name in tracks:
+		var sc: float = -INF
+		if res.has(name):
+			var r: PackedFloat64Array = res[name]
+			sc = r[0]
+			_last_pred_d = r[1]
+			_last_pred_t = r[2]
+			_last_kill_s = r[3]
+			_last_die_s = r[4]
+			_last_dealt = r[5]
+			_last_taken = r[6]
 		if is_finite(sc) and late.has(name):
 			sc -= maxf(float(late.net) - sc / DUEL_WINDOW_S, 0.0) * float(late[name])
 		scores[name] = sc
@@ -1812,131 +1809,50 @@ func _option_track(ctx: SkillContext, hdg: float, h: float, throttle: float, the
 	return _helm_cut(ctx, [[bow, throttle, 0.0, then, after_s]], DUEL_WINDOW_S,
 		[[Vector2(ctx.ship.global_position.x, ctx.ship.global_position.z), Vector2.ZERO, INF, bow, true, then, after_s]])[0][0]
 
-func _duel_score(ctx: SkillContext, t: Ship, track: Array) -> float:
+## Each of `names` in `tracks` scored in one native call: name -> [score, pred dealt, pred taken, kill s, die s,
+## dealt share, taken share].
+func _duel_scores(ctx: SkillContext, t: Ship, tracks: Dictionary, names: Array) -> Dictionary:
+	if names.is_empty():
+		return {}
 	var ship: Ship = ctx.ship
 	var arty = ship.artillery_controller
 	var gp: GunParams = arty.get_params()
-	var tq := Time.get_ticks_usec()
-	var n: int = track.size()
-	var pos := PackedVector2Array()
-	var hdgs := PackedFloat32Array()
-	var tpos := PackedVector2Array()
-	var t0 := Vector2(t.global_position.x, t.global_position.z)
-	var tv := Vector2(t.linear_velocity.x, t.linear_velocity.z)
-	for k in n:
-		pos.append(track[k][0])
-		hdgs.append(float(track[k][1]))
-		tpos.append(t0 + tv * (k + 1) * ESCAPE_DT)
-	var at0 := Vector2(ship.global_position.x, ship.global_position.z)
-	var hdg0: float = ctx.behavior._get_ship_heading()
-	BotTiming.add(&"ds_prep", tq)
-	tq = Time.get_ticks_usec()
-	var masks: PackedInt64Array = StanceSim.track_bearing(arty.guns, at0, hdg0, pos, hdgs, tpos, gp.traverse_speed, ESCAPE_DT) \
-		if _guns_free(ctx) else PackedInt64Array()
-	BotTiming.add(&"ds_bearing", tq)
-	tq = Time.get_ticks_usec()
-	var live := 0
 	var ready := PackedFloat32Array()
+	var live := 0
 	for g in arty.guns:
 		ready.append(INF if g.disabled else (1.0 - clampf(g.reload, 0.0, 1.0)) * gp.reload_time)
 		live += 0 if g.disabled else 1
-	var hp_t: float = maxf(t.health_controller.current_hp, 1.0)
-	var dealt := PackedFloat32Array()
-	dealt.resize(n)
-	var fire_k := PackedInt32Array()
-	var fire_n := PackedInt32Array()
-	var ranges := PackedFloat64Array()
-	for k in mini(n, masks.size()):
-		var time: float = (k + 1) * ESCAPE_DT
-		var d: float = pos[k].distance_to(tpos[k])
-		if d > gp._range or masks[k] == 0:
-			continue
-		var guns := 0
-		for i in ready.size():
-			if ready[i] <= time and masks[k] & (1 << i) != 0:
-				guns += 1
-				ready[i] = time + gp.reload_time
-		if guns > 0:
-			fire_k.append(k)
-			fire_n.append(guns)
-			ranges.append(d)
-	if not fire_k.is_empty():
-		# As dps_curve and the trade price it: the target angled to bear its guns, not as it lies now.
-		var asp: float = BotBehavior.guns_bear_aspect(t)
-		var aspects := PackedFloat64Array()
-		aspects.resize(ranges.size())
-		aspects.fill(asp)
-		var pts: Array = BotGunnery.expected_points_pairs(ship, t, ranges, aspects) if BotGunnery.point_tables_on() else []
-		for j in fire_k.size():
-			var d: float = ranges[j]
-			var per_gun: float = maxf(_expected_of(pts[j] if not pts.is_empty() else {}, t, ship, d, asp).x, 0.0) \
-				* DamageExpectation.salvo_factor(ship, t, d, asp) * gp.reload_time / maxf(live, 1)
-			for g in fire_n[j]:
-				dealt[fire_k[j]] += per_gun
-	BotTiming.add(&"ds_points", tq)
-	tq = Time.get_ticks_usec()
-	_add_torpedoes(ctx, t, at0, hdg0, pos, hdgs, tpos, dealt)
-	BotTiming.add(&"ds_torps", tq)
-	tq = Time.get_ticks_usec()
-	var flat := _pack_track(track)
+	var price := _price_cfg(maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, &"raw", INF, {}, 0.0)
+	price["dark_w"] = DamageExpectation.DARK_TAKEN[mini(ship.ship_class, 2)]
+	var free := _guns_free(ctx)
+	var asp: float = BotBehavior.guns_bear_aspect(t)
+	var cfg := {"price": price, "dt": ESCAPE_DT, "guns_free": free, "guns": arty.guns,
+		"pos0": Vector2(ship.global_position.x, ship.global_position.z), "hdg0": ctx.behavior._get_ship_heading(),
+		"traverse": gp.traverse_speed, "ready": ready, "live": live, "range": gp._range, "reload": gp.reload_time,
+		"t0": Vector2(t.global_position.x, t.global_position.z), "tv": Vector2(t.linear_velocity.x, t.linear_velocity.z),
+		"t_id": t.get_instance_id(), "hp_t": maxf(t.health_controller.current_hp, 1.0), "hp": maxf(ctx.behavior.trade_hp(), 1.0),
+		"cal": calibration(ship, t), "asp": asp, "pb": BotBehavior.POINT_BLANK_M, "curve_step": BotBehavior.DESIRED_STEP_M,
+		"team": ship.team.team_id, "field": NavigationMapManager.get_reach_field(), "window": DUEL_WINDOW_S}
+	if free:
+		var g_pack: Array = _gun_pack(ship, t, asp)
+		cfg["gpack"] = g_pack[0]
+		cfg["affine"] = g_pack[1]
+	var tc: TorpedoController = _tubes(ctx)
+	if tc != null:
+		var lp: TorpedoLauncherParams = tc.get_params()
+		var tr := PackedFloat32Array()
+		for l in tc.launchers:
+			tr.append(INF if l.disabled else (1.0 - clampf(l.reload, 0.0, 1.0)) * lp.reload_time)
+		cfg.merge({"tubes": tc.launchers, "tube_traverse": lp.traverse_speed, "tube_ready": tr, "tube_reload": lp.reload_time,
+			"tube_speed": maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0),
+			"tube_curve": BotBehavior.torpedo_curve(ship, t), "tube_range": tc.get_max_range(), "tube_count": tc.launchers.size()})
+	var ships: Array = []
 	if is_instance_valid(ship.secondary_controller):
 		var tv0 := Vector2(t.linear_velocity.x, t.linear_velocity.z)
-		dealt = _secondaries(flat, PackedFloat64Array([ship.get_instance_id(), t.get_instance_id(),
-			ship.secondary_controller.get_max_range(), 1.0, 1, 0.0, t0.x, t0.y, tv0.x, tv0.y, -1, n,
-			BotBehavior.guns_bear_aspect(t)]), [[ship, t]], ship.team.team_id, dealt)
-	BotTiming.add(&"ds_sec_out", tq)
-	tq = Time.get_ticks_usec()
-	var sum := 0.0
-	var kill_t := INF
-	for k in n:
-		sum += dealt[k]
-		if sum >= hp_t:
-			kill_t = (k + 1) * ESCAPE_DT
-			break
-	# Unlearned, as dealt is: the learned turn-out prices only one side of the trade.
-	BotTiming.add(&"ds_kill", tq)
-	tq = Time.get_ticks_usec()
-	var taken := _track_incoming(track, maxf(ship.movement_controller.max_speed, 1.0), ship.team.team_id, {t.get_instance_id(): kill_t}, ship.ship_class)
-	BotTiming.add(&"ds_incoming", tq)
-	tq = Time.get_ticks_usec()
-	taken = _add_secondaries_in(ship, flat, track.size(), t, kill_t, taken)
-	BotTiming.add(&"ds_sec_in", tq)
-	var hp: float = maxf(ctx.behavior.trade_hp(), 1.0)
-	_last_pred_d = minf(Array(dealt).reduce(func(a, x): return a + x, 0.0), hp_t)
-	_last_pred_t = Array(taken).reduce(func(a, x): return a + x, 0.0)
-	var cal := calibration(ship, t)
-	for k in n:
-		dealt[k] *= cal.x
-		taken[k] *= cal.y
-	var out := 0.0
-	var inn := 0.0
-	var die_k := -1
-	var kill_k := -1
-	for k in n:
-		out += dealt[k]
-		inn += taken[k]
-		if out >= hp_t:
-			kill_k = k
-			break
-		if inn >= hp:
-			die_k = k
-			break
-	_last_dealt = minf(out / hp_t, 1.0)
-	_last_taken = minf(inn / hp, 1.0)
-	# Sunk inside the window: the sooner, the worse; past it, escapes and heals still count.
-	var lost: float = (DUEL_WINDOW_S - (die_k + 1) * ESCAPE_DT) / DUEL_WINDOW_S if die_k >= 0 else 0.0
-	# Sinking it inside the window: the sooner, the better; its guns and its friends' spotting stop with it.
-	var won: float = (DUEL_WINDOW_S - (kill_k + 1) * ESCAPE_DT) / DUEL_WINDOW_S if kill_k >= 0 else 0.0
-	_last_kill_s = (kill_k + 1) * ESCAPE_DT if kill_k >= 0 else INF
-	_last_die_s = (die_k + 1) * ESCAPE_DT if die_k >= 0 else INF
-	return _last_dealt - _last_taken - lost + won
-
-## Secondaries of the shooters on us added to `taken` along `flat` (_pack_track, `n` steps), at the aspect we show each
-## and the bearing it shows us, as _track_incoming books its guns: none behind land from it, the unspotted at DARK_TAKEN;
-## `t` where it is going and silent once it sinks.
-func _add_secondaries_in(ship: Ship, flat: PackedFloat64Array, n: int, t: Ship, kill_t: float, taken: PackedFloat32Array) -> PackedFloat32Array:
+		cfg["sec_out"] = PackedFloat64Array([ship.get_instance_id(), t.get_instance_id(), ship.secondary_controller.get_max_range(),
+			1.0, 1, 0.0, t.global_position.x, t.global_position.z, tv0.x, tv0.y, -1, _ALL_STEPS, asp])
+		ships.append([ship, t])
 	var jobs := PackedFloat64Array()
-	var ships: Array = []
 	for sh in _shooters:
 		var e: Ship = sh.get("ship")
 		if not is_instance_valid(e) or not is_instance_valid(e.secondary_controller):
@@ -1947,79 +1863,87 @@ func _add_secondaries_in(ship: Ship, flat: PackedFloat64Array, n: int, t: Ship, 
 		if e == t:
 			ep = Vector2(t.global_position.x, t.global_position.z)
 			ev = Vector2(t.linear_velocity.x, t.linear_velocity.z)
-		var stop: int = mini(n, int(kill_t / ESCAPE_DT) if e == t and is_finite(kill_t) else n)
 		jobs.append_array([e.get_instance_id(), ship.get_instance_id(), e.secondary_controller.get_max_range(), w, 0,
-			atan2(-e.global_transform.basis.z.x, -e.global_transform.basis.z.z), ep.x, ep.y, ev.x, ev.y, int(sh.bit), stop, 0.0])
+			atan2(-e.global_transform.basis.z.x, -e.global_transform.basis.z.z), ep.x, ep.y, ev.x, ev.y, int(sh.bit), _ALL_STEPS, 0.0])
 		ships.append([e, ship])
-	if jobs.is_empty():
-		return taken
-	return _secondaries(flat, jobs, ships, ship.team.team_id, taken)
+	if not jobs.is_empty():
+		cfg["sec_in"] = jobs
+	for pair in ships:
+		_sec_ready(pair[0], pair[1])
+	var flats: Array = []
+	for name in names:
+		flats.append(_pack_track(tracks[name]))
+		_w["incoming"] = int(_w.get("incoming", 0)) + 1
+	var pm := BotGunnery._projectile_native()
+	var r: Dictionary = StanceSim.duel_scores(_sec_cache, pm, flats, cfg)
+	for i in _MISSING_ROUNDS:
+		var rows: PackedFloat64Array = r.rows
+		var miss: PackedFloat64Array = r.sec
+		if rows.is_empty() and miss.is_empty():
+			break
+		if not rows.is_empty():
+			_fill_rows(rows)
+		if not miss.is_empty():
+			_fill_sec(ships, miss)
+		r = StanceSim.duel_scores(_sec_cache, pm, flats, cfg)
+	var o: PackedFloat64Array = r.out
+	var out := {}
+	for j in names.size():
+		out[names[j]] = o.slice(j * 7, j * 7 + 7)
+	return out
+
+## Past any track's end: the job runs the whole track.
+const _ALL_STEPS := 1000000
+
+## The secondary cells stance_sec reported missing ([job, range, aspect, bearing, sat] each), `ships` [shooter, target] per job.
+static func _fill_sec(ships: Array, miss: PackedFloat64Array) -> void:
+	var q := PackedFloat64Array()
+	var v := PackedFloat32Array()
+	for j in range(0, miss.size(), 5):
+		var pair: Array = ships[int(miss[j])]
+		var e: Dictionary = BotGunnery.expected(pair[0], pair[1], miss[j + 1], miss[j + 2], BotGunnery.KIND_SECONDARY, miss[j + 3])
+		q.append_array([(pair[0] as Ship).get_instance_id(), (pair[1] as Ship).get_instance_id(), miss[j + 4], miss[j + 1],
+			miss[j + 2], miss[j + 3]])
+		v.append(maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0))))
+	_sec_cache.put(q, v)
+
+## [stance_cell_pack of our guns on `t`, salvo_affine at `asp`], built once per target state and aspect.
+var _gun_pack_at: Array = []
+
+func _gun_pack(ship: Ship, t: Ship, asp: float) -> Array:
+	var sig := [t.get_instance_id(), BotGunnery.point_sig(t), DamageExpectation.aspect_band(asp), SimClock.now()]
+	if _gun_pack_at.size() == 3 and _gun_pack_at[0] == sig:
+		return [_gun_pack_at[1], _gun_pack_at[2]]
+	var bands: int = int(ship.artillery_controller.get_params()._range / DamageExpectation.RANGE_BAND_M) + 2
+	_gun_pack_at = [sig, BotGunnery.stance_cell_pack(ship, t), DamageExpectation.salvo_affine(ship, t, bands, asp)]
+	return [_gun_pack_at[1], _gun_pack_at[2]]
 
 
-## BotBehavior._secondary_dps's cells for the native duel secondaries, shared by every bot.
+## Secondary dps cells from the secondary point tables (BotBehavior._secondary_dps), shared by every bot.
 static var _sec_cache := SecCache.new()
 
-## `jobs`' secondaries (stance_sec) added into `steps` along `flat`; `ships` [shooter, target] per job fills the cells
-## the cache lacks.
-func _secondaries(flat: PackedFloat64Array, jobs: PackedFloat64Array, ships: Array, team_id: int, steps: PackedFloat32Array) -> PackedFloat32Array:
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	var r: Dictionary = StanceSim.secondaries(_sec_cache, flat, jobs, field, team_id, ESCAPE_DT, steps)
-	for i in _MISSING_ROUNDS:
-		var miss: PackedFloat64Array = r.missing
-		if miss.is_empty():
-			break
-		var q := PackedFloat64Array()
-		var v := PackedFloat32Array()
-		for j in range(0, miss.size(), 4):
-			var pair: Array = ships[int(miss[j])]
-			var e: Dictionary = BotGunnery.expected(pair[0], pair[1], miss[j + 1], miss[j + 2], BotGunnery.KIND_SECONDARY, miss[j + 3])
-			q.append_array([(pair[0] as Ship).get_instance_id(), (pair[1] as Ship).get_instance_id(), miss[j + 1], miss[j + 2], miss[j + 3]])
-			v.append(maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0))))
-		_sec_cache.put(q, v)
-		r = StanceSim.secondaries(_sec_cache, flat, jobs, field, team_id, ESCAPE_DT, steps)
-	return r.steps
+## `shooter`'s secondaries' pack on `target` set in _sec_cache for its state now.
+static func _sec_ready(shooter: Ship, target: Ship) -> void:
+	var sig := hash([BotGunnery.point_sig(target), BotGunnery._rt_keys.size()])
+	if not _sec_cache.has_pack(shooter.get_instance_id(), target.get_instance_id(), sig):
+		_sec_cache.set_pack(shooter.get_instance_id(), target.get_instance_id(), sig, BotGunnery.sec_pack(shooter, target))
 
-## Our spreads into `dealt`: each launcher once loaded and trained, its share of torpedo_curve (the
-## target's dodge priced in) landing a run's time after launch.
-func _add_torpedoes(ctx: SkillContext, t: Ship, at0: Vector2, hdg0: float, pos: PackedVector2Array, hdgs: PackedFloat32Array,
-		tpos: PackedVector2Array, dealt: PackedFloat32Array) -> void:
-	var tc: TorpedoController = _tubes(ctx)
-	if tc == null:
-		return
-	var lp: TorpedoLauncherParams = tc.get_params()
-	var masks: PackedInt64Array = StanceSim.track_bearing(tc.launchers, at0, hdg0, pos, hdgs, tpos, lp.traverse_speed, ESCAPE_DT)
-	var speed: float = maxf(tc.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
-	var curve := BotBehavior.torpedo_curve(ctx.ship, t)
-	var ready := PackedFloat32Array()
-	for l in tc.launchers:
-		ready.append(INF if l.disabled else (1.0 - clampf(l.reload, 0.0, 1.0)) * lp.reload_time)
-	for k in mini(dealt.size(), masks.size()):
-		var time: float = (k + 1) * ESCAPE_DT
-		var d: float = pos[k].distance_to(tpos[k])
-		if d > tc.get_max_range() or masks[k] == 0:
-			continue
-		var land: int = k + int(d / speed / ESCAPE_DT)
-		var per: float = BotBehavior._curve_at(curve, d) / tc.launchers.size()
-		for i in ready.size():
-			if ready[i] <= time and masks[k] & (1 << i) != 0:
-				ready[i] = time + lp.reload_time
-				if land < dealt.size():
-					dealt[land] += per
+## _secondary_dps from the secondary point tables; NAN while they cannot answer.
+static func sec_dps(shooter: Ship, target: Ship, range_m: float, aspect_deg: float, bearing_deg: float) -> float:
+	_sec_ready(shooter, target)
+	return _sec_cache.dps(BotGunnery._projectile_native(), shooter.get_instance_id(), target.get_instance_id(), range_m,
+		aspect_deg, bearing_deg)
 
-## Raw HP landing on us at each step of `track`, as _track_slices books it (unspotted shooters at DARK_TAKEN).
-func _track_incoming(track: Array, vmax: float, team_id: int, stops: Dictionary, ship_class: int) -> PackedFloat32Array:
-	var flat := _pack_track(track)
-	var cfg := _price_cfg(vmax, team_id, &"raw", INF, stops, 0.0)
-	cfg["dark_w"] = DamageExpectation.DARK_TAKEN[mini(ship_class, 2)]
-	var r: Dictionary = StanceSim.track_incoming(flat, cfg)
-	_w["incoming"] = int(_w.get("incoming", 0)) + 1
-	for i in _MISSING_ROUNDS:
-		if (r.missing as PackedFloat64Array).is_empty():
-			break
-		_fill_rows(r.missing)
-		r = StanceSim.track_incoming(flat, cfg)
-	return r.steps
-
+## _secondary_dps at each of `ranges`; NAN where the secondary tables cannot answer.
+static func sec_curve(shooter: Ship, target: Ship, ranges: PackedFloat64Array, aspect_deg: float) -> PackedFloat32Array:
+	var sec = shooter.secondary_controller
+	if not is_instance_valid(sec):
+		var none := PackedFloat32Array()
+		none.resize(ranges.size())
+		return none
+	_sec_ready(shooter, target)
+	return _sec_cache.curve(BotGunnery._projectile_native(), shooter.get_instance_id(), target.get_instance_id(), ranges,
+		aspect_deg, BotBehavior.guns_bear_aspect(shooter), sec.get_max_range())
 
 ## Real over predicted damage per "<our class>><target class>", fitted by tools/botmatch/duel_cal.py from
 ## duel_cal probes: x scales what we deal, y what we take. Shrunk toward the all-pairs fit by CAL_PRIOR_N probes.

@@ -142,12 +142,29 @@ impl PtTable {
     #[allow(clippy::too_many_arguments)]
     pub fn best(&self, range_m: f64, aspect_deg: f64, sat: i64, damage: f64, raw_fire: f64, fire_k: f64,
             fires: &[(Vector3, bool)]) -> Option<Best> {
+        let roles = self.roles(range_m, aspect_deg, sat, damage, raw_fire, fire_k, fires)?;
+        let visited = roles.iter().flatten().count();
+        let mut best: Option<Best> = None;
+        for b in roles.into_iter().flatten() {
+            if best.as_ref().is_none_or(|x| b.value > x.value) {
+                best = Some(b);
+            }
+        }
+        best.map(|mut b| {
+            b.visited = visited;
+            b
+        })
+    }
+
+    /// Each role's blended value at its heaviest corner's point; None where a corner lacks the role.
+    #[allow(clippy::too_many_arguments)]
+    pub fn roles(&self, range_m: f64, aspect_deg: f64, sat: i64, damage: f64, raw_fire: f64, fire_k: f64,
+            fires: &[(Vector3, bool)]) -> Option<[Option<Best>; ROLES]> {
         let cs = self.corners(range_m, aspect_deg)?;
         let m = (sat.max(0) as usize) & (MASKS - 1);
         let heavy = cs.iter().max_by(|a, b| a.1.total_cmp(&b.1))?.0;
-        let mut best: Option<Best> = None;
-        let mut visited = 0;
-        for r in 0..ROLES {
+        let mut out: [Option<Best>; ROLES] = Default::default();
+        for (r, slot) in out.iter_mut().enumerate() {
             let mut v = 0.0f64;
             let mut l = 0.0f64;
             let mut ok = true;
@@ -164,7 +181,6 @@ impl PtTable {
             if !ok || k == NO_POINT {
                 continue;
             }
-            visited += 1;
             let p = self.points[k as usize];
             let chance = if fire_k <= 0.0 {
                 0.0
@@ -175,14 +191,8 @@ impl PtTable {
                 if near.is_some_and(|f| f.1) { 0.0 } else { raw_fire }
             };
             let dmg = v * damage;
-            let val = dmg + chance * fire_k * l;
-            if best.as_ref().is_none_or(|b| val > b.value) {
-                best = Some(Best { point: k as usize, value: val, damage: dmg, landed: l, visited: 0 });
-            }
+            *slot = Some(Best { point: k as usize, value: dmg + chance * fire_k * l, damage: dmg, landed: l, visited: 0 });
         }
-        best.map(|mut b| {
-            b.visited = visited;
-            b
-        })
+        Some(out)
     }
 }

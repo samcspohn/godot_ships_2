@@ -77,13 +77,14 @@ static func salvo_factor(shooter: Ship, target: Ship, range_m: float, aspect_deg
 
 
 ## salvo_factor at any aspect as root -> a + b * root per range band (`bands` of them): [a0, b0, a1, b1, ...].
-static func salvo_affine(shooter: Ship, target: Ship, bands: int) -> PackedFloat64Array:
+static func salvo_affine(shooter: Ship, target: Ship, bands: int, aspect_deg: float = NAN) -> PackedFloat64Array:
 	var out := PackedFloat64Array()
 	var t := table()
+	var a := aspect_band(aspect_deg)
 	for b in bands:
 		var ab := PackedFloat64Array([0.0, 1.0])
 		if not t.is_empty():
-			var tail := "%d|*" % b
+			var tail := "%d|%s" % [b, "*" if a < 0 else str(a)]
 			ab = _shrink_affine((t.salvo_class as Dictionary).get("%s|%s|%s" % [class_name_of(shooter), class_name_of(target), tail], {}), ab)
 			ab = _shrink_affine((t.salvo_pair as Dictionary).get("%s|%s|%s" % [shooter.ship_name, target.ship_name, tail], {}), ab)
 		out.append_array(ab)

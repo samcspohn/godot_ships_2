@@ -41,9 +41,40 @@ impl StanceRows {
             Some(s) if s.sig != sig => 3,
             _ => return 0,
         };
-        let dropped = self.by.get(&id).map_or(0, |s| s.buckets.len()) as i64;
-        self.by.insert(id, Shooter { sig, t: now, buckets: HashMap::new(), pack: None });
+        let old = self.by.remove(&id);
+        let dropped = old.as_ref().map_or(0, |s| s.buckets.len()) as i64;
+        // The pack is the shooter's and the target's fixed inputs; set_live keeps its live ones current.
+        self.by.insert(id, Shooter { sig, t: now, buckets: HashMap::new(), pack: old.and_then(|s| s.pack) });
         why * 100000 + dropped
+    }
+
+    /// The target's saturation mask and fires ([x, y, z, burning] each) and the shooter's shell read in `id`'s pack.
+    #[func]
+    fn set_live(&mut self, id: i64, sat: i64, fires: PackedFloat32Array, read: i64) {
+        if let Some((p, r)) = self.by.get_mut(&id).and_then(|s| s.pack.as_mut()) {
+            p.sat = sat;
+            p.fires = fires.as_slice().chunks_exact(4).map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
+            *r = read;
+        }
+    }
+
+    /// _ensure in one call: validate under `sig`, the live inputs set after a reset, `bucket` built at `range` when
+    /// absent and `cells` filled. -1 without a pack (set_pack, then call again), else validate's answer.
+    #[func]
+    #[allow(clippy::too_many_arguments)]
+    fn ensure(&mut self, pm: Gd<ProjectileManager>, id: i64, bucket: i32, range: f64, sig: i64, now: f64, ttl: f64, read: i64,
+            sat: i64, fires: PackedFloat32Array, cells: PackedInt32Array, step_deg: f64, n_asp: i64) -> i64 {
+        if !self.by.get(&id).is_some_and(|s| s.pack.is_some()) {
+            return -1;
+        }
+        let why = self.validate(id, sig, now, ttl);
+        if why > 0 {
+            self.set_live(id, sat, fires, read);
+        }
+        if !self.ensure_cells(&pm.bind(), id, bucket, range, cells.as_slice(), step_deg, n_asp.max(0) as usize) {
+            return -1;
+        }
+        why
     }
 
     #[func]
@@ -58,9 +89,8 @@ impl StanceRows {
 
     #[func]
     fn set_pack(&mut self, id: i64, pack: VarDictionary, read: i64) {
-        if let Some(s) = self.by.get_mut(&id) {
-            s.pack = Some((Pack::read(&pack), read));
-        }
+        let s = self.by.entry(id).or_insert_with(|| Shooter { sig: i64::MIN, t: f64::NEG_INFINITY, buckets: HashMap::new(), pack: None });
+        s.pack = Some((Pack::read(&pack), read));
     }
 
     /// An empty `bucket`, its cells built at `range` under `cal` and shell read `read`.
@@ -111,6 +141,13 @@ impl StanceRows {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn ensure_cell(&mut self, pm: &ProjectileManager, id: i64, bucket: i32, range: f64, a: usize, step_deg: f64,
             n_asp: usize) -> bool {
+        self.ensure_cells(pm, id, bucket, range, &[a as i32], step_deg, n_asp)
+    }
+
+    /// ensure_cell over every aspect index in `cells`, one point-table pass.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ensure_cells(&mut self, pm: &ProjectileManager, id: i64, bucket: i32, range: f64, cells: &[i32], step_deg: f64,
+            n_asp: usize) -> bool {
         let Some(s) = self.by.get_mut(&id) else { return false };
         let Some((pack, read)) = s.pack.as_ref() else { return false };
         if !s.buckets.contains_key(&bucket) {
@@ -120,7 +157,7 @@ impl StanceRows {
         }
         let b = s.buckets.get_mut(&bucket).unwrap();
         let Some(row) = b.cells.as_mut() else { return true };
-        let (known, _) = fill_cells(pm, row, b.range, b.cal, b.read, pack, step_deg, &[a as i32]);
+        let (known, _) = fill_cells(pm, row, b.range, b.cal, b.read, pack, step_deg, cells);
         if !known {
             b.cells = None;
         }

@@ -40,26 +40,17 @@ func update(friends: Array[Ship], reach: float, now: float, vis: VisibilityGrid)
 	if now < _next:
 		return
 	_next = now + UPDATE_S
+	var t0 := Time.get_ticks_usec()
+	var at := PackedFloat32Array()
 	for f in friends:
 		if not is_instance_valid(f) or not f.is_alive() or f.concealment == null or f.concealment.params == null:
 			continue
 		var cp := f.concealment.params.p() as ConcealmentParams
-		var sensor: float = maxf(maxf(cp.spotting_range_override, cp.radar_spotting_range_override), 0.0)
-		var at := Vector2(f.global_position.x, f.global_position.z)
-		var r: float = maxf(reach, sensor)
-		var c := _cell(at)
-		var n: int = ceili(r / CELL_M)
-		for y in range(maxi(c.y - n, 0), mini(c.y + n + 1, _h)):
-			for x in range(maxi(c.x - n, 0), mini(c.x + n + 1, _w)):
-				var p := _centre(x, y)
-				var d: float = at.distance_to(p)
-				if d < sensor:
-					d = 0.0
-				elif d >= reach or (vis != null and vis.is_built() and not vis.visible(at, p)):
-					continue
-				var k: int = y * _w + x
-				_d[k] = d if now - _t[k] > FORGET_S else minf(_d[k], d)
-				_t[k] = now
+		at.append_array([f.global_position.x, f.global_position.z, maxf(maxf(cp.spotting_range_override, cp.radar_spotting_range_override), 0.0)])
+	var out := VisibilityGrid.stamp_search(vis, _t, _d, _w, _h, BOUNDS.position, CELL_M, at, reach, now, FORGET_S)
+	_t = out.slice(0, _w * _h)
+	_d = out.slice(_w * _h)
+	BotTiming.add(&"sw_update", t0)
 
 ## A hider of concealment `conceal` would have been found at `p` by a search since `since`.
 func cleared(p: Vector2, conceal: float, since: float, now: float) -> bool:
@@ -73,6 +64,7 @@ func cleared(p: Vector2, conceal: float, since: float, now: float) -> bool:
 func relocate(p: Vector2, conceal: float, since: float, now: float) -> Vector2:
 	if not cleared(p, conceal, since, now):
 		return p
+	var t0 := Time.get_ticks_usec()
 	var c := _cell(p)
 	for o in _rings:
 		var x: int = c.x + o.x
@@ -81,7 +73,9 @@ func relocate(p: Vector2, conceal: float, since: float, now: float) -> Vector2:
 			continue
 		var q := _centre(x, y)
 		if not cleared(q, conceal, since, now) and NavigationMapManager.get_distance(Vector3(q.x, 0.0, q.y)) > 0.0:
+			BotTiming.add(&"sw_relocate", t0)
 			return q
+	BotTiming.add(&"sw_relocate", t0)
 	return p
 
 func _cell(p: Vector2) -> Vector2i:

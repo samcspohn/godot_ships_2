@@ -119,6 +119,95 @@ p99 ~9-10 ms, turn/astern p50 2.4 ms.
 | route/lie p50 / p99 | 0.78-0.85 / 3.6-3.9 ms | 0.39-0.44 / 0.8-0.9 ms |
 | duel reprice p50 / p99 | 3.0-3.1 / 9.7-11.6 ms | 2.4-2.7 / 8.6-9.0 ms |
 
+## Stance round 4 (2026-11-10)
+
+- Duel: our gun damage per firing step in one native call (stance_cell_pack us -> target, aspect-band salvo_affine);
+  secondaries from secondary point tables (worker-built per sub-battery shell x enemy hull, behind main jobs; SecCache
+  pack per pair, cells keyed by saturation mask). Duel reprice p99 8.6-9.0 -> 4.7-5.4 ms.
+- Survey: StanceRows.ensure (validate + create with native calibration + fill) in one call; packs survive row resets,
+  set_live updates saturation/fires/read; our HP left out of the row key once the shooter's tables are built.
+  Survey p99 2.0-2.3 -> 1.07-1.10 ms.
+- Dodge: hull at 4 Hz to the first whole second past the horizon, then 1 Hz through the 20 s price window.
+  Native search 1.0 -> 0.45 ms; dodge plan p99 4.5-4.9 -> 1.5 ms.
+- Warm (2.4 s here): damage models 678 ms, native grids 671, dps curves 602, point jobs 362, shells 38.
+- A/B 66 vs 29 dodge candidates, wotan_dm_open 100 v 100: 29 lets Wotan land 19% more per salvo, DM dies ~57 s
+  sooner and deals 12% less; CPU per sim second identical. Kept 66.
+
+## Priorities (2026-11-10)
+
+update_priorities mean 1.86 ms = per-enemy score 0.46, team belief 0.43, spawn references 0.33, routes 0.30,
+can_hit 0.20, sort 0.10. Spikes: SearchedWater.update (2.4 ms once a second per team, paid by whichever bot reads
+belief first), cold same-team curves for spawn-reference proxies, provisional dps_curve rebuilds every 2 s while
+tables build (~90 s).
+
+- SearchedWater.update stamping native (VisibilityGrid.stamp_search): 2.4 -> 0.16 ms; belief p99 3.6 -> 0.55 ms.
+- Proxy curves (each class's proxy x every ship of its team) warmed with the cross-team ones (+0.25 s warm).
+- Provisional rebuild skipped while none of the pair's main/secondary tables gained a bucket (BotGunnery.pair_progress).
+- expected_points_pairs: one battery lookup instead of one per range: rebuild 1.5 -> 1.05 ms, warm curves -15%.
+
+| (12v12 s3 / s5) | before | after |
+|---|---|---|
+| priorities mean / p99 / p999 | 1.86-2.09 / 6.5-7.1 / 12.3-13.7 ms | 1.71-1.84 / 4.6-5.0 / 6.7-6.9 ms |
+| spawn refs p99 / p999 | 4.6-4.8 / 9.1-13.4 ms | 3.7 / 5.7-5.8 ms |
+
+## Secondary aim (2026-11-10)
+
+update_secondary_priority_target -> solve_secondary ran the legacy lattice `_score` (~16 ms a call, seen in the editor
+profiler). Now `_score_sec_points`: per shell, the role (of the 6) with the highest combined dps over every sub-battery
+in range (native `point_roles`), aimed at that role's point of the battery doing most there; superstructure while a
+table cannot answer (never the legacy solver). Secondary aim 38 µs mean / 0.56 ms max. 12v12 s3: tick_behavior p999 9.2 -> 1.9 ms, all bots per frame mean
+18.3 -> 13.6 ms, intent mean 5.7 -> 4.6 ms.
+
+## Fight, rings, curve rebuild (2026-11-10)
+
+- dps_curve rebuild = StanceSim.gun_dealt (stance_cell_pack, aspect-band salvo_affine) + SecCache.curve; GDScript only
+  for secondary cells the cache cannot answer. Checked against the old path on every rebuild of two matches: 0 ppm
+  except one cell where a worker bucket landed between the two reads. Rebuild 1.05 -> 0.6 ms.
+- SkillFight's eased point routed by the HPA graph (was the fine-grid A*: p99 4-14 ms, p999 22-33 ms, max 35 ms):
+  p999 0.5-0.6 ms. Fight p999 12-25 -> 7-7.6 ms.
+- desired / _trade caches (5 s) expire at 0.5-1.5x per enemy (staggered_ttl). Not aggro_radius: its 1 s TTL is about
+  one intent interval, so a shorter phase misses every time.
+- Breakdown: Fight = STATION run (march: march_opts 1.2 + fight_search 2.4-3.8 p99) or COVER run (cover_search 2.5 p99);
+  rings p99 = aggro_radius misses (~0.3 ms p99, 1.1 ms p999 each) landing together.
+
+| (12v12 s3 / s5) | before | after |
+|---|---|---|
+| intent p99 / p999 | 13.2-14.3 / 17.8-29.3 ms | 12.2-12.4 / 15.3-17.3 ms |
+| skill_Fight p99 / p999 | 5.7-6.9 / 10.2-24.7 ms | 5.3-6.1 / 7.1-7.6 ms |
+| rings p99 | 4.3 ms | 3.2 ms |
+| priorities p99 | 5.6-5.7 ms | 4.5-4.8 ms |
+
+## Aggro radius native (2026-11-10)
+
+StanceSim.aggro_take: priority_at's range loop and the take/release search in one call (curves fetched in GDScript).
+Matched the GDScript loop on all 170k recomputes of two matches. The search is now ~15 µs; recompute p99 stays
+~0.6 ms from the curve fetches (provisional dps_curve rebuilds while tables build) plus _team_view (0.22 ms p99,
+first bot of a team per enemy per second). rg_aggro p99 0.28-0.31 -> 0.26-0.27 ms; rings p99 unchanged (3.2-3.5 ms).
+
+## Duel scoring native (2026-11-10)
+
+StanceSim.duel_scores (stance_duel.rs): every duel option's guns, torpedoes, secondaries both ways, incoming, kill/die
+in one call; one Pricer and one config per reprice. Matched the GDScript _duel_score on ~2.9k options of two matches,
+0 mismatches. Old _duel_score / _track_incoming / _add_torpedoes / _secondaries removed.
+
+| (12v12 s3 / s5) | before | after |
+|---|---|---|
+| duel reprice mean / p99 | 2.7 / 5.1-5.3 ms | 1.6-1.7 / 3.1-3.3 ms |
+| all options scored | ~2.0 ms (0.63 x ~3) | 0.92-1.02 ms |
+| stance p99 / p999 | 5.0 / 7.2 ms | 3.5-3.7 / 4.8-5.5 ms |
+
+## Station search counters (2026-11-10, temporary fx_/fxn_ keys)
+
+fight_search p99 2.6-3.6 ms. Per call p99: route Dijkstra 1.3-1.5 ms (settles ~4k cells, ~2.8k route weights),
+candidate cells 1.2-1.7 ms (~105 candidates, ~10-15 us each, 260-430 exposure evals), circle generation 0.58 ms,
+checkpoint scan 0.3-1.5 ms, inputs 0.07 ms. Most calls are cheap (settled p50 3-13): the tail is the route field.
+
+## Route search early stop (2026-11-10)
+
+`route_field` stops once `held` is settled and no unsettled candidate can win at the cost reached (`route_stop`). Side by side with the full
+search: 0 differences in 13.5k searches. 12v12 seeds 3, 5: settled mean 390-433 -> 207-213, route mean 163-175 -> 96-120 us. Route p99 unchanged
+at 1.4-1.5 ms, settled p99 still ~4k: brawler checkpoint searches settle the whole window and are not cut, the likely tail (not confirmed).
+
 ## Log
 
 - 2026-11-09: plan written. Existing stagger: `BotControllerV4.MAX_FULL_UPDATES_PER_FRAME = 2` (count only, no time budget).

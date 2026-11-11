@@ -735,6 +735,7 @@ impl ProjectileManager {
             mc_off: v2s("mc_off"), mc_lead: v2s("mc_lead"), comp: f64s("comp"), n_comp: g("n_comp").to_i32().max(1) as usize,
             sections: g("sections").try_to::<PackedInt32Array>().map(|a| a.to_vec()).unwrap_or_default(),
             sat_w: sat_w(&f64s("sat_w")),
+            secondary: g("secondary").to::<bool>(),
             turret_cap: g("turret_cap").to_f64(), c: consts,
         });
         true
@@ -790,6 +791,34 @@ impl ProjectileManager {
             let p = g.points[b.point];
             out.extend_array(&PackedFloat32Array::from(&[b.point as f32, b.value as f32, b.damage as f32, b.landed as f32,
                 b.visited as f32, p.x, p.y, p.z][..]));
+        }
+        out
+    }
+
+    /// point_best's candidates, one per role: 8 floats each as point_best, point -1 where the role is missing; empty
+    /// without the table or the bucket.
+    #[func]
+    pub(crate) fn point_roles(&self, key: GString, q: PackedFloat64Array, sat: i64, fires: PackedFloat32Array) -> PackedFloat32Array {
+        let mut out = PackedFloat32Array::new();
+        let t = self.point_store.read().unwrap().get(&key.to_string()).cloned();
+        let Some(t) = t else { return out };
+        if q.len() < 5 {
+            return out;
+        }
+        let f: Vec<(Vector3, bool)> = fires.as_slice().chunks_exact(4)
+            .map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
+        let g = t.read().unwrap();
+        if let Some(roles) = g.roles(q[0], q[1], sat, q[2], q[3], q[4], &f) {
+            for r in roles {
+                let row = match r {
+                    Some(b) => {
+                        let p = g.points[b.point];
+                        [b.point as f32, b.value as f32, b.damage as f32, b.landed as f32, 0.0, p.x, p.y, p.z]
+                    }
+                    None => [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                };
+                out.extend_array(&PackedFloat32Array::from(&row[..]));
+            }
         }
         out
     }

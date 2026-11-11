@@ -11,12 +11,14 @@ use godot::prelude::*;
 use crate::combat::stance_rows::StanceRows;
 use crate::combat::turret::wrapf;
 use crate::nav::map::NavigationMap;
-use crate::nav::navigator::hull::{rudder_to_heading, Hull, PHYSICS_DT};
+use crate::nav::navigator::hull::{rudder_to_heading, Hull};
 use crate::nav::reach::{ReachField, ReachLookup};
 use crate::combat::stance::{shell_hit, ship_params, start_hull};
 use crate::nav::types::ShipParams;
 
 const SH_STRIDE: usize = 10;
+/// Dodge hull steps: this long until the shells in the air have landed, then one price sample (cfg.dt) each.
+const FINE_DT: f32 = 0.25;
 
 /// Temporary dodge profile: [searches, total ns, land_shells ns, hull-step ns, physics steps, shell checks, hits tested].
 pub(crate) static DPROF: [std::sync::atomic::AtomicU64; 7] = [const { std::sync::atomic::AtomicU64::new(0) }; 7];
@@ -85,6 +87,7 @@ pub(crate) struct Pricer {
     n_asp: usize,
     asp_step: f64,
     bucket_m: f64,
+    window: f64,
 }
 
 fn f(d: &VarDictionary, k: &str, def: f64) -> f64 {
@@ -135,7 +138,16 @@ impl Pricer {
         Pricer {
             sh, rows: RefCell::new(rows), store, pm, ids, kinds, two: kind("kind2").is_some(), missing: RefCell::new(Vec::new()), slices: f64s(cfg, "slices"), vmax: f(cfg, "vmax", 1.0).max(1.0),
             at_speed: f(cfg, "at_speed", 0.0), field: field.is_some(), lookup, dt: f(cfg, "dt", 1.0),
-            n_asp: f(cfg, "aspects", 37.0) as usize, asp_step: f(cfg, "aspect_step", 5.0), bucket_m: f(cfg, "bucket_m", 250.0),
+            n_asp: f(cfg, "aspects", 37.0) as usize, asp_step: f(cfg, "aspect_step", 5.0), bucket_m: f(cfg, "bucket_m", 250.0), window,
+        }
+    }
+
+    /// Every shooter entry of instance `id` stops at `stop`, as cfg's stop column would set it.
+    pub(crate) fn set_stop(&mut self, id: i64, stop: f64) {
+        for (s, &sid) in self.sh.iter_mut().zip(&self.ids) {
+            if sid == id {
+                s.stop = stop.min(self.window);
+            }
         }
     }
 
@@ -370,7 +382,9 @@ impl Torps {
 struct Run {
     c: Vector3,
     hull: Hull,
+    /// FINE_DT steps taken; `t` the hull's time.
     step: usize,
+    t: f32,
     /// Next sample to take (k * dt).
     k: usize,
     prev: (f32, f32),
@@ -401,10 +415,11 @@ struct Search<'a> {
     cit_w: f64,
     /// Physics steps to the horizon, samples over the window, samples torps are priced over.
     n_h: usize,
+    /// FINE_DT steps before the hull steps a sample at a time: the first sample at or past the horizon.
+    fine_end: usize,
     m: usize,
     m_price: usize,
     n_t: usize,
-    every: usize,
     salvos: Vec<Vec<(f64, usize)>>,
     map: Option<Gd<NavigationMap>>,
     clearance: f32,
@@ -413,7 +428,7 @@ struct Search<'a> {
 
 impl Search<'_> {
     fn new_run(&self, h0: Hull, c: Vector3) -> Run {
-        Run { c, hull: h0, step: 0, k: 0, prev: (h0.pos.x, h0.pos.y), last: (h0.pos.x, h0.pos.y), air: 0.0,
+        Run { c, hull: h0, step: 0, t: 0.0, k: 0, prev: (h0.pos.x, h0.pos.y), last: (h0.pos.x, h0.pos.y), air: 0.0,
             sums: vec![0.0; 3 * self.pr.n_slices()], torps: 0.0, torp_st: vec![(0.0, 0.0); self.tp.sh.len()], out_h: None,
             off: 0.0, offed: false, clear: true }
     }
@@ -424,24 +439,28 @@ impl Search<'_> {
 
     /// Sails `r` to its next sample and prices what lands by it.
     fn advance(&self, r: &mut Run) {
-        let target = if r.k >= self.m { self.n_h.max(r.step) } else { r.k * self.every };
-        while r.step < target {
-            let t = r.step as f32 * PHYSICS_DT;
+        let target = if r.k >= self.m { (self.n_h as f32 * FINE_DT).max(r.t) } else { r.k as f32 * self.pr.dt as f32 };
+        while r.t < target - 1e-4 {
+            let fine = r.step < self.fine_end;
+            let h = if fine { FINE_DT } else { self.pr.dt as f32 };
             let c = r.c;
             let t0 = std::time::Instant::now();
-            let rudder = if c.y < 0.0 { rudder_to_heading(&r.hull, &self.p, c.x, c.z < 0.0) } else if t < c.y { c.x } else { 0.0 };
-            r.hull.step(&self.p, rudder, c.z, PHYSICS_DT);
-            r.step += 1;
+            let rudder = if c.y < 0.0 { rudder_to_heading(&r.hull, &self.p, c.x, c.z < 0.0) } else if r.t < c.y { c.x } else { 0.0 };
+            r.hull.step(&self.p, rudder, c.z, h);
+            r.t += h;
             let t1 = std::time::Instant::now();
-            self.land_shells(r);
+            if fine {
+                r.step += 1;
+                self.land_shells(r);
+                if r.step == self.n_h {
+                    r.out_h = Some(r.hull.heading);
+                }
+            }
             dprof(3, (t1 - t0).as_nanos() as u64);
             dprof(2, t1.elapsed().as_nanos() as u64);
             dprof(4, 1);
-            if r.step == self.n_h {
-                r.out_h = Some(r.hull.heading);
-            }
         }
-        if r.step == 0 {
+        if r.step == 0 && r.k == 0 {
             self.land_shells(r);
             if self.n_h == 0 {
                 r.out_h = Some(r.hull.heading);
@@ -453,7 +472,7 @@ impl Search<'_> {
         let (x, z) = (r.hull.pos.x, r.hull.pos.y);
         let speed = if r.k == 0 { 0.0 } else { len32(x - r.prev.0, z - r.prev.1) as f64 / self.pr.dt };
         let hdg = r.hull.heading as f64;
-        if r.step <= self.n_h {
+        if r.t <= self.n_h as f32 * FINE_DT + 1e-4 {
             if let Some(m) = &self.map {
                 if m.bind().get_distance_impl(x, z) < self.clearance {
                     r.clear = false;
@@ -540,8 +559,9 @@ fn dodge_search_inner(cfg: &VarDictionary) -> VarDictionary {
     let ns = pr.n_slices();
     let konst: f64 = (0..ns).map(|i| coef.get(4 * i + 3).copied().unwrap_or(0.0)).sum();
     let admissible = (0..ns).all(|i| (0..3).all(|g| coef.get(4 * i + g).copied().unwrap_or(1.0) >= 0.0));
-    let every = ((dt as f32 / PHYSICS_DT).round() as usize).max(1);
-    let n_h = (horizon / PHYSICS_DT).ceil().max(0.0) as usize;
+    let every = ((dt as f32 / FINE_DT).round() as usize).max(1);
+    let n_h = (horizon / FINE_DT).ceil().max(0.0) as usize;
+    let fine_end = n_h.div_ceil(every) * every;
     let m = (window / dt).floor() as usize + 1;
     let mut salvos: Vec<Vec<(f64, usize)>> = vec![Vec::new(); m];
     if price_later {
@@ -554,7 +574,7 @@ fn dodge_search_inner(cfg: &VarDictionary) -> VarDictionary {
     }
     let map = cfg.get("map").and_then(|v| v.try_to::<Gd<NavigationMap>>().ok());
     let shells = f32s(cfg, "shells");
-    let land_k: Vec<usize> = shells.chunks_exact(7).map(|s| ((s[4] / PHYSICS_DT).round().max(0.0) as usize).min(n_h)).collect();
+    let land_k: Vec<usize> = shells.chunks_exact(7).map(|s| ((s[4] / FINE_DT).round().max(0.0) as usize).min(n_h)).collect();
     let mut land_order: Vec<usize> = (0..land_k.len()).collect();
     land_order.sort_by_key(|&j| (land_k[j], j));
     let mut land_at = vec![0usize; n_h + 2];
@@ -569,8 +589,8 @@ fn dodge_search_inner(cfg: &VarDictionary) -> VarDictionary {
         hull: cfg.get("hull").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
         cit: cfg.get("cit").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
         top: f(cfg, "top", 0.0), ref_cal: f(cfg, "ref_cal", 300.0), cit_w: f(cfg, "cit_w", 0.0),
-        n_h, m: if price_later { m.max(n_h / every + 1) } else { n_h / every + 1 }, m_price: m,
-        n_t: m.min((window / dt) as usize), every, salvos, map, clearance: f(cfg, "clearance", 0.0) as f32, price_later,
+        n_h, fine_end, m: if price_later { m.max(n_h / every + 1) } else { n_h / every + 1 }, m_price: m,
+        n_t: m.min((window / dt) as usize), salvos, map, clearance: f(cfg, "clearance", 0.0) as f32, price_later,
     };
     let (lie_h, lie_t) = (f(cfg, "heading", 0.0), f(cfg, "throttle", 1.0));
     let (off_w, gear_w, gain) = (f(cfg, "off_w", 0.0), f(cfg, "gear_w", 0.0), f(cfg, "min_gain", 0.0));

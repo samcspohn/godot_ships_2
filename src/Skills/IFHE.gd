@@ -25,8 +25,8 @@ func _a(ship: Ship) -> void:
 		if shell == null:
 			continue
 		if shell.type == ShellParams.ShellType.HE:
-			shell.penetration_modifier *= PEN_MOD
-			shell.fire_buildup         *= FIRE_MOD
+			shell.overmatch 	= ceil(shell.overmatch * PEN_MOD)
+			shell.fire_buildup	*= FIRE_MOD
 
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params := sec.params.dynamic_mod as GunParams
@@ -34,5 +34,5 @@ func _a(ship: Ship) -> void:
 			if shell == null:
 				continue
 			if shell.type == ShellParams.ShellType.HE:
-				shell.penetration_modifier *= PEN_MOD
-				shell.fire_buildup         *= FIRE_MOD
+				shell.overmatch 	= ceil(shell.overmatch * PEN_MOD)
+				shell.fire_buildup	*= FIRE_MOD

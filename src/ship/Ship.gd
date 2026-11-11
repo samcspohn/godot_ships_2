@@ -1124,3 +1124,9 @@ func calculate_damage_from_hit(hit_node: Node3D, face_index: int, shell_penetrat
 
 	var node_path = armor_system.get_node_path_from_scene(hit_node, self.name)
 	return armor_system.calculate_penetration_damage(node_path, face_index, shell_penetration)
+
+@rpc("any_peer", "reliable")
+func rpc_fire_prevention_setup() -> void:
+	if fire_manager.fires.size() == 4:
+		fire_manager.fires[1].position = (fire_manager.fires[1].position + fire_manager.fires[2].position) / 2.0
+		fire_manager.fires.remove_at(2)

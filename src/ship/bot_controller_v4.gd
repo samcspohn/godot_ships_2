@@ -1233,7 +1233,7 @@ func debug_state(ids: Dictionary) -> Dictionary:
 	s.dest_pos = Vector2(dest.x, dest.z)
 	var disengaging: bool = behavior._active_skill_name == &"Disengage"
 	s.dis_on = disengaging and _last_intent != null
-	s.dis_axis = float(behavior._skill_disengage.cover().last_sweep.get("axis", behavior._skill_disengage.cone_axis)) if s.dis_on else INF
+	s.dis_axis = behavior._skill_disengage.cone_axis if s.dis_on else INF
 	s.dis_text = behavior._skill_disengage.debug_text() if disengaging else ""
 	s.stance_text = behavior._skill_stance.debug_text()
 	s.dials = behavior.dials.debug_text()

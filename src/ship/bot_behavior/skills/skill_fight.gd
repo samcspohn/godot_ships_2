@@ -70,7 +70,9 @@ func snap_to(p: Vector3) -> void:
 	_path_goal = Vector2.INF
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
+	var tc := Time.get_ticks_usec()
 	var intent := _choose(ctx, params)
+	BotTiming.add(&"fr_choose", tc)
 	if intent == null:
 		return null
 	var now: float = SimClock.now()
@@ -90,15 +92,26 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		_shown = goal
 	else:
 		if not _path_goal.is_finite() or _path_goal.distance_to(goal) > EASE_SAME_M:
-			_path = NavigationMapManager.find_path(Vector3(_shown.x, 0.0, _shown.y), Vector3(goal.x, 0.0, goal.y),
-				ctx.behavior._get_ship_clearance())
+			var tp := Time.get_ticks_usec()
+			_path = _route(_shown, goal, ctx.behavior._get_ship_clearance())
 			# path[0] is the start snapped to the grid, possibly behind us.
 			_path_i = 1
 			_path_goal = goal
+			BotTiming.add(&"fr_ease_path", tp)
 		_walk(goal, speed * maxf(dt, 0.0))
 	if _shown.distance_to(goal) > 1.0:
 		intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(_shown.x, 0.0, _shown.y))
 	return intent
+
+## The fine grid's A* takes tens of ms around islands; the HPA graph answers in about one.
+static func _route(from: Vector2, to: Vector2, clearance: float) -> PackedVector2Array:
+	var g: HpaGraph = NavigationMapManager.get_hpa_graph()
+	if g != null and g.is_built():
+		g.debug_clear_threats()
+		var path: PackedVector2Array = g.find_path_packed(from, to, clearance)
+		if not path.is_empty():
+			return path
+	return NavigationMapManager.find_path(Vector3(from.x, 0.0, from.y), Vector3(to.x, 0.0, to.y), clearance)
 
 ## Moves the eased point `d` along the route, then straight on to `goal`.
 func _walk(goal: Vector2, d: float) -> void:
@@ -287,7 +300,9 @@ func _run(ctx: SkillContext, m: int, params: Dictionary) -> NavIntent:
 			current().carry = _handoff
 	var pos := current()
 	pos.seed = fresh_seed()
+	var t0 := Time.get_ticks_usec()
 	var intent := pos.execute(ctx, params)
+	BotTiming.add(StringName("fr_run_%s" % Mode.keys()[m]), t0)
 	if m != Mode.COVER and pos.has_station():
 		var st: Vector3 = pos.station_position()
 		_seed = Vector2(st.x, st.z)

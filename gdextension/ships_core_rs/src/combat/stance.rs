@@ -73,37 +73,7 @@ impl StanceSim {
     #[func]
     fn track_bearing(list: AnyArray, pos0: Vector2, hdg0: f32, pos: PackedVector2Array, hdg: PackedFloat32Array,
             target: PackedVector2Array, traverse_deg_s: f32, dt: f32) -> PackedInt64Array {
-        let n = pos.len().min(hdg.len()).min(target.len());
-        let mut out = vec![0i64; n];
-        let fwd = |h: f64| Vector2::new(h.sin() as f32, h.cos() as f32);
-        let right = |h: f64| Vector2::new(h.cos() as f32, -h.sin() as f32);
-        // Signed angle off `f` to `d`, as Turret::angle_to_target measures it.
-        let off = |f: Vector2, d: Vector2| { let d = d.normalized_or_zero(); d.cross(f).atan2(d.dot(f)) as f64 };
-        let max_step = (traverse_deg_s as f64).to_radians() * dt as f64;
-        for (bit, g) in list.iter_shared().enumerate().take(63) {
-            let Ok(node) = g.try_to::<Gd<Node3D>>() else { continue };
-            let t = Turret::load(node.clone());
-            if t.is_disabled() {
-                continue;
-            }
-            let gp = node.get_global_position();
-            let rel = Vector2::new(gp.x, gp.z) - pos0;
-            let (along, across) = (rel.dot(fwd(hdg0 as f64)), rel.dot(right(hdg0 as f64)));
-            let mount = |k: usize| { let h = hdg[k] as f64; pos[k] + fwd(h) * along + right(h) * across };
-            let t0 = Vector3::new(target[0].x, 0.0, target[0].y);
-            // Hull-relative bearing to turret rotation: fixed while the hull carries the mount.
-            let c = t.rot_y() + t.angle_to_target(t0) - off(fwd(hdg0 as f64), Vector2::new(t0.x, t0.z) - Vector2::new(gp.x, gp.z));
-            let mut y = t.rot_y();
-            for k in 0..n {
-                let want = wrapf(c + off(fwd(hdg[k] as f64), target[k] - mount(k)), -PI, PI);
-                let step = t.apply_rotation_limits(y, wrapf(want - y, -PI, PI)).clamp(-max_step, max_step);
-                y = wrapf(y + step, -PI, PI);
-                if wrapf(want - y, -PI, PI).abs() <= TRAINED_RAD && t.in_fire_arcs(want) {
-                    out[k] |= 1 << bit;
-                }
-            }
-        }
-        PackedInt64Array::from(out.as_slice())
+        PackedInt64Array::from(track_masks(&list, pos0, hdg0, pos.as_slice(), hdg.as_slice(), target.as_slice(), traverse_deg_s, dt).as_slice())
     }
 
     /// SkillStance's dodge, sailed on the navigator's hull: per candidate [cost, heading at `horizon`]. A candidate is
@@ -217,13 +187,80 @@ impl StanceSim {
         PackedFloat64Array::from(&[n as f64, secs(swing_k, n, first_s)][..])
     }
 
+    /// BotBehavior.aggro_radius's search: over `ranges` (far to near), how `scorer` would rank us (priority_value of
+    /// score_parts from its curves) until that passes `tank` x `switch`. [take, release], -1 where none.
+    /// `k`: [our hp, its hp, its reach, torpedo speed, reload, bear s, point blank m, step m, harm cap].
+    #[func]
+    fn aggro_take(danger: PackedFloat32Array, tdanger: PackedFloat32Array, dps: PackedFloat32Array, torp: PackedFloat32Array,
+            k: PackedFloat64Array, ranges: PackedFloat64Array, tank: f64, switch: f64) -> PackedFloat64Array {
+        let k = k.as_slice();
+        if k.len() < 9 {
+            return PackedFloat64Array::from(&[-1.0, -1.0][..]);
+        }
+        let (shp, hp, reach, speed, reload, bear, pb, step, cap) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8]);
+        let (danger, tdanger, dps, torp) = (danger.as_slice(), tdanger.as_slice(), dps.as_slice(), torp.as_slice());
+        let at = |c: &[f32], r: f64| -> f64 {
+            let i = ((r - pb) / step).round() as i64;
+            if i >= 0 && (i as usize) < c.len() { c[i as usize] as f64 } else { 0.0 }
+        };
+        let (mut take, mut release) = (-1.0, -1.0);
+        for &r in ranges.as_slice() {
+            let threat = at(danger, r) / shp + at(tdanger, r);
+            let a = r.min(reach);
+            let salvo = at(torp, a);
+            let gun = if dps.is_empty() { 0.0 } else {
+                dps[(((a - pb) / step).round() as i64).clamp(0, dps.len() as i64 - 1) as usize] as f64
+            };
+            let ours = gun / hp + if salvo > 0.0 { 1.0 / (bear + a / speed + reload * (hp / salvo - 1.0).max(0.0)) } else { 0.0 };
+            let x = (100.0 * threat) as f32 as f64;
+            let y = (100.0 * ours) as f32 as f64;
+            let w = (threat / ours.max(1e-6)).min(cap) as f32 as f64;
+            let v = x * y * (1.0 + w);
+            if v > tank * switch {
+                break;
+            }
+            take = r;
+            if v <= tank / switch {
+                release = r;
+            }
+        }
+        PackedFloat64Array::from(&[take, release][..])
+    }
+
+    /// Per range, stance_cells::gun_dps of `pack` (BotGunnery.stance_cell_pack) at `aspect`; NAN unknown.
+    #[func]
+    fn gun_dealt(pm: Gd<crate::projectile::manager::ProjectileManager>, pack: VarDictionary, ranges: PackedFloat64Array,
+            aspect: f64, cal_ab: PackedFloat64Array) -> PackedFloat64Array {
+        let p = crate::projectile::manager::stance_cells::Pack::read(&pack);
+        let pm = pm.bind();
+        let v: Vec<f64> = ranges.as_slice().iter()
+            .map(|&r| crate::projectile::manager::stance_cells::gun_dps(&pm, &p, r, aspect, cal_ab.as_slice()).unwrap_or(f64::NAN)).collect();
+        PackedFloat64Array::from(v.as_slice())
+    }
+
+    /// stance_duel::scores over `tracks` (_pack_track each): {out, rows, sec}.
+    #[func]
+    fn duel_scores(mut cache: Gd<crate::combat::stance_sec::SecCache>, pm: Gd<crate::projectile::manager::ProjectileManager>,
+            tracks: VarArray, cfg: VarDictionary) -> VarDictionary {
+        let tr: Vec<Vec<f64>> = tracks.iter_shared().map(|v| v.try_to::<PackedFloat64Array>().map_or_else(|_| Vec::new(), |a| a.to_vec())).collect();
+        let (o, rows, sec) = crate::combat::stance_duel::scores(&mut cache.bind_mut(), &pm.bind(), &tr, &cfg);
+        let mut out = VarDictionary::new();
+        out.set("out", &PackedFloat64Array::from(o.as_slice()));
+        out.set("rows", &rows);
+        out.set("sec", &PackedFloat64Array::from(sec.as_slice()));
+        out
+    }
+
     /// stance_sec::add over `steps`: {steps, missing ([job, range, aspect, bearing] each)}.
     #[func]
-    fn secondaries(cache: Gd<crate::combat::stance_sec::SecCache>, track: PackedFloat64Array, jobs: PackedFloat64Array,
-            field: Option<Gd<crate::nav::reach::ReachField>>, team: i32, dt: f64, steps: PackedFloat32Array) -> VarDictionary {
+    #[allow(clippy::too_many_arguments)]
+    fn secondaries(mut cache: Gd<crate::combat::stance_sec::SecCache>, pm: Gd<crate::projectile::manager::ProjectileManager>,
+            track: PackedFloat64Array, jobs: PackedFloat64Array, field: Option<Gd<crate::nav::reach::ReachField>>, team: i32,
+            dt: f64, steps: PackedFloat32Array) -> VarDictionary {
         let mut st = steps.to_vec();
         let fb = field.as_ref().map(|f| f.bind());
-        let missing = crate::combat::stance_sec::add(&cache.bind(), track.as_slice(), jobs.as_slice(), fb.as_deref(), team, dt, &mut st);
+        let missing = crate::combat::stance_sec::add(&mut cache.bind_mut(), &pm.bind(), track.as_slice(), jobs.as_slice(),
+            fb.as_deref(), team, dt, &mut st);
         let mut out = VarDictionary::new();
         out.set("steps", &PackedFloat32Array::from(st.as_slice()));
         out.set("missing", &PackedFloat64Array::from(missing.as_slice()));
@@ -425,4 +462,43 @@ fn segment_in(a: (f64, f64), b: (f64, f64), r: Rect2) -> bool {
         }
     }
     true
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn track_masks(list: &AnyArray, pos0: Vector2, hdg0: f32, pos: &[Vector2], hdg: &[f32], target: &[Vector2],
+        traverse_deg_s: f32, dt: f32) -> Vec<i64> {
+    let n = pos.len().min(hdg.len()).min(target.len());
+    let mut out = vec![0i64; n];
+    if n == 0 {
+        return out;
+    }
+    let fwd = |h: f64| Vector2::new(h.sin() as f32, h.cos() as f32);
+    let right = |h: f64| Vector2::new(h.cos() as f32, -h.sin() as f32);
+    // Signed angle off `f` to `d`, as Turret::angle_to_target measures it.
+    let off = |f: Vector2, d: Vector2| { let d = d.normalized_or_zero(); d.cross(f).atan2(d.dot(f)) as f64 };
+    let max_step = (traverse_deg_s as f64).to_radians() * dt as f64;
+    for (bit, g) in list.iter_shared().enumerate().take(63) {
+        let Ok(node) = g.try_to::<Gd<Node3D>>() else { continue };
+        let t = Turret::load(node.clone());
+        if t.is_disabled() {
+            continue;
+        }
+        let gp = node.get_global_position();
+        let rel = Vector2::new(gp.x, gp.z) - pos0;
+        let (along, across) = (rel.dot(fwd(hdg0 as f64)), rel.dot(right(hdg0 as f64)));
+        let mount = |k: usize| { let h = hdg[k] as f64; pos[k] + fwd(h) * along + right(h) * across };
+        let t0 = Vector3::new(target[0].x, 0.0, target[0].y);
+        // Hull-relative bearing to turret rotation: fixed while the hull carries the mount.
+        let c = t.rot_y() + t.angle_to_target(t0) - off(fwd(hdg0 as f64), Vector2::new(t0.x, t0.z) - Vector2::new(gp.x, gp.z));
+        let mut y = t.rot_y();
+        for k in 0..n {
+            let want = wrapf(c + off(fwd(hdg[k] as f64), target[k] - mount(k)), -PI, PI);
+            let step = t.apply_rotation_limits(y, wrapf(want - y, -PI, PI)).clamp(-max_step, max_step);
+            y = wrapf(y + step, -PI, PI);
+            if wrapf(want - y, -PI, PI).abs() <= TRAINED_RAD && t.in_fire_arcs(want) {
+                out[k] |= 1 << bit;
+            }
+        }
+    }
+    out
 }

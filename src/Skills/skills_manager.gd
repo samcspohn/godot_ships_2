@@ -55,5 +55,22 @@ func from_bytes(data: PackedByteArray):
 		var skill_id = reader.get_var()
 		var skill_data: PackedByteArray = reader.get_var()
 		if not skill_id in skills:
-			skills[skill_id] = SkillsRegistry.create_skill(skill_id)
+			var s: Skill = SkillsRegistry.create_skill(skill_id)
+			if s == null:
+				continue
+			add_skill(s)
 		skills[skill_id].from_bytes(skill_data)
+
+func ids() -> PackedStringArray:
+	return PackedStringArray(skills.keys())
+
+func set_ids(want: PackedStringArray) -> void:
+	for id in skills.keys():
+		if not id in want:
+			remove_skill_by_id(id)
+	for id in want:
+		if id in skills:
+			continue
+		var s: Skill = SkillsRegistry.create_skill(id)
+		if s != null:
+			add_skill(s)

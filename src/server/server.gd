@@ -187,17 +187,36 @@ func _warm_gunnery() -> void:
 	var ships := _warm_pending.duplicate()
 	_warm_pending.clear()
 	var t0 := Time.get_ticks_msec()
+	var tw := Time.get_ticks_msec()
+	var parts := []
 	BotGunnery.warm(ships)
+	parts.append("gunnery %d" % (Time.get_ticks_msec() - tw))
 	for t in teams:
 		t.ships = _get_team(t.id)
 	var all_ships: Array = []
 	for t in teams:
 		all_ships.append_array(t.ships)
+	tw = Time.get_ticks_msec()
 	BotBehavior.warm_dps_curves(all_ships)
+	parts.append("dps_curves %d" % (Time.get_ticks_msec() - tw))
+	tw = Time.get_ticks_msec()
+	BotBehavior.warm_proxy_curves(self, all_ships)
+	parts.append("proxy_curves %d" % (Time.get_ticks_msec() - tw))
+	tw = Time.get_ticks_msec()
 	if BotGunnery.point_tables_on():
 		BotGunnery.start_runtime_tables(all_ships)
+	parts.append("point_jobs %d" % (Time.get_ticks_msec() - tw))
+	tw = Time.get_ticks_msec()
+	var brawlers := []
+	for s in all_ships:
+		var bc = s.get_node_or_null("Modules/BotController")
+		if bc != null and bc.behavior != null and bc.behavior.brawler():
+			brawlers.append(s.ship_name)
+	parts.append("brawler %d %s" % [Time.get_ticks_msec() - tw, brawlers])
+	tw = Time.get_ticks_msec()
 	_sweep_reach_fields()
-	print("Warmed %d ships' gunnery and reach tables in %d ms" % [ships.size(), Time.get_ticks_msec() - t0])
+	parts.append("reach %d" % (Time.get_ticks_msec() - tw))
+	print("Warmed %d ships' gunnery and reach tables in %d ms (%s)" % [ships.size(), Time.get_ticks_msec() - t0, ", ".join(parts)])
 
 func _start_bot_match() -> void:
 	var path := CmdArgs.value("--botmatch", "user://team_info.json")
@@ -296,6 +315,7 @@ func request_spectate() -> void:
 		var p: Ship = players[p_name][0]
 		spawn_players_client.rpc_id(id, players[p_name][2], p.name, p.global_position,
 			p.global_rotation.y, p.team.team_id, players[p_name][1], true)
+		sync_skills.rpc_id(id, p.name, p.skills.ids())
 	_sync_match_timer.rpc_id(id, match_elapsed)
 	_spectator_params_sent.clear()
 	print("Spectator joined: ", id)
@@ -429,7 +449,7 @@ func spawn_player(id, player_name):
 		_ensure_bot_ship_config_file(player_name)
 
 	# Load and apply saved upgrades/skills for humans and bots.
-	call_deferred("_load_and_apply_player_config", player, player_name, ship, is_bot)
+	call_deferred("_apply_config_and_sync_skills", player, player_name, ship, is_bot)
 
 
 	if !team.has(team_data["team"]):
@@ -552,6 +572,7 @@ func spawn_player(id, player_name):
 		# notify new client of current players
 		if not is_bot:
 			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV4)
+			sync_skills.rpc_id(id, p.name, p.skills.ids())
 		#notify current players of new player
 		if not p.team.is_bot:
 			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship, is_bot)
@@ -702,6 +723,23 @@ func _load_ship_config_from_file(config_path: String) -> Dictionary:
 		"ship_config": ship_config,
 	}
 
+
+func _apply_config_and_sync_skills(ship: Ship, player_name: String, ship_path: String, is_bot: bool) -> void:
+	_load_and_apply_player_config(ship, player_name, ship_path, is_bot)
+	if not is_instance_valid(ship):
+		return
+	var ids := ship.skills.ids()
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		if not p.team.is_bot:
+			sync_skills.rpc_id(players[p_name][2], ship.name, ids)
+	for sid in spectators:
+		sync_skills.rpc_id(sid, ship.name, ids)
+
+@rpc("authority", "call_remote", "reliable")
+func sync_skills(_player_name: String, ids: PackedStringArray) -> void:
+	if players.has(_player_name):
+		(players[_player_name][0] as Ship).skills.set_ids(ids)
 
 # Function to load and apply player or bot config
 func _load_and_apply_player_config(ship: Ship, player_name: String, ship_path: String = "", is_bot: bool = false) -> void:
@@ -2129,6 +2167,7 @@ func _team_belief(team_id: int) -> Array[Dictionary]:
 	return out
 
 func _build_team_belief(team_id: int) -> Array[Dictionary]:
+	var _tb0 := Time.get_ticks_usec()
 	var out: Array[Dictionary] = []
 	var published: Dictionary = {}
 	var t := teams[team_id]
@@ -2175,7 +2214,11 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 		if not fc.is_empty():
 			entry["fc"] = fc
 		out.append(entry)
-	for guess in teams[team_id].presumption.contacts(team_id, self):
+	BotTiming.add(&"tb_seen", _tb0)
+	var _tb1 := Time.get_ticks_usec()
+	var guesses = teams[team_id].presumption.contacts(team_id, self)
+	BotTiming.add(&"tb_presume", _tb1)
+	for guess in guesses:
 		var enemy_ship: Ship = guess.ship
 		if not is_instance_valid(enemy_ship) or published.has(enemy_ship):
 			continue
@@ -2184,6 +2227,7 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 		var at: Vector3 = guess.position
 		out.append({"ship": enemy_ship, "pos": Vector2(at.x, at.z), "weight": weight,
 			"spread": EnemyPresumption.guess_spread(guess), "force_spot": 0.0, "source": 2})
+	var _tb2 := Time.get_ticks_usec()
 	var water := _searched(team_id)
 	for b in out:
 		if int(b.source) != 0:
@@ -2191,6 +2235,7 @@ func _build_team_belief(team_id: int) -> Array[Dictionary]:
 			var hide: float = (e.concealment.params.p() as ConcealmentParams).radius if e.concealment != null and e.concealment.params != null else 0.0
 			b.pos = water.relocate(b.pos, hide, float(b.get("since", -INF)), now)
 		b.erase("since")
+	BotTiming.add(&"tb_water", _tb2)
 	return out
 
 

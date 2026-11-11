@@ -20,6 +20,8 @@ const AWAY_RATIO := 2.0
 ## Each side of the axis a cone covers when the caller gives none.
 const CONE_HALF := deg_to_rad(40.0)
 const COVER_HOLD_M := 300.0
+const CONE_HOLD_NEAR_M := 1000.0
+const CONE_HOLD_SLACK := deg_to_rad(5.0)
 ## A hidden station is slid toward its rock in TUCK_STEP_M steps, at most TUCK_MAX_M (the
 ## grid's cell), to this far outside the hull's clearance, while an exact ray still hides it.
 const TUCK_STEP_M := 25.0
@@ -146,6 +148,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if not _in_clip(here, Vector2(_station.x, _station.z), opts.clip_pos):
 			_drop()
 			lost = "clip"
+		elif _left_cones(here, Vector2(_station.x, _station.z), params):
+			_drop()
+			_searched_ms = -100000
+			lost = "cone"
 		elif not bool(ev.ok):
 			_resume = Vector2(_station.x, _station.z)
 			_drop()
@@ -186,7 +192,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if bool(r.get("found", false)) and (not upgrade or bool(r.get("deep", false))):
 			var p: Vector2 = r.pos
 			if mode == Mode.DEFENSE and not bool(r.dark):
-				p = _tuck(p, opts)
+				var tucked := _tuck(p, opts)
+				if not _left_cones(from, tucked, params):
+					p = tucked
 			_adopt(Vector3(p.x, 0.0, p.y), float(r.count), {})
 			_dark = bool(r.dark)
 			_seen = bool(r.seen)
@@ -201,6 +209,15 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var intent := _intent(ctx, field, team_id, params)
 	intent.free_route = true
 	return intent
+
+## Whether the caller's cones, turning with the threat, no longer hold `st`. Up close its bearing swings on any move.
+func _left_cones(here: Vector2, st: Vector2, params: Dictionary) -> bool:
+	var axis: float = float(params.get("cone_axis", INF))
+	if not is_finite(axis) or here.distance_to(st) < CONE_HOLD_NEAR_M:
+		return false
+	var off := absf(angle_difference(axis, atan2(st.x - here.x, st.y - here.y)))
+	var half: float = float(params.get("cone_half", CONE_HALF)) + CONE_HOLD_SLACK
+	return off > half and PI - off > half
 
 ## `p` slid down the land's distance field toward its rock, the last step every
 ## threat that would see it from inside its sight still cannot by an exact ray.

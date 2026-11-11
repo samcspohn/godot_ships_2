@@ -6,7 +6,7 @@ extends BotSkill
 ## shielded; dark water only without one, while going dark still works; else a fighting retreat on the
 ## angled away-heading. Stance decides whether the hull turns or backs out.
 ## Params: cant_go_dark, toward (the toward cone turns onto it, at most CONE off the threat axis), ahead_only (no away cone).
-## No dark water while we alone spot our priority: dark, nobody sees it.
+## Only the fighting retreat while we alone spot our priority: hidden, nobody sees it. Carriers spot with planes.
 
 ## Cover is searched within this of the threat axis, toward or away.
 const CONE: float = deg_to_rad(35.0)
@@ -68,14 +68,20 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var off := angle_difference(cone, atan2(toward.x - here.x, toward.y - here.y))
 		if absf(off) <= PI / 2.0 + CONE:
 			cone = wrapf(cone + clampf(off, -CONE, CONE), -PI, PI)
+	cone_axis = cone
 	if SimClock.now() - _ran_at > FRESH_S:
 		_cover.reset()
 	_ran_at = SimClock.now()
 	# The cone on the threat axis picks where to go, not where the last station was headed.
 	_cover.seed = Vector2.INF
+	var was := leg
+	if ctx.ship.ship_class != Ship.ShipClass.CV and ctx.behavior.needs_spot():
+		_cover.reset()
+		leg = Leg.KITE
+		_count(ctx, was)
+		return _kite(ctx, params)
 	var dive := _cover.execute(ctx, {"mode": SkillCover.Mode.DEFENSE, "fire_en_route": cant_go_dark,
 		"allow_dark": not cant_go_dark and not ctx.behavior.needs_spot(), "dark_last": true, "cone_axis": cone, "cone_half": CONE, "away_ratio": away_ratio})
-	var was := leg
 	if dive != null:
 		leg = Leg.DARK if _cover.is_dark() else Leg.COVER
 		_count(ctx, was)

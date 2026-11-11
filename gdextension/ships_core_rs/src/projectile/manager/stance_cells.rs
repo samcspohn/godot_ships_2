@@ -34,8 +34,8 @@ pub(crate) struct Pack {
     max_range: f64,
     keys: PackedStringArray,
     q: [PackedFloat64Array; 2],
-    sat: i64,
-    fires: Vec<(Vector3, bool)>,
+    pub(crate) sat: i64,
+    pub(crate) fires: Vec<(Vector3, bool)>,
     ap_size: f64,
     he_size: f64,
     fire_chance: f64,
@@ -76,6 +76,11 @@ impl Pack {
 
     /// BotGunnery.calibration(shooter, target, range): DamageExpectation.salvo_factor at any aspect.
     pub(crate) fn cal(&self, range: f64) -> Option<f64> {
+        self.cal_with(range, &self.cal_ab)
+    }
+
+    /// salvo_factor with the learned a + b * root per range band `ab` (one aspect band's, or any aspect's).
+    pub(crate) fn cal_with(&self, range: f64, ab: &[f64]) -> Option<f64> {
         let (row, e) = (&self.cal_row, &self.cal_edges);
         if row.is_empty() || e.len() != row.len() || self.cal_band_m <= 0.0 {
             return None;
@@ -92,7 +97,7 @@ impl Pack {
             }
         }
         let b = (range / self.cal_band_m) as usize;
-        let (a, k) = (self.cal_ab.get(2 * b).copied()?, self.cal_ab.get(2 * b + 1).copied()?);
+        let (a, k) = (ab.get(2 * b).copied()?, ab.get(2 * b + 1).copied()?);
         Some(a + k * root)
     }
 }
@@ -101,9 +106,27 @@ fn f64s(d: &VarDictionary, k: &str) -> Vec<f64> {
     d.get(k).and_then(|v| v.try_to::<PackedFloat64Array>().ok()).map_or_else(Vec::new, |a| a.to_vec())
 }
 
-fn salvo_fire_share(shells: i64, landed: f64, chance: f64) -> f64 {
+pub(crate) fn salvo_fire_share(shells: i64, landed: f64, chance: f64) -> f64 {
     let k = shells as f64 * landed * chance;
     if k > 0.0 { k.min(1.0) / k } else { 1.0 }
+}
+
+/// `key`'s best point: (value, damage, landed) as point_best reports them; None without the table or its buckets.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn table_best(pm: &ProjectileManager, key: &str, range: f64, aspect: f64, sat: i64, damage: f64, raw_fire: f64,
+        fire_k: f64, fires: &[(Vector3, bool)]) -> Option<(f64, f64, f64)> {
+    let t = pm.point_store.read().unwrap().get(key).cloned()?;
+    let g = t.read().unwrap();
+    g.best(range, aspect, sat, damage, raw_fire, fire_k, fires).map(|b| (b.value as f32 as f64, b.damage as f32 as f64, b.landed as f32 as f64))
+}
+
+/// SkillStance._duel_score's per-firing-step dps of `p`'s shooter on its target at `range` and `aspect`: the worse ammo
+/// for it from the point tables, else the baked model; times salvo_factor under `cal_ab`. None unknown.
+pub(crate) fn gun_dps(pm: &ProjectileManager, p: &Pack, range: f64, aspect: f64, cal_ab: &[f64]) -> Option<f64> {
+    let mut notes = Vec::new();
+    let ev = points(pm, p, range, &[aspect], &mut notes)[0].or_else(|| baked(p, range, aspect))?;
+    let dps = if ev.he_dps > ev.ap_dps { ev.he_dps } else { ev.ap_dps };
+    Some((dps as f32 as f64).max(0.0) * p.cal_with(range, cal_ab).unwrap_or(1.0))
 }
 
 /// BotGunnery.expected_points_pairs at one range: per aspect the AP and HE answers, None where unanswered.

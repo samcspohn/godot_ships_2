@@ -54,6 +54,7 @@ pub(crate) struct Job {
     pub n_comp: usize,
     pub sections: Vec<i32>,
     pub sat_w: [f32; 4],
+    pub secondary: bool,
     pub turret_cap: f64,
     pub c: Consts,
 }
@@ -76,6 +77,8 @@ pub(crate) struct JobState {
 /// so every pair's opening ranges are built before any pair's closer ones.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Task {
+    /// Main-battery jobs before any secondary one.
+    main: bool,
     rank: std::cmp::Reverse<usize>,
     seq: std::cmp::Reverse<usize>,
     ri: usize,
@@ -162,6 +165,9 @@ impl PointWorker {
                         if open && r.opening_ms < 0.0 {
                             r.opening_ms = since;
                         }
+                        if job.secondary {
+                            return;
+                        }
                         g.rank_done[*rank] += 1;
                         if g.rank_done[*rank] >= g.rank_total[*rank] && g.rank_ms[*rank] < 0.0 {
                             g.rank_ms[*rank] = g.first_submit.map_or(0.0, |s| s.elapsed().as_secs_f64() * 1000.0);
@@ -196,14 +202,14 @@ impl PointWorker {
             g.rank_done.resize(ranges, 0);
             g.rank_ms.resize(ranges, -1.0);
         }
-        for k in 0..ranges {
+        for k in 0..if job.secondary { 0 } else { ranges } {
             g.rank_total[k] += n_aspect;
             // A rank someone else finished is open again until this job's buckets for it are built.
             g.rank_ms[k] = -1.0;
         }
         for ri in 0..ranges {
             for ai in 0..n_aspect {
-                g.tasks.push(Task { rank: std::cmp::Reverse(ranges - 1 - ri), seq: std::cmp::Reverse(seq), ri, ai });
+                g.tasks.push(Task { main: !job.secondary, rank: std::cmp::Reverse(ranges - 1 - ri), seq: std::cmp::Reverse(seq), ri, ai });
             }
         }
         g.jobs.push(Arc::new(job));

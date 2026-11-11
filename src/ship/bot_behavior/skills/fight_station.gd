@@ -149,6 +149,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if vis == null or field == null or not field.is_built() or ship.team == null or ctx.server == null:
 		return _decline()
 	var team_id: int = ship.team.team_id
+	var tf0 := Time.get_ticks_usec()
 	var belief: Array[Dictionary] = ctx.server._team_belief(team_id)
 	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	if belief.is_empty() or g.is_empty():
@@ -211,7 +212,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"hull_key": _hull_key, "ids": ids, "reach_needs_los": bool(params.get("needs_los", false)),
 		"clearance": ctx.behavior._get_ship_clearance(), "flank": _flank_dir(ctx),
 		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SHOT, "heavy": heavy}
+	BotTiming.add(&"fs_prep", tf0)
+	var tf1 := Time.get_ticks_usec()
 	_march(ctx, vis, here, pos, band, prio, live, belief, find)
+	BotTiming.add(&"fs_march", tf1)
 	if _has_station and _chasing and (_route_hp >= SURVIVE_SHARE or not _chase_to.is_finite()
 			or here.distance_to(_chase_to) - Vector2(_station.x, _station.z).distance_to(_chase_to) < CHASE_MIN_PROGRESS_M):
 		_chase_failed_at = SimClock.now()
@@ -223,9 +227,13 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	opts.shootable = _union(prio, live)
 	opts.prio_bits = _bits(prio)
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
+	var tf2 := Time.get_ticks_usec()
 	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}) if bool(params.get("away", false)) else params)
+	BotTiming.add(&"fs_intent", tf2)
+	tf2 = Time.get_ticks_usec()
 	intent.target_position = ctx.behavior._get_valid_nav_point(intent.target_position)
 	_shape(intent, ctx, here, pos, opts)
+	BotTiming.add(&"fs_shape", tf2)
 	if bool(params.get("kite", false)) and pp.is_finite() and not _chasing:
 		_kite(ctx, intent, here, Vector2(pp.x, pp.z))
 	return intent
@@ -344,7 +352,14 @@ func _pick(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dict
 
 ## Own frame so the native search shows in the profiler.
 static func _fight_search(vis: VisibilityGrid, here: Vector2, pos: PackedVector2Array, mo: Dictionary) -> Dictionary:
-	return vis.fight_search(here, pos, mo)
+	var r: Dictionary = vis.fight_search(here, pos, mo)
+	var pf: PackedInt64Array = r.get("prof", PackedInt64Array())
+	for i in mini(pf.size(), _FS_KEYS.size()):
+		BotTiming.add_us(_FS_KEYS[i], pf[i])
+	return r
+
+const _FS_KEYS: Array[StringName] = [&"fx_inputs", &"fx_gen", &"fx_cells", &"fx_route", &"fx_ckpt", &"fx_held", &"fxn_cand",
+	&"fxn_fight", &"fxn_settled", &"fxn_ckpt", &"fxn_expo", &"fxn_routew", &"fxn_push"]
 
 ## The held station's fire on us, share of our trade HP per second; 0 without one.
 func harm_share() -> float:

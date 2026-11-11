@@ -718,10 +718,13 @@ func update_priorities(server: GameServer) -> void:
 	for k in priorities.size():
 		rank[_priority_key(priorities[k])] = k
 	var fresh: Array[Dictionary] = []
+	var t_bel := Time.get_ticks_usec()
+	var bel: Array = server._team_belief(team_id)
+	BotTiming.add(&"pq_belief", t_bel)
 	var us_hit := 0
 	var us_sail := 0
 	var us_score := 0
-	for b in server._team_belief(team_id):
+	for b in bel:
 		# A presumption about a ship never seen carries what it is; the reference stands in for it.
 		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
 			continue
@@ -731,17 +734,41 @@ func update_priorities(server: GameServer) -> void:
 		var t1 := Time.get_ticks_usec()
 		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
 		var t2 := Time.get_ticks_usec()
-		var sc: float = priority_score(b.ship, b.pos, sail, shoot, _team_help(server, b.ship, b.pos), _team_threat(server, b.ship, b.pos))
+		var th := _team_help(server, b.ship, b.pos)
+		var t3 := Time.get_ticks_usec()
+		var tt := _team_threat(server, b.ship, b.pos)
+		var t4 := Time.get_ticks_usec()
+		var sc: float = priority_score(b.ship, b.pos, sail, shoot, th, tt)
+		var t5 := Time.get_ticks_usec()
+		var lb := _lone_boost(server, b.ship, b.pos)
+		BotTiming.add_us(&"pq_help", t3 - t2)
+		BotTiming.add_us(&"pq_threat", t4 - t3)
+		BotTiming.add_us(&"pq_score", t5 - t4)
+		BotTiming.add_us(&"pq_lone", Time.get_ticks_usec() - t5)
 		fresh.append({"ship": b.ship, "pos": b.pos, "d": d if shoot else PRIORITY_ROUTE_W * sail,
-			"score": sc * _lone_boost(server, b.ship, b.pos)})
+			"score": sc * lb})
 		us_hit += t1 - t0
 		us_sail += t2 - t1
 		us_score += Time.get_ticks_usec() - t2
-	for r in server.anonymous_refs(team_id):
+	var t_refs := Time.get_ticks_usec()
+	var refs := server.anonymous_refs(team_id)
+	BotTiming.add(&"pr_list", t_refs)
+	for r in refs:
+		var u0 := Time.get_ticks_usec()
 		var proxy := _ref_proxy(server, int(r.id))
+		var u1 := Time.get_ticks_usec()
 		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
+		var u2 := Time.get_ticks_usec()
 		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": PRIORITY_ROUTE_W * sail,
 			"score": priority_score(proxy, r.pos, sail, false) if proxy != null else 0.0})
+		BotTiming.add_us(&"pr_proxy", u1 - u0)
+		BotTiming.add_us(&"pr_sail", u2 - u1)
+		BotTiming.add(&"pr_score", u2)
+		if proxy != null:
+			BotTiming.worst(&"pr_score", Time.get_ticks_usec() - u2, {"me": _ship.ship_name, "proxy": proxy.ship_name, "self": proxy == _ship,
+				"prov_fwd": _row(_provisional, _ship).has(proxy.get_instance_id()), "prov_back": _row(_provisional, proxy).has(_ship.get_instance_id()), "t": SimClock.now()})
+	BotTiming.add(&"pq_refs", t_refs)
+	var t_sort := Time.get_ticks_usec()
 	# First sight retires the reference nearest the ship: it takes that reference's place, it is not new.
 	var gone: Array[Dictionary] = []
 	var keys := {}
@@ -781,6 +808,7 @@ func update_priorities(server: GameServer) -> void:
 			m -= 1
 	priorities = fresh
 	priority = priorities[0] if not priorities.is_empty() else {}
+	BotTiming.add(&"pq_sort", t_sort)
 	BotTiming.add_us(&"prio_can_hit", us_hit)
 	BotTiming.add_us(&"prio_sail", us_sail)
 	BotTiming.add_us(&"prio_score", us_score)
@@ -870,15 +898,10 @@ static func score_parts(scorer: Ship, target: Ship, r: float, allied_dps: float 
 	var harm: float = minf(threat / maxf(ours + allied_dps / hp, 1e-6), PRIORITY_HARM_CAP)
 	return Vector4(100.0 * threat, 100.0 * ours, 1.0, harm)
 
-## priority_value(score_parts(scorer, target, r)) for each of `ranges`, ending after the first above `stop_above`.
-static func priority_at(scorer: Ship, target: Ship, ranges: PackedFloat64Array, stop_above: float = INF) -> PackedFloat64Array:
-	var danger := danger_curve(target, scorer)
-	var tdanger := torpedo_danger(target, scorer)
-	var c := dps_curve(scorer, target)
+## Where `scorer`, ranking us from each of `ranges` (far to near) by priority_value(score_parts), still keeps `tank`
+## past PRIORITY_SWITCH: [take, release], StanceSim.aggro_take.
+static func _aggro_take(scorer: Ship, target: Ship, ranges: PackedFloat64Array, tank: float) -> PackedFloat64Array:
 	var torp := torpedo_curve(scorer, target)
-	var shp: float = maxf(scorer.health_controller.current_hp, 1.0)
-	var hp: float = maxf(target.health_controller.current_hp, 1.0)
-	var reach: float = reach_m(scorer)
 	var speed := 1.0
 	var reload := 0.0
 	var bear := 0.0
@@ -886,18 +909,10 @@ static func priority_at(scorer: Ship, target: Ship, ranges: PackedFloat64Array, 
 		speed = maxf(scorer.torpedo_controller.get_torp_params().speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER, 1.0)
 		reload = scorer.torpedo_controller.get_params().reload_time
 		bear = torp_bear_s(scorer)
-	var out := PackedFloat64Array()
-	for r in ranges:
-		var threat: float = _curve_at(danger, r) / shp + _curve_at(tdanger, r)
-		var at: float = minf(r, reach)
-		var salvo: float = _curve_at(torp, at)
-		var ours: float = (c[clampi(roundi((at - POINT_BLANK_M) / DESIRED_STEP_M), 0, c.size() - 1)] if not c.is_empty() else 0.0) / hp \
-			+ (1.0 / (bear + at / speed + reload * maxf(hp / salvo - 1.0, 0.0)) if salvo > 0.0 else 0.0)
-		var v: float = priority_value(Vector4(100.0 * threat, 100.0 * ours, 1.0, minf(threat / maxf(ours, 1e-6), PRIORITY_HARM_CAP)))
-		out.append(v)
-		if v > stop_above:
-			break
-	return out
+	var k := PackedFloat64Array([maxf(scorer.health_controller.current_hp, 1.0), maxf(target.health_controller.current_hp, 1.0),
+		reach_m(scorer), speed, reload, bear, POINT_BLANK_M, DESIRED_STEP_M, PRIORITY_HARM_CAP])
+	return StanceSim.aggro_take(danger_curve(target, scorer), torpedo_danger(target, scorer), dps_curve(scorer, target), torp, k,
+		ranges, tank, PRIORITY_SWITCH)
 
 ## Length of the sea route from `here` to `to` for contact `key`, re-planned
 ## when either end moves PRIORITY_PATH_MOVE_M or after PRIORITY_PATH_TTL_S;
@@ -933,11 +948,27 @@ func _sail_m(key: String, here: Vector2, to: Vector2) -> float:
 ## (GameServer.ref_class), at the reference.
 
 func _ref_proxy(server: GameServer, ref: int) -> Ship:
-	var cls: int = server.ref_class(_ship.team.team_id, ref)
-	for s: Ship in server.get_team_ships(_ship.team.team_id):
+	return class_proxy(server, _ship.team.team_id, server.ref_class(_ship.team.team_id, ref))
+
+static func class_proxy(server: GameServer, team_id: int, cls: int) -> Ship:
+	for s: Ship in server.get_team_ships(team_id):
 		if is_instance_valid(s) and s.ship_class == cls and s.artillery_controller != null:
 			return s
 	return null
+
+## The curves priority_score reads for a spawn reference scored as each class's proxy, so none is first built mid-match.
+static func warm_proxy_curves(server: GameServer, ships: Array) -> void:
+	for s in ships:
+		if not is_instance_valid(s) or s.team == null or s.artillery_controller == null:
+			continue
+		for cls in Ship.ShipClass.values():
+			var p := class_proxy(server, s.team.team_id, cls)
+			if p == null:
+				continue
+			danger_curve(p, s)
+			torpedo_danger(p, s)
+			dps_curve(s, p)
+			torpedo_curve(s, p)
 
 static func _priority_key(c: Dictionary) -> String:
 	return "s%d" % c.ship.get_instance_id() if c.ship != null and is_instance_valid(c.ship) else "r%s" % str(c.get("ref", ""))
@@ -3026,25 +3057,42 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	dials.update(ctx)
 	BotTiming.add(&"trade_dials", t0)
 	t0 = Time.get_ticks_usec()
+	var lw := {}
+	var tl := Time.get_ticks_usec()
 	intent = _held_disengage(ctx, sit)
+	lw["held_dis"] = Time.get_ticks_usec() - tl
+	tl = Time.get_ticks_usec()
 	if intent == null:
 		intent = _brawl(ctx, sit)
+	lw["brawl"] = Time.get_ticks_usec() - tl
+	tl = Time.get_ticks_usec()
 	if intent == null:
 		intent = _threat_disengage(ctx, sit)
+	lw["threat_dis"] = Time.get_ticks_usec() - tl
+	tl = Time.get_ticks_usec()
 	if intent == null:
 		intent = _committed_intent(ctx, sit)
+	lw["committed"] = Time.get_ticks_usec() - tl
 	if intent != null:
 		BotTiming.add(&"ladder", t0)
+		BotTiming.worst(&"ladder", Time.get_ticks_usec() - t0, lw.merged({"t": SimClock.now(), "ship": _ship.ship_name, "skill": _active_skill_name}))
 		_apply_gun_policy(ctx, sit)
 		return _finish_nav(intent, ctx, sit, prev_skill)
 
+	tl = Time.get_ticks_usec()
 	if never_spotted():
 		intent = _opening(ctx, sit)
+	lw["opening"] = Time.get_ticks_usec() - tl
+	tl = Time.get_ticks_usec()
 	if intent == null:
 		intent = _select_nav_skill(ctx, sit)
+	lw["select"] = Time.get_ticks_usec() - tl
+	tl = Time.get_ticks_usec()
 	if intent == null:
 		intent = _fight(ctx)
+	lw["fight"] = Time.get_ticks_usec() - tl
 	BotTiming.add(&"ladder", t0)
+	BotTiming.worst(&"ladder", Time.get_ticks_usec() - t0, lw.merged({"t": SimClock.now(), "ship": _ship.ship_name, "skill": _active_skill_name}))
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
@@ -3252,7 +3300,7 @@ func _smoothed_trade(ctx: SkillContext) -> Vector2:
 
 func _threat_disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var leaving: bool = _active_skill_name == &"Disengage"
-	if not ctx.ship.is_detected() or _skill_fight.station.kiting_in():
+	if not ctx.ship.is_detected() or _skill_fight.station.kiting_in() or (brawler() and needs_spot()):
 		return null
 	var trade := _trade_now
 	if leaving:
@@ -3287,7 +3335,8 @@ func _brawl(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var intent := _run_skill(&"Fight", ctx, push)
 	if intent == null:
 		return null
-	if crossfire_arc(ctx) <= BRAWL_CROSSFIRE and not _skill_fight.station.doomed():
+	# Alone in spotting it, cover blinds our guns: a doomed route is still the only way to shoot.
+	if crossfire_arc(ctx) <= BRAWL_CROSSFIRE and (not _skill_fight.station.doomed() or needs_spot()):
 		return intent
 	if not ctx.ship.is_detected():
 		# Hidden with no survivable push: the engaged arm's cover hops, not standing behind this island.
@@ -3830,6 +3879,9 @@ static func _secondary_dps(shooter: Ship, target: Ship, range_m: float, aspect_d
 	if not is_instance_valid(shooter.secondary_controller) or range_m > shooter.secondary_controller.get_max_range():
 		return 0.0
 	var brg: float = guns_bear_aspect(shooter) if is_nan(bearing_deg) else bearing_deg
+	var v: float = SkillStance.sec_dps(shooter, target, range_m, aspect_deg, brg)
+	if not is_nan(v):
+		return v
 	var key := [shooter.get_instance_id(), target.get_instance_id(), int(range_m / SEC_RANGE_BUCKET_M), int(aspect_deg / SEC_ASPECT_BUCKET_DEG),
 		int(brg / SEC_BEARING_BUCKET_DEG)]
 	if not _sec_dps_cache.has(key):
@@ -3890,7 +3942,7 @@ func _trade(enemy: Ship) -> Dictionary:
 			"out": PackedFloat32Array(), "in": PackedFloat32Array(), "top": 0.0}
 	var now: float = SimClock.now()
 	var c: Array = _radius_cache.get(enemy.get_instance_id(), [])
-	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
+	if not c.is_empty() and now - float(c[0]) < staggered_ttl(RADIUS_TTL_S, enemy.get_instance_id()):
 		return c[1]
 	var our_hp: float = maxf(trade_hp(), 1.0)
 	var their_hp: float = maxf(enemy.health_controller.current_hp, 1.0)
@@ -4208,15 +4260,20 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	if shooter.artillery_controller == null:
 		return c
 	var made = _row(_provisional, shooter).get(key)
-	if not c.is_empty() and (made == null or SimClock.now() - float(made) < PROVISIONAL_CURVE_S or _provisional_spent()):
+	if not c.is_empty() and (made == null or SimClock.now() - float(made[0]) < PROVISIONAL_CURVE_S or _provisional_spent()):
 		return c
 	var t0 := Time.get_ticks_usec()
+	var ready := BotGunnery.point_tables_ready(shooter, target)
+	var progress := BotGunnery.pair_progress(shooter, target) if not ready else 0
+	if not c.is_empty() and not ready and progress == int(made[1]):
+		made[0] = SimClock.now()
+		return c
 	c = PackedFloat32Array()
 	_row(_danger_curves, shooter).erase(key)
-	if BotGunnery.point_tables_ready(shooter, target):
+	if ready:
 		_row(_provisional, shooter).erase(key)
 	else:
-		_row(_provisional, shooter)[key] = SimClock.now()
+		_row(_provisional, shooter)[key] = [SimClock.now(), progress]
 	var aspect: float = guns_bear_aspect(target)
 	var p = shooter.artillery_controller.get_params()
 	var sec_mod: float = HPManager.size_mod(target.mass, secondary_caliber(shooter))
@@ -4225,14 +4282,13 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	while r <= p._range:
 		ranges.append(r)
 		r += DESIRED_STEP_M
-	var aspects := PackedFloat64Array()
-	aspects.resize(ranges.size())
-	aspects.fill(aspect)
-	var pts: Array = BotGunnery.expected_points_pairs(shooter, target, ranges, aspects) if BotGunnery.point_tables_on() else []
+	var main: PackedFloat64Array = StanceSim.gun_dealt(BotGunnery._projectile_native(), BotGunnery.stance_cell_pack(shooter, target),
+		ranges, aspect, DamageExpectation.salvo_affine(shooter, target, int(p._range / DamageExpectation.RANGE_BAND_M) + 2, aspect))
+	var sec := SkillStance.sec_curve(shooter, target, ranges, aspect)
 	for i in ranges.size():
-		var e: Dictionary = pts[i] if not pts.is_empty() else {}
-		c.append(maxf(SkillStance._expected_of(e, target, shooter, ranges[i], aspect).x, 0.0)
-			* DamageExpectation.salvo_factor(shooter, target, ranges[i], aspect) + _secondary_dps(shooter, target, ranges[i], aspect) * sec_mod)
+		var sd: float = sec[i] if not is_nan(sec[i]) else _secondary_dps(shooter, target, ranges[i], aspect)
+		c.append((maxf(main[i], 0.0) if not is_nan(main[i]) else 0.0) + sd * sec_mod)
+	BotTiming.add(StringName("dc_total" + ("_re" if made != null else "_new")), t0)
 	row[key] = c
 	if made != null:
 		_provisional_us += Time.get_ticks_usec() - t0
@@ -4433,11 +4489,15 @@ static func warm_dps_curves(ships: Array) -> void:
 ## Enemy instance id -> [time, desired_range].
 var _desired_cache: Dictionary = {}
 
+## `ttl` x 0.5..1.5 by a fixed phase per enemy: caches filled on one tick expire on different ones, same mean.
+static func staggered_ttl(ttl: float, id: int) -> float:
+	return ttl * (0.5 + (hash(id) & 1023) / 1024.0)
+
 ## desired_range, cached RADIUS_TTL_S.
 func desired(enemy: Ship) -> Vector2:
 	var now: float = SimClock.now()
 	var c: Array = _desired_cache.get(enemy.get_instance_id(), [])
-	if not c.is_empty() and now - float(c[0]) < RADIUS_TTL_S:
+	if not c.is_empty() and now - float(c[0]) < staggered_ttl(RADIUS_TTL_S, enemy.get_instance_id()):
 		return c[1]
 	var d := desired_range(enemy)
 	_desired_cache[enemy.get_instance_id()] = [now, d]
@@ -4463,13 +4523,21 @@ func update_rings(ctx: SkillContext) -> void:
 			continue
 		var id := e.get_instance_id()
 		var h: Array = _ring_held.get(id, [])
+		var r0 := Time.get_ticks_usec()
 		var want := desired(e)
-		want.x = BotDials.shifted_ring(want.x, float(_trade(e).push), float(dials.eased.get("ring_shift", 0.0)))
+		var r1 := Time.get_ticks_usec()
+		var tr := _trade(e)
+		var r2 := Time.get_ticks_usec()
+		BotTiming.add_us(&"rg_desired", r1 - r0)
+		BotTiming.add_us(&"rg_trade", r2 - r1)
+		want.x = BotDials.shifted_ring(want.x, float(tr.push), float(dials.eased.get("ring_shift", 0.0)))
 		var r: float = want.x if h.is_empty() else float(h[0])
 		var dt: float = 0.0 if h.is_empty() else maxf(now - float(h[1]), 0.0)
 		var dist: float = here.distance_to(b.pos)
 		var shot: bool = active_shooters_at_me.has(e)
+		var r3 := Time.get_ticks_usec()
 		var aggro: float = INF if shot or not aptitude.aggro_aware else aggro_radius(ctx, e, b.pos, want.x)
+		BotTiming.add(&"rg_aggro", r3)
 		if aggro < want.x:
 			r = aggro if aggro < r else move_toward(r, aggro, RING_SHRINK_MPS * dt)
 		elif dist < want.x and not shot:
@@ -4493,24 +4561,22 @@ func aggro_radius(ctx: SkillContext, e: Ship, at: Vector2, within: float) -> flo
 	var c: Array = _aggro_cache.get(e.get_instance_id(), [])
 	if not c.is_empty() and now - float(c[0]) < AGGRO_TTL_S:
 		return c[1]
+	var tvt := Time.get_ticks_usec()
 	var tv := _team_view(_team_tanks, ctx.server, e, at, true)
+	BotTiming.add(&"ag_team", tvt)
 	var tank: float = tv[2] if int(tv[3]) == _ship.get_instance_id() else tv[1]
 	var out := INF
 	if tank > 0.0:
-		var take := -1.0
-		var release := -1.0
 		var ranges := PackedFloat64Array()
 		var r: float = minf(reach_m(e), within)
 		while r >= POINT_BLANK_M:
 			ranges.append(r)
 			r -= DESIRED_STEP_M
-		var mine_at := priority_at(e, _ship, ranges, tank * PRIORITY_SWITCH)
-		for i in mine_at.size():
-			if mine_at[i] > tank * PRIORITY_SWITCH:
-				break
-			take = ranges[i]
-			if mine_at[i] <= tank / PRIORITY_SWITCH:
-				release = ranges[i]
+		var ta := Time.get_ticks_usec()
+		var tr := _aggro_take(e, _ship, ranges, tank)
+		BotTiming.add(&"ag_native", ta)
+		var take: float = tr[0]
+		var release: float = tr[1]
 		if take > 0.0:
 			var back: float = maxf(_ship.movement_controller.max_speed * _ship.movement_controller._p().reverse_speed_ratio, 1.0)
 			var cost: float = kill_rate(e, _ship, take) * maxf(release - take, 0.0) / back
@@ -4627,7 +4693,9 @@ func optimal_engagement_range(ctx: SkillContext) -> float:
 ## partial survey never gets to reload anything.
 func _secondary_target_offset(target: Ship) -> Vector3:
 	var sec = _ship.secondary_controller
+	var t0 := Time.get_ticks_usec()
 	var solved := _gunnery.solve_secondary(_ship, target)
+	BotTiming.add(&"sec_aim_table" if bool(solved.get("walked", false)) else &"sec_aim_none", t0)
 	if bool(solved.get("probed", false)):
 		var ammo := int(solved.get("ammo", sec.shell_index))
 		if sec.shell_index != ammo:
