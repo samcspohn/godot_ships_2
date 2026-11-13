@@ -64,6 +64,7 @@ enum Cooldown {
 	DECK = 1, # waiting on the flight deck: takeoff interval, or a replacement plane
 	RELOAD = 2, # rearming after dropping its ordnance
 	DEPLOYED = 3, # airborne, running down its fuel
+	COMMITTED = 4, # holding a fresh station, not taking orders yet
 }
 var _cooldown_kind: Array[int] = []
 
@@ -72,6 +73,7 @@ var _cooldown_kind: Array[int] = []
 # replacement plane - keeps the default yellow.
 const DEPLOYED_COLOR := Color(0.25, 0.85, 1.0, COOLDOWN_ALPHA)
 const RELOAD_COLOR := Color(1.0, 0.28, 0.22, COOLDOWN_ALPHA)
+const COMMITTED_COLOR := Color(0.85, 0.35, 1.0, COOLDOWN_ALPHA)
 
 func _ready() -> void:
 	multi_select = true
@@ -313,6 +315,11 @@ func _tick_cooldowns(delta: float) -> void:
 		_reload_remaining[i] = maxf(_reload_remaining[i] - delta, 0.0)
 		_alive_counts[i] = squadrons[i].alive_count()
 		var plane_params := params[i].p() as AircraftParams
+		if squadrons[i].active and squadrons[i].station_lock > 0.0:
+			_cooldown_remaining[i] = squadrons[i].station_lock
+			_cooldown_total[i] = Squadron.STATION_COMMIT_S
+			_cooldown_kind[i] = Cooldown.COMMITTED
+			continue
 		if squadrons[i].active:
 			# Airborne: the bar is the sortie itself running out, not a wait.
 			_cooldown_remaining[i] = squadrons[i].fuel_remaining
@@ -453,6 +460,8 @@ func get_button_cooldown_color(index: int) -> Color:
 			return DEPLOYED_COLOR
 		Cooldown.RELOAD:
 			return RELOAD_COLOR
+		Cooldown.COMMITTED:
+			return COMMITTED_COLOR
 	return COOLDOWN_COLOR
 
 func is_button_ready(index: int) -> bool:

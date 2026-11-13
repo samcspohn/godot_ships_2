@@ -31,7 +31,7 @@ const FACE_GRID := [[ArmorPart.Type.CITADEL, 6, 3, 1.0], [ArmorPart.Type.CASEMAT
 ## "kernel" scores with the analytic truncated-Gaussian kernel; "mc" with DispersionCalculator samples.
 var mode: String = "mc"
 var dense: bool = true
-## Grid cells before fine rows and sub-cells: 700 walks ~1300-1500 rays a bucket (BotGunnery's 192, ~800).
+## Grid cells before fine rows and sub-cells: 700 walks ~1300-1500 rays a bucket (the v4 solver's 192, ~800).
 var cells: int = 700
 ## bucket -> PackedFloat32Array[n_points]: value per shot at full pools, the query's upper bound.
 var full: Dictionary = {}
@@ -46,16 +46,16 @@ var stats := {"buckets": 0, "walks": 0, "walk_us": 0.0, "score_us": 0.0, "build_
 
 
 static func _comp_payouts() -> PackedFloat64Array:
-	var base := BotGunnery._base_payouts()
-	var n := BotGunnery.SECTION_COUNT * 16
+	var base := GunneryModel.base_payouts()
+	var n := GunneryModel.SECTION_COUNT * 16
 	var out := PackedFloat64Array()
 	out.resize(N_COMP * n)
-	for sec in BotGunnery.SECTION_COUNT:
+	for sec in GunneryModel.SECTION_COUNT:
 		for code in base.size():
 			if base[code] <= 0.0:
 				continue
 			var k := _comp_of(sec, code)
-			var v: float = BotGunnery.SATURATED_FLOOR if sec == BotGunnery.SEC_MODULE else base[code]
+			var v: float = GunneryModel.SATURATED_FLOOR if sec == GunneryModel.SEC_MODULE else base[code]
 			out[k * n + sec * 16 + code] = v
 	return out
 
@@ -74,26 +74,26 @@ func build(shooter: Ship, target: Ship, shell_index: int) -> bool:
 	shell = p.shell1 if shell_index == 0 else p.shell2
 	if shell == null:
 		return false
-	points = candidate_points(target) if dense else BotGunnery.feature_points(target)
-	n_aspect = BotGunnery._aspect_edges().size() - 1
-	var st: Dictionary = BotGunnery._shell_table(shell)
+	points = candidate_points(target) if dense else GunneryModel.feature_points(target)
+	n_aspect = GunneryModel.aspect_edges().size() - 1
+	var st: Dictionary = GunneryModel.shell_table(shell)
 	var comp := _comp_payouts()
 	var lead := DamageExpectation.lead_sigmas(target)
-	var mc := _mc_samples(BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, RANGES_M[0]))
+	var mc := _mc_samples(GunneryModel.batteries(shooter, GunneryModel.KIND_MAIN, RANGES_M[0]))
 	for r in RANGES_M:
-		var mounts: Array = BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, r)
-		var at: Array = BotGunnery._shell_at(st, r)
+		var mounts: Array = GunneryModel.batteries(shooter, GunneryModel.KIND_MAIN, r)
+		var at: Array = GunneryModel.shell_at(st, r)
 		if mounts.is_empty() or at.is_empty():
 			break
 		var m: Dictionary = mounts[0]
 		var ri := ranges.size()
 		ranges.append(r)
 		for ai in n_aspect:
-			var geo: Dictionary = BotGunnery.build_lattice_at(target, ai, at[0], cells)
+			var geo: Dictionary = GunneryModel.build_lattice_at(target, ai, at[0], cells)
 			if geo.is_empty():
 				continue
-			var frame: Array = BotGunnery.lattice_frame(ai)
-			var a := deg_to_rad(BotGunnery._aspect_center(ai))
+			var frame: Array = GunneryModel.lattice_frame(ai)
+			var a := deg_to_rad(GunneryModel.aspect_center(ai))
 			var gun := Vector3(sin(a), 0.0, -cos(a)) * r
 			var pts: PackedVector3Array = geo["points"]
 			var dirs := PackedVector3Array()
@@ -102,7 +102,7 @@ func build(shooter: Ship, target: Ship, shell_index: int) -> bool:
 			speeds.resize(pts.size())
 			for i in pts.size():
 				var hv := Vector3(pts[i].x - gun.x, 0.0, pts[i].z - gun.z)
-				var s: Array = BotGunnery._shell_at(st, hv.length())
+				var s: Array = GunneryModel.shell_at(st, hv.length())
 				if s.is_empty():
 					s = at
 				var d := deg_to_rad(s[0])
@@ -111,12 +111,12 @@ func build(shooter: Ship, target: Ship, shell_index: int) -> bool:
 			var aims := PackedVector2Array()
 			var bias := Vector3(0.0, 0.0, -lead_bias_along(target, r))
 			for fp in points:
-				aims.append(BotGunnery._to_plane(fp + bias, geo["dir"], frame))
-			var hd: Vector2 = BotGunnery.table_half_disp(shooter, m, r)
-			var lead_sd: Vector2 = BotGunnery.lead_axes(at[0], BotGunnery._aspect_center(ai), r, lead)
+				aims.append(GunneryModel.to_plane(fp + bias, geo["dir"], frame))
+			var hd: Vector2 = GunneryModel.table_half_disp(shooter, m, r)
+			var lead_sd: Vector2 = GunneryModel.lead_axes(at[0], GunneryModel.aspect_center(ai), r, lead)
 			var opts := {"nx": geo["nx"], "ny": geo["ny"], "rect": geo["rect"], "v_edges": geo["edges"],
 				"refine": geo["refine"], "sigma": m["sigma"], "guarantee": m["guarantee"],
-				"ellipse": BotGunnery.CITADEL_ELLIPSE, "n_comp": N_COMP, "turret_cap": BotGunnery.DMG_TURRET}
+				"ellipse": GunneryModel.CITADEL_ELLIPSE, "n_comp": N_COMP, "turret_cap": GunneryModel.DMG_TURRET}
 			if mode == "mc":
 				opts.merge({"half_disp": hd, "mc_off": mc[0], "mc_lead": mc[1], "lead_sd": lead_sd})
 			else:
@@ -226,7 +226,7 @@ static func load_from(path: String, for_shell: ShellParams) -> RefCounted:
 	var d = f.get_var()
 	if not (d is Dictionary) or int(d.get("version", -1)) != VERSION:
 		return null
-	var t = load("res://src/ship/bot_behavior/point_table.gd").new()
+	var t = load("res://src/ship/gunnery/point_table.gd").new()
 	t.shell = for_shell
 	t.points = d["points"]
 	t.ranges = d["ranges"]
@@ -240,7 +240,7 @@ static func load_from(path: String, for_shell: ShellParams) -> RefCounted:
 ## Component weights for the pool states pruning must keep answers for: fresh, each saturable section drained
 ## alone, all but each one drained, and all drained.
 static func _prune_scenarios() -> Array:
-	var base := BotGunnery._base_payouts()
+	var base := GunneryModel.base_payouts()
 	var n := SAT_SECTIONS.size()
 	var masks: Array = [0, (1 << n) - 1]
 	for si in n:
@@ -255,7 +255,7 @@ static func _prune_scenarios() -> Array:
 			if mask & (1 << si):
 				for ci in PEN_CODES.size():
 					var code: int = PEN_CODES[ci]
-					w[1 + si * 4 + ci] = BotGunnery.SATURATED_FLOOR / base[code] if base[code] > 0.0 else 0.0
+					w[1 + si * 4 + ci] = GunneryModel.SATURATED_FLOOR / base[code] if base[code] > 0.0 else 0.0
 		out.append(w)
 	return out
 
@@ -267,8 +267,8 @@ func prune(target: Ship, tol: float = 0.03) -> int:
 	var keep := PackedByteArray()
 	keep.resize(n)
 	var is_he := shell.type == ShellParams.ShellType.HE
-	var fire_k: float = BotGunnery._raw_fire_chance(shell, target) * BotGunnery.fire_dps(target) \
-		* BotGunnery.fire_burn_s(target) if is_he else 0.0
+	var fire_k: float = GunneryModel.raw_fire_chance(shell, target) * GunneryModel.fire_dps(target) \
+		* GunneryModel.fire_burn_s(target) if is_he else 0.0
 	var scen := _prune_scenarios()
 	var vals := PackedFloat32Array()
 	vals.resize(n)
@@ -318,40 +318,40 @@ static func runtime_job(shooter: Ship, target: Ship, ammo: int, cells: int = 700
 		return {}
 	var mounts_at := func(r: float) -> Array:
 		if sub < 0:
-			return BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, r)
-		var b = BotGunnery.sec_battery(shooter, sub, r)
+			return GunneryModel.batteries(shooter, GunneryModel.KIND_MAIN, r)
+		var b = GunneryModel.sec_battery(shooter, sub, r)
 		return [] if b == null else [b]
-	var st: Dictionary = BotGunnery._shell_table(sh)
+	var st: Dictionary = GunneryModel.shell_table(sh)
 	var rs := PackedFloat32Array()
 	var hd := PackedVector2Array()
 	for r in RANGES_M:
 		var mounts: Array = mounts_at.call(r)
-		if mounts.is_empty() or BotGunnery._shell_at(st, r).is_empty():
+		if mounts.is_empty() or GunneryModel.shell_at(st, r).is_empty():
 			break
 		rs.append(r)
-		hd.append(BotGunnery.table_half_disp(shooter, mounts[0], r) if sub < 0 else BotGunnery._half_disp(mounts[0], r))
+		hd.append(GunneryModel.table_half_disp(shooter, mounts[0], r) if sub < 0 else GunneryModel.half_disp(mounts[0], r))
 	if rs.is_empty():
 		return {}
 	var mc := _mc_samples(mounts_at.call(rs[0]))
 	var aspects := PackedFloat64Array()
-	for ai in BotGunnery._aspect_edges().size() - 1:
-		aspects.append(BotGunnery._aspect_center(ai))
+	for ai in GunneryModel.aspect_edges().size() - 1:
+		aspects.append(GunneryModel.aspect_center(ai))
 	return {"shell": sh, "secondary": sub >= 0, "shell_r": st["r"], "shell_desc": st["desc"], "shell_v": st["v"],
-		"shell_step": BotGunnery.SHELL_RANGE_STEP_M, "ranges": rs, "half_disp": hd,
+		"shell_step": GunneryModel.SHELL_RANGE_STEP_M, "ranges": rs, "half_disp": hd,
 		"bias": PackedFloat32Array(LEAD_BIAS_ALONG.get(DamageExpectation.class_name_of(target), [])),
 		"lead": DamageExpectation.lead_sigmas(target), "lead_band": DamageExpectation.LEAD_BAND_M, "aspects": aspects,
 		"points": candidate_points(target), "sections": candidate_sections(target), "sat_w": sat_weights(),
-		"features": BotGunnery.feature_points(target), "mc_off": mc[0], "mc_lead": mc[1],
-		"comp": _comp_payouts(), "n_comp": N_COMP, "turret_cap": BotGunnery.DMG_TURRET,
-		"consts": PackedFloat64Array([BotGunnery.LATTICE_CELLS, BotGunnery.LATTICE_MIN, BotGunnery.LATTICE_MAX,
-			BotGunnery.FINE_Y_LO_M, BotGunnery.FINE_Y_HI_M, BotGunnery.FINE_ROW_M, BotGunnery.FINE_ROWS_MAX,
-			BotGunnery.FINE_DESCENT_MAX_DEG, BotGunnery.SUB_CELL_M, BotGunnery.SUB_MAX, BotGunnery.ANCHOR_GAP_COLS,
-			BotGunnery.ANCHOR_GAP_V_M, cells])}
+		"features": GunneryModel.feature_points(target), "mc_off": mc[0], "mc_lead": mc[1],
+		"comp": _comp_payouts(), "n_comp": N_COMP, "turret_cap": GunneryModel.DMG_TURRET,
+		"consts": PackedFloat64Array([GunneryModel.LATTICE_CELLS, GunneryModel.LATTICE_MIN, GunneryModel.LATTICE_MAX,
+			GunneryModel.FINE_Y_LO_M, GunneryModel.FINE_Y_HI_M, GunneryModel.FINE_ROW_M, GunneryModel.FINE_ROWS_MAX,
+			GunneryModel.FINE_DESCENT_MAX_DEG, GunneryModel.SUB_CELL_M, GunneryModel.SUB_MAX, GunneryModel.ANCHOR_GAP_COLS,
+			GunneryModel.ANCHOR_GAP_V_M, cells])}
 
 
 ## An empty table for `job`, filled bucket by bucket through absorb().
 static func runtime_table(job: Dictionary) -> RefCounted:
-	var t = load("res://src/ship/bot_behavior/point_table.gd").new()
+	var t = load("res://src/ship/gunnery/point_table.gd").new()
 	t.shell = job["shell"]
 	t.points = job["points"]
 	t.ranges = job["ranges"]
@@ -459,18 +459,18 @@ static func sections_of(target: Ship, pts: PackedVector3Array) -> PackedInt32Arr
 
 ## Per PEN_CODES slot, a drained section's component weight: what the hull pool alone still pays, floored.
 static func sat_weights() -> PackedFloat64Array:
-	var base := BotGunnery._base_payouts()
+	var base := GunneryModel.base_payouts()
 	var out := PackedFloat64Array()
 	for code in PEN_CODES:
 		var b: float = base[code]
-		out.append(maxf(1.0 - HPManager.SECTION_SHARE, BotGunnery.SATURATED_FLOOR / b) if b > 0.0 else 0.0)
+		out.append(maxf(1.0 - HPManager.SECTION_SHARE, GunneryModel.SATURATED_FLOOR / b) if b > 0.0 else 0.0)
 	return out
 
 
 ## Live weight per component: what `target`'s pools pay now over full.
 static func comp_weights(target: Ship, shell_damage: float) -> PackedFloat32Array:
-	var base := BotGunnery._base_payouts()
-	var live := BotGunnery._payouts(target, shell_damage)
+	var base := GunneryModel.base_payouts()
+	var live := GunneryModel.live_payouts(target, shell_damage)
 	var w := PackedFloat32Array()
 	w.resize(N_COMP)
 	w[0] = 1.0
@@ -490,7 +490,7 @@ func values(range_m: float, aspect_deg: float, w: PackedFloat32Array) -> PackedF
 	var rf := _frac(ranges, range_m)
 	var centers := PackedFloat32Array()
 	for ai in n_aspect:
-		centers.append(BotGunnery._aspect_center(ai))
+		centers.append(GunneryModel.aspect_center(ai))
 	var af := _frac(centers, aspect_deg)
 	for corner in 4:
 		var ri: int = int(rf.x) + (corner & 1)
@@ -528,8 +528,8 @@ func best(target: Ship, range_m: float, aspect_deg: float) -> Dictionary:
 	for k in points.size():
 		var val: float = v[2 * k] * shell.damage
 		if is_he:
-			val += BotGunnery._fire_chance(shell, target, points[k]) * BotGunnery.fire_dps(target) \
-				* BotGunnery.fire_burn_s(target) * v[2 * k + 1]
+			val += GunneryModel.fire_chance(shell, target, points[k]) * GunneryModel.fire_dps(target) \
+				* GunneryModel.fire_burn_s(target) * v[2 * k + 1]
 		if val > bv:
 			bv = val
 			bi = k
@@ -553,7 +553,7 @@ func useful(target: Ship, tol: float) -> PackedInt32Array:
 	var w := comp_weights(target, shell.damage)
 	for ri in ranges.size():
 		for ai in n_aspect:
-			var v := values(ranges[ri], BotGunnery._aspect_center(ai), w)
+			var v := values(ranges[ri], GunneryModel.aspect_center(ai), w)
 			var top := 0.0
 			for k in points.size():
 				top = maxf(top, v[2 * k])
@@ -573,7 +573,7 @@ func _corners(range_m: float, aspect_deg: float) -> Array:
 	var rf := _frac(ranges, range_m)
 	var centers := PackedFloat32Array()
 	for ai in n_aspect:
-		centers.append(BotGunnery._aspect_center(ai))
+		centers.append(GunneryModel.aspect_center(ai))
 	var af := _frac(centers, aspect_deg)
 	for corner in 4:
 		var wt: float = (rf.y if corner & 1 else 1.0 - rf.y) * (af.y if corner >> 1 else 1.0 - af.y)
@@ -595,8 +595,8 @@ func best_sorted(target: Ship, range_m: float, aspect_deg: float) -> Dictionary:
 		return {"point": -1, "value": 0.0, "damage": 0.0, "landed": 0.0, "visited": 0}
 	var n := points.size()
 	var is_he := shell.type == ShellParams.ShellType.HE
-	var fire_k: float = BotGunnery.fire_dps(target) * BotGunnery.fire_burn_s(target) if is_he else 0.0
-	var raw_fire: float = BotGunnery._raw_fire_chance(shell, target) if is_he else 0.0
+	var fire_k: float = GunneryModel.fire_dps(target) * GunneryModel.fire_burn_s(target) if is_he else 0.0
+	var raw_fire: float = GunneryModel.raw_fire_chance(shell, target) if is_he else 0.0
 	var ub := PackedFloat32Array()
 	ub.resize(n)
 	var landed := PackedFloat32Array()
@@ -630,7 +630,7 @@ func best_sorted(target: Ship, range_m: float, aspect_deg: float) -> Dictionary:
 				acc += maxf(b[k * STRIDE + ci], 0.0) * w[ci]
 			v += acc * c[1]
 		var dmg: float = v * shell.damage
-		var val: float = dmg + (BotGunnery._fire_chance(shell, target, points[k]) * fire_k * landed[k] if is_he else 0.0)
+		var val: float = dmg + (GunneryModel.fire_chance(shell, target, points[k]) * fire_k * landed[k] if is_he else 0.0)
 		if val > bv:
 			bv = val
 			bi = k

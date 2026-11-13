@@ -96,7 +96,7 @@ func _row_sig(shooter: Ship, read: int) -> int:
 	if shooter.artillery_controller != null:
 		for g in shooter.artillery_controller.guns:
 			live += int(not g.disabled)
-	var ready: bool = BotGunnery.point_tables_ready(shooter, _me)
+	var ready: bool = PointTables.point_tables_ready(shooter, _me)
 	# HP only moves the baked fallback the rows use before the shooter's point tables are built.
 	var sig := hash([_me_live[0], read, live, ready, -1 if ready else _me_hpq])
 	_sig_cache[key] = sig
@@ -738,7 +738,7 @@ func _price_cfg(vmax: float, team_id: int, rows: StringName, window_s: float, st
 		sh.append_array([(s.pos as Vector2).x, (s.pos as Vector2).y, s.weight, _GROUP_INDEX[s.group], s.bit, s.spread, s.range,
 			s.reload, s.next, float(stops.get(s.id, INF))])
 		ids.append(s.id)
-	return {"shooters": sh, "store": _store, "ids": ids, "kind": _rows_index(rows), "pm": BotGunnery._projectile_native(),
+	return {"shooters": sh, "store": _store, "ids": ids, "kind": _rows_index(rows), "pm": GunneryModel.native_pm(),
 		"slices": PackedFloat64Array(DamageExpectation.TURNOUT_SLICES_S), "vmax": vmax,
 		"at_speed": DODGE_AT_SPEED, "team": team_id, "field": NavigationMapManager.get_reach_field(), "window": window_s,
 		"skip": skip_s, "dt": ESCAPE_DT, "aspects": ASPECTS, "aspect_step": ASPECT_STEP_DEG, "bucket_m": RANGE_BUCKET_M,
@@ -990,7 +990,7 @@ const DODGE_PRICE_S: float = 20.0
 
 ## Whether an enemy shell lands near `ship` that the last dodge plan did not see.
 func shells_fresh(ship: Ship) -> bool:
-	return _planner.fresh(BotGunnery._projectile_native(), Vector2(ship.global_position.x, ship.global_position.z),
+	return _planner.fresh(GunneryModel.native_pm(), Vector2(ship.global_position.x, ship.global_position.z),
 		SHELL_QUERY_M, ship.team.team_id, SimClock.now())
 
 var _planner := DodgePlanner.new()
@@ -999,7 +999,7 @@ var _planner := DodgePlanner.new()
 ## shells are fired. False when the lie does as well.
 func _dodge(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
-	var pm: Object = BotGunnery._projectile_native()
+	var pm: Object = GunneryModel.native_pm()
 	var at := Vector2(ship.global_position.x, ship.global_position.z)
 	var state: int = _planner.check(pm, at, SHELL_QUERY_M, ship.team.team_id, SimClock.now())
 	if state < 2 or ctx.navigator == null:
@@ -1332,7 +1332,7 @@ static func dps_at(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float)
 ## (dps, repairable dps) of the worse ammo for us, from `shooter`'s point table once built, else the baked summary;
 ## (-1, 0) unknown.
 static func _expected(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float) -> Vector2:
-	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if BotGunnery.point_tables_on() else {}
+	var e: Dictionary = BotGunnery._expected_points(shooter, ship, range_m, aspect_deg) if PointTables.point_tables_on() else {}
 	return _expected_of(e, ship, shooter, range_m, aspect_deg)
 
 
@@ -1515,7 +1515,7 @@ func _ensure(ship: Ship, shooter: Ship, range_m: float, cells: PackedInt32Array 
 	var bucket := int(range_m / RANGE_BUCKET_M)
 	var read: int = _clock.shell_read(shooter) if _clock != null else SalvoClock.SHELL_UNKNOWN
 	var sig := _row_sig(shooter, read)
-	var pm := BotGunnery._projectile_native()
+	var pm := GunneryModel.native_pm()
 	var tq := Time.get_ticks_usec()
 	if _store.ensure(pm, id, bucket, range_m, sig, SimClock.now(), TABLE_TTL_S, read, _me_live[1], _me_live[2], cells,
 			ASPECT_STEP_DEG, ASPECTS) < 0:
@@ -1526,13 +1526,13 @@ func _ensure(ship: Ship, shooter: Ship, range_m: float, cells: PackedInt32Array 
 	return bucket
 
 
-## Our point-table live inputs (BotGunnery._pt_live_inputs: [point_sig, saturation mask, fires]) and HP step, as of the
+## Our point-table live inputs (PointTables.live_inputs: [point_sig, saturation mask, fires]) and HP step, as of the
 ## last survey or redodge.
 var _me_live: Array = [0, 0, PackedFloat32Array()]
 var _me_hpq: int = 0
 
 func _refresh_me(ship: Ship) -> void:
-	_me_live = BotGunnery._pt_live_inputs(ship, 0.0)
+	_me_live = PointTables.live_inputs(ship, 0.0)
 	var hp = ship.health_controller
 	_me_hpq = roundi(20.0 * hp.current_hp / maxf(hp.max_hp, 1.0)) if hp != null else 0
 	_sig_cache.clear()
@@ -1874,7 +1874,7 @@ func _duel_scores(ctx: SkillContext, t: Ship, tracks: Dictionary, names: Array) 
 	for name in names:
 		flats.append(_pack_track(tracks[name]))
 		_w["incoming"] = int(_w.get("incoming", 0)) + 1
-	var pm := BotGunnery._projectile_native()
+	var pm := GunneryModel.native_pm()
 	var r: Dictionary = StanceSim.duel_scores(_sec_cache, pm, flats, cfg)
 	for i in _MISSING_ROUNDS:
 		var rows: PackedFloat64Array = r.rows
@@ -1901,7 +1901,7 @@ static func _fill_sec(ships: Array, miss: PackedFloat64Array) -> void:
 	var v := PackedFloat32Array()
 	for j in range(0, miss.size(), 5):
 		var pair: Array = ships[int(miss[j])]
-		var e: Dictionary = BotGunnery.expected(pair[0], pair[1], miss[j + 1], miss[j + 2], BotGunnery.KIND_SECONDARY, miss[j + 3])
+		var e: Dictionary = BotGunnery.expected(pair[0], pair[1], miss[j + 1], miss[j + 2], GunneryModel.KIND_SECONDARY, miss[j + 3])
 		q.append_array([(pair[0] as Ship).get_instance_id(), (pair[1] as Ship).get_instance_id(), miss[j + 4], miss[j + 1],
 			miss[j + 2], miss[j + 3]])
 		v.append(maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0))))
@@ -1911,7 +1911,7 @@ static func _fill_sec(ships: Array, miss: PackedFloat64Array) -> void:
 var _gun_pack_at: Array = []
 
 func _gun_pack(ship: Ship, t: Ship, asp: float) -> Array:
-	var sig := [t.get_instance_id(), BotGunnery.point_sig(t), DamageExpectation.aspect_band(asp), SimClock.now()]
+	var sig := [t.get_instance_id(), PointTables.point_sig(t), DamageExpectation.aspect_band(asp), SimClock.now()]
 	if _gun_pack_at.size() == 3 and _gun_pack_at[0] == sig:
 		return [_gun_pack_at[1], _gun_pack_at[2]]
 	var bands: int = int(ship.artillery_controller.get_params()._range / DamageExpectation.RANGE_BAND_M) + 2
@@ -1924,14 +1924,14 @@ static var _sec_cache := SecCache.new()
 
 ## `shooter`'s secondaries' pack on `target` set in _sec_cache for its state now.
 static func _sec_ready(shooter: Ship, target: Ship) -> void:
-	var sig := hash([BotGunnery.point_sig(target), BotGunnery._rt_keys.size()])
+	var sig := hash([PointTables.point_sig(target), PointTables._rt_keys.size()])
 	if not _sec_cache.has_pack(shooter.get_instance_id(), target.get_instance_id(), sig):
-		_sec_cache.set_pack(shooter.get_instance_id(), target.get_instance_id(), sig, BotGunnery.sec_pack(shooter, target))
+		_sec_cache.set_pack(shooter.get_instance_id(), target.get_instance_id(), sig, PointTables.sec_pack(shooter, target))
 
 ## _secondary_dps from the secondary point tables; NAN while they cannot answer.
 static func sec_dps(shooter: Ship, target: Ship, range_m: float, aspect_deg: float, bearing_deg: float) -> float:
 	_sec_ready(shooter, target)
-	return _sec_cache.dps(BotGunnery._projectile_native(), shooter.get_instance_id(), target.get_instance_id(), range_m,
+	return _sec_cache.dps(GunneryModel.native_pm(), shooter.get_instance_id(), target.get_instance_id(), range_m,
 		aspect_deg, bearing_deg)
 
 ## _secondary_dps at each of `ranges`; NAN where the secondary tables cannot answer.
@@ -1942,7 +1942,7 @@ static func sec_curve(shooter: Ship, target: Ship, ranges: PackedFloat64Array, a
 		none.resize(ranges.size())
 		return none
 	_sec_ready(shooter, target)
-	return _sec_cache.curve(BotGunnery._projectile_native(), shooter.get_instance_id(), target.get_instance_id(), ranges,
+	return _sec_cache.curve(GunneryModel.native_pm(), shooter.get_instance_id(), target.get_instance_id(), ranges,
 		aspect_deg, BotBehavior.guns_bear_aspect(shooter), sec.get_max_range())
 
 ## Real over predicted damage per "<our class>><target class>", fitted by tools/botmatch/duel_cal.py from

@@ -12,6 +12,10 @@ const C_TRUE := Color(1.0, 0.3, 0.3)
 const C_BELIEF := Color(0.3, 0.7, 1.0)
 const C_VIEW := Color(0.7, 0.3, 1.0)
 const C_FOCUS := Color(1.0, 1.0, 1.0, 0.35)
+const C_TORP_RUN := Color(0.2, 0.8, 1.0)
+const C_TORP := Color(0.2, 1.0, 0.8)
+const C_TORP_HELD := Color(0.2, 1.0, 0.8, 0.3)
+const C_SPOT := Color(1.0, 1.0, 0.4)
 
 
 static func draw(b: Dictionary, team: Dictionary, now: float) -> void:
@@ -21,6 +25,8 @@ static func draw(b: Dictionary, team: Dictionary, now: float) -> void:
 	_draw_plan(b, me)
 	_draw_nav(b, me)
 	_draw_guns(b, me)
+	_draw_torps(b)
+	_draw_spot(b, me)
 	_draw_team(team, b)
 	Debug.draw_label(me + Vector3(0.0, 140.0, 0.0), _summary(b, now), Color(0.9, 1.0, 0.9), 14)
 
@@ -28,7 +34,7 @@ static func draw(b: Dictionary, team: Dictionary, now: float) -> void:
 static func _draw_plan(b: Dictionary, me: Vector3) -> void:
 	if not b.has("station"):
 		return
-	var col: Color = C_RETREAT if b.get("retreat", false) else C_ENGAGE
+	var col: Color = {"retreat": C_RETREAT, "torp_run": C_TORP_RUN}.get(b.get("posture", ""), C_ENGAGE)
 	var st: Vector3 = b.station
 	Debug.draw_line(me + LIFT, st + LIFT, col)
 	Debug.draw_im_sphere(st + LIFT, 20.0, col)
@@ -69,6 +75,28 @@ static func _draw_guns(b: Dictionary, me: Vector3) -> void:
 			Debug.draw_label(p + Vector3(0.0, 90.0, 0.0), "in line of fire", C_CLEAR.friendly, 14)
 
 
+static func _draw_torps(b: Dictionary) -> void:
+	if not b.has("torp_points"):
+		return
+	var from: Vector3 = b.torp_from + Vector3(0.0, 6.0, 0.0)
+	var pts: PackedVector3Array = b.torp_points
+	var col := C_TORP if b.get("torp_gate", "") == "torp_fire" else C_TORP_HELD
+	for k in pts.size():
+		var c := col if k == int(b.torp_next) else Color(col, col.a * 0.5)
+		Debug.draw_line(from, pts[k] + Vector3(0.0, 6.0, 0.0), c)
+	Debug.draw_im_sphere(b.torp_intercept + Vector3(0.0, 10.0, 0.0), 30.0, col)
+
+
+static func _draw_spot(b: Dictionary, me: Vector3) -> void:
+	if not b.has("spot_reach"):
+		return
+	Debug.draw_circle(me + Vector3(0.0, 4.0, 0.0), b.spot_reach, Color(C_SPOT, 0.25), 64)
+	if b.has("spot_point"):
+		var p: Vector3 = b.spot_point + Vector3(0.0, 60.0, 0.0)
+		Debug.draw_line(me + LIFT, p, C_SPOT)
+		Debug.draw_circle(p, 2000.0, Color(C_SPOT, 0.5 if b.get("spot_up", false) else 0.2), 48)
+
+
 static func _draw_team(team: Dictionary, b: Dictionary) -> void:
 	for c: Dictionary in team.get("contacts", []):
 		var bel: Vector3 = c.belief
@@ -107,6 +135,10 @@ static func _summary(b: Dictionary, now: float) -> String:
 		lines.append(b.get("gate", ""))
 	if b.has("release"):
 		lines.append("replan: %s %ds ago" % [b.release, int(now - float(b.release_at))])
+	if b.has("torp_gate"):
+		lines.append("torp %s %d%%" % [b.torp_gate, roundi(100.0 * float(b.get("torp_chance", 0.0)))])
+	if b.has("spot_reach"):
+		lines.append("spotter %s%s" % ["up" if b.get("spot_up", false) else "deck", " tasked" if b.has("spot_point") else ""])
 	if float(b.get("blocked_s", 0.0)) > 0.1:
 		lines.append("blocked %.1fs" % float(b.blocked_s))
 	return "\n".join(lines)

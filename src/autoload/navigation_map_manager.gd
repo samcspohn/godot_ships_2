@@ -213,6 +213,8 @@ static func reach_conceal_radius(ship) -> float:
 ## What the reach field needs to know about a ship's main battery, or {} when
 ## it has none. gun_h is the mean muzzle height above the water, snapped to a
 ## metre so the wave motion does not spawn a table per frame.
+static var _gun_h: Dictionary = {}
+
 static func reach_gun(ship) -> Dictionary:
 	if not is_instance_valid(ship) or not ship.is_alive() or ship.artillery_controller == null:
 		return {}
@@ -221,14 +223,18 @@ static func reach_gun(ship) -> Dictionary:
 	var gp = ac.get_params()
 	if shell == null or gp == null or shell.speed <= 0.0 or shell.drag <= 0.0:
 		return {}
-	var gun_h := 0.0
-	var n := 0
-	for gun in ac.guns:
-		if is_instance_valid(gun) and gun.muzzles.size() > 0:
-			gun_h += gun.get_muzzles_position().y
-			n += 1
-	gun_h = snappedf(gun_h / n, 1.0) if n > 0 else 5.0
-	return {"speed": shell.speed, "drag": shell.drag, "range": gp._range, "gun_h": maxf(gun_h, 1.0)}
+	var id: int = ship.get_instance_id()
+	var gun_h: float = _gun_h.get(id, -1.0)
+	if gun_h < 0.0:
+		var n := 0
+		gun_h = 0.0
+		for gun in ac.guns:
+			if is_instance_valid(gun) and gun.muzzles.size() > 0:
+				gun_h += gun.get_muzzles_position().y
+				n += 1
+		gun_h = maxf(snappedf(gun_h / n, 1.0) if n > 0 else 5.0, 1.0)
+		_gun_h[id] = gun_h
+	return {"speed": shell.speed, "drag": shell.drag, "range": gp._range, "gun_h": gun_h}
 
 ## Sphere-traces from just inside an island's bounding radius along `direction`
 ## to the first point with `clearance` of water. Vector3.ZERO when none within

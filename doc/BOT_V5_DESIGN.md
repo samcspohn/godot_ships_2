@@ -113,11 +113,12 @@ The learned route graph (FIGHT_V2 §5) can come later as a layer on top.
 1. Skeleton: BotWorld, snapshot, command output, sail to point, point-table aim. v5 team vs v4 team runs. Salvo miss telemetry.
 2. Belief layer (spotting, LKP, inference) + blackboard threat/spot coverage.
 3. Hub solve: bot parameters, candidate stations, Engage / Hold / Retreat, commitment. Selfish scoring only (all bots low aptitude).
-4. Stance + dodge (port existing native pricing).
-5. Static risk field.
-6. Aptitude-ordered resolution + team terms: spot, crossfire, tank, stacking, retreat.
-7. Learned risk from sim + live.
-8. DD torpedoes. Then CV.
+4. Torpedoes (native aim, launch gate, torp-run posture) + spotter planes (hive tasking).
+5. Stance + dodge (port existing native pricing).
+6. Static risk field.
+7. Aptitude-ordered resolution + team terms: spot, crossfire, tank, stacking, retreat.
+8. Learned risk from sim + live.
+9. CV.
 
 ## Open
 
@@ -140,7 +141,27 @@ Run: server with `--bot5-teams 1` (or `SHIPS_BOT5_TEAMS=1`), or `"bot_version": 
 Smoke (3v3 seed 1, v4 team 0 vs v5 team 1): v4 won; total damage v5 175k vs v4 236k; v5 Des Moines top of the map. Bot cost 1.48 s per match for 3 v5 bots (hub incl. GDScript) vs 9.93 s for 3 v4 bots. Lead telemetry: whole-hull misses are almost all on targets that changed speed or turn during flight (steady_off ~0); cross-track error (target frame) runs 2-3x along-track.
 
 Not yet / known gaps:
-- Point-table keys and file loading still go through `BotGunnery._point_table` / `saturation_mask` / fire helpers. Move these into a standalone point-table module, then delete BotGunnery's db.
+- Point tables live in `src/ship/gunnery/` (`PointTables` registry/queue, `GunneryModel` shell/battery/lattice model, `PointTable`); v5 never touches `BotGunnery`, which now only holds the v4 solver and its db.
 - Fire clearance is native (`Gunnery::clearance`): terrain via terrain-only `sim_can_shoot_over_terrain_impl`, then allies predicted along the arc against their hull box (`crosses`, unit-tested); 0.5 s / 50 m cache. Both count toward blocked_s.
-- No torpedo/shell dodge, no hold fire, no stance (phase 4). DD torpedoes not fired (phase 8).
+- No torpedo/shell dodge, no hold fire, no stance (phase 5).
 - Telemetry measures lead error of the aimed point only, not dispersion or real impacts. Keys count individual gun shots.
+
+## Phase 4 status (2026-11-13)
+
+Torpedoes (`bot5/torpedo.rs`):
+- Per-ship smoothed course/speed/yaw track, from spotted ships only.
+- Intercept along the predicted arc. The envelope covers a full-rudder turn once the target sees the torps, plus pre-sighting weave and throttle doubt. Spread is up to 5 points, centre first, with land cut off.
+- A point is dropped when land is on the fan edges (raycast 1.25x past the intercept) or an ally is within 500 m of the lane.
+- Gate: hit chance (fan cover over envelope, times ready launchers) must reach the aptitude threshold `TORP_MIN_CHANCE`.
+- Candidates: the gun target first, then the nearest seen enemies (3 max). Solved every 8 frames.
+- Hub fires one loaded launcher per point. A new point waits 2 frames for can_fire to refresh.
+- Hive: `TorpRun` posture when torps are loaded, hp >= 50%, the target is seen, and the playstyle band centre lies beyond 0.8x torp range. The station is 0.7x torp range from the target, led toward its course. Firing reloads the tubes, which flips the posture back to Engage.
+- Counters: `torp_fire`, `torp_low_chance`, `torp_land`, `torp_friendly`, `torp_no_intercept`, `torp_no_target`, `torp_launch`.
+
+Spotter planes:
+- Part of the hive pass, ascending aptitude. Candidates are contacts unseen for at most 45 s, plus the contact already tasked, within tether + 0.8x the target's air_radius.
+- Value: in own gun range (+1), near own anchor (+1), allies in gun range (team weight x 0.5 each), already tasked (+1). Team-aware bots skip contacts an earlier spotter claimed.
+- Launches only with a task. Tasked with `set_attack`, so it orbits at circle_range once it arrives. Clamped to the tether. Re-tasked after 300 m of movement, but never while `Squadron.station_lock` is running (30 s after taking a station; this applies to players too, and the button shows it in purple). Fuel runs out on its own.
+- Counters: `spot_task`, `spot_launch`.
+
+Smoke (3v3 seed 1, v5 team 1): v5 Shimakaze fired 15 torps (0 hits) vs v4 55 (3 hits). The v5 Yamato spotter launched once. TorpRun is untested in a match (Shimakaze's torps outrange its band; Bigensk/MLK would trigger it).

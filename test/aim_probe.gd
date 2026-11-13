@@ -49,7 +49,7 @@ var _shooter: Ship
 ## The solver script, loaded once. The walks below run in ITS space, not the
 ## live one - see BotGunnery._survey_space for why that is not the same world.
 var _gunnery = load("res://src/ship/bot_behavior/bot_gunnery.gd")
-const PointTableScript := preload("res://src/ship/bot_behavior/point_table.gd")
+const PointTableScript := preload("res://src/ship/gunnery/point_table.gd")
 var _out: FileAccess
 var _done: bool = false
 
@@ -216,14 +216,14 @@ func _bounce_test() -> void:
 	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
 	var p = _shooter.artillery_controller.get_params()
 	var ap: ShellParams = p.shell1 if p.shell1.type == ShellParams.ShellType.AP else p.shell2
-	var st: Dictionary = G._shell_table(ap)
+	var st: Dictionary = G.shell_table(ap)
 	_say("AP %.0fmm: ricochet from %.0f deg, auto-bounce %.0f deg off normal; range %.0f m" % [ap.caliber,
 		rad_to_deg(ap.ricochet_angle), rad_to_deg(ap.auto_bounce), p._range])
 	_say("| range | descent | pen mm | angle | aspect off bow | pick | AP | HE |")
 	_say("|---|---|---|---|---|---|---|---|")
 	var r := 1000.0
 	while r <= p._range:
-		var s: Array = G._shell_at(st, r)
+		var s: Array = G.shell_at(st, r)
 		if s.is_empty():
 			break
 		for th in [ap.ricochet_angle, ap.auto_bounce - deg_to_rad(1.0), ap.auto_bounce]:
@@ -245,15 +245,15 @@ func _bounce_test() -> void:
 ## `--cqe-check`: main-battery half-dispersion raw and as point tables see it, and the shell key, without Close
 ## Quarters Expertise, with it toggled off and with it toggled on.
 func _cqe_check() -> void:
-	var sec_r: float = BotGunnery._max_secondary_range(_shooter)
+	var sec_r: float = GunneryModel.max_secondary_range(_shooter)
 	_say("max secondary range %.0f m" % sec_r)
 	var report := func(label: String) -> void:
-		BotGunnery._shell_keys.clear()
+		PointTables._shell_keys.clear()
 		var row := label
 		for r in [3000.0, 12000.0]:
-			var m: Dictionary = BotGunnery._batteries(_shooter, BotGunnery.KIND_MAIN, r)[0]
-			row += "  %.0f m raw %s table %s" % [r, BotGunnery._half_disp(m, r), BotGunnery.table_half_disp(_shooter, m, r)]
-		_say(row + "  key " + BotGunnery.shell_key(_shooter, 0).left(8))
+			var m: Dictionary = GunneryModel.batteries(_shooter, GunneryModel.KIND_MAIN, r)[0]
+			row += "  %.0f m raw %s table %s" % [r, GunneryModel.half_disp(m, r), GunneryModel.table_half_disp(_shooter, m, r)]
+		_say(row + "  key " + PointTables.shell_key(_shooter, 0).left(8))
 	report.call("no skill   ")
 	var sk = load("res://src/Skills/cq_expertise.gd").new()
 	sk.skill_id = "cq_expertise"
@@ -319,7 +319,7 @@ func _rt_compare() -> void:
 					ib = k
 			n_b += 1
 			same += int(ia == ib)
-		var sat: int = BotGunnery.saturation_mask(_target)
+		var sat: int = PointTables.saturation_mask(_target)
 		var he: bool = r.shell.type == ShellParams.ShellType.HE
 		var agree := 0
 		var n_q := 0
@@ -331,8 +331,8 @@ func _rt_compare() -> void:
 				var t1 := Time.get_ticks_usec()
 				var bg: Dictionary = r.best_sorted(_target, rr, asp)
 				us_gd += Time.get_ticks_usec() - t1
-				var q := PackedFloat64Array([rr, asp, r.shell.damage, BotGunnery._raw_fire_chance(r.shell, _target) if he else 0.0,
-					BotGunnery.fire_dps(_target) * BotGunnery.fire_burn_s(_target) if he else 0.0])
+				var q := PackedFloat64Array([rr, asp, r.shell.damage, GunneryModel.raw_fire_chance(r.shell, _target) if he else 0.0,
+					GunneryModel.fire_dps(_target) * GunneryModel.fire_burn_s(_target) if he else 0.0])
 				t1 = Time.get_ticks_usec()
 				var bn: PackedFloat32Array = pm.point_best(key, q, sat, PackedFloat32Array())
 				us_nat += Time.get_ticks_usec() - t1
@@ -362,7 +362,7 @@ func _build_points() -> void:
 			continue
 		var n_before: int = t.points.size()
 		var n_kept: int = t.prune(_target)
-		var path: String = PointTableScript.cache_path(BotGunnery.point_key(_shooter, _target, ammo))
+		var path: String = PointTableScript.cache_path(PointTables.point_key(_shooter, _target, ammo))
 		_say("%s ammo %d: %d buckets, %.1f s, %d/%d points, saved %s %s" % [_shooter.scene_file_path.get_file(), ammo,
 			t.stats["buckets"], t.stats["build_us"] / 1e6, n_kept, n_before, path, t.save(path)])
 	_out.close()
@@ -474,12 +474,12 @@ func _points_test() -> void:
 ## (mean damage per shot, landed share) of `n` shells aimed at `aim` (target-local) through the game's
 ## DispersionCalculator, with one lead-error draw per salvo.
 func _salvo_value(shell: ShellParams, aim: Vector3, range_m: float, aspect: float, n: int, space) -> Vector2:
-	var m: Dictionary = BotGunnery._batteries(_shooter, BotGunnery.KIND_MAIN, range_m)[0]
+	var m: Dictionary = GunneryModel.batteries(_shooter, GunneryModel.KIND_MAIN, range_m)[0]
 	var pm = ProjectileManager.get_raw()
-	var from: Vector3 = _shooter.global_position + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var from: Vector3 = _shooter.global_position + Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 	var aim_w: Vector3 = _target.to_global(aim)
-	var at: Array = BotGunnery._shell_at(BotGunnery._shell_table(shell), range_m)
-	var lead: Vector2 = BotGunnery.lead_axes(at[0], aspect, range_m, DamageExpectation.lead_sigmas(_target))
+	var at: Array = GunneryModel.shell_at(GunneryModel.shell_table(shell), range_m)
+	var lead: Vector2 = GunneryModel.lead_axes(at[0], aspect, range_m, DamageExpectation.lead_sigmas(_target))
 	var d: Vector2 = (m["dispersion"] as DispersionParams).dispersion_at((aim_w - from).length(), m["base_range"]) * (m["spread"] as Vector2)
 	var fwd := (aim_w - from).normalized()
 	var right := fwd.cross(Vector3.UP).normalized()
@@ -497,7 +497,7 @@ func _salvo_value(shell: ShellParams, aim: Vector3, range_m: float, aspect: floa
 		calc._shell_index += 1
 		pts.append(_target.to_local(aim_w + right * h + up * v))
 	var codes: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
-	var pay: PackedFloat64Array = BotGunnery._payouts(_target, shell.damage)
+	var pay: PackedFloat64Array = GunneryModel.live_payouts(_target, shell.damage)
 	var sum := 0.0
 	var landed := 0
 	for c in codes:
@@ -533,7 +533,7 @@ func _aimcheck_test() -> void:
 		G.clear_all()
 		var sol: Dictionary = G.solve(_shooter, _target)
 		var opts: Array = sol.get("options", [{}, {}])
-		var mounts: Array = G._batteries(_shooter, BotGunnery.KIND_MAIN, range_m)
+		var mounts: Array = G.batteries(_shooter, GunneryModel.KIND_MAIN, range_m)
 		var m: Dictionary = mounts[0]
 		var lead := DamageExpectation.lead_sigmas(_target)
 		var g: Vector3 = _target.to_local(_shooter.global_position)
@@ -549,14 +549,14 @@ func _aimcheck_test() -> void:
 				continue
 			var shell: ShellParams = m["shells"][ammo]
 			var aim: Vector3 = o["offset"]
-			var st: Dictionary = G._shell_table(shell)
-			var s: Array = G._shell_at(st, (g - aim).length())
+			var st: Dictionary = G.shell_table(shell)
+			var s: Array = G.shell_at(st, (g - aim).length())
 			var ai: int = G._aspect_of(g, aim)
-			var gk: int = G.bucket_id(ai, G._descent_index(s[0]))
+			var gk: int = G.bucket_id(ai, G.descent_index(s[0]))
 			var b: PackedByteArray = table["buckets"][gk]
 			var frame: Array = G.lattice_frame(ai)
-			var hd: Vector2 = G._half_disp(m, range_m)
-			var miss: Vector2 = G.lead_axes(s[0], G._aspect_center(ai), range_m, lead) * float(m["sigma"])
+			var hd: Vector2 = G.half_disp(m, range_m)
+			var miss: Vector2 = G.lead_axes(s[0], G.aspect_center(ai), range_m, lead) * float(m["sigma"])
 			hd = Vector2(Vector2(hd.x, miss.x).length(), Vector2(hd.y, miss.y).length())
 			var sd: Vector2 = hd / float(m["sigma"])
 			var pts := PackedVector3Array()
@@ -569,14 +569,14 @@ func _aimcheck_test() -> void:
 					continue
 				var p: Vector3 = aim + frame[1] * du + frame[2] * dv
 				pts.append(p)
-				aims.append(G._to_plane(p, G.bucket_dir(b), frame))
+				aims.append(G.to_plane(p, G.bucket_dir(b), frame))
 			var is_he: bool = shell.type == ShellParams.ShellType.HE
 			var codes: PackedByteArray = G._resolve(_target.scene_file_path, gk, b, s[2], shell.overmatch, is_he, shell.auto_bounce)
-			var payouts: PackedFloat64Array = G._payouts(_target, shell.damage)
+			var payouts: PackedFloat64Array = G.live_payouts(_target, shell.damage)
 			var res: PackedFloat64Array = pm.lattice_score(codes, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
-				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
-				payouts, BotGunnery.DMG_TURRET, b)
-			var from: Vector3 = _target.global_position + _target.global_basis * g + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, GunneryModel.CITADEL_ELLIPSE,
+				payouts, GunneryModel.DMG_TURRET, b)
+			var from: Vector3 = _target.global_position + _target.global_basis * g + Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 			var live: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
 			var t_sum := 0.0
 			var l_sum := 0.0
@@ -590,7 +590,7 @@ func _aimcheck_test() -> void:
 				if c != 0xFF and c != 0xFE:
 					l_sum += payouts[((c >> 5) & 7) * 16 + (c & 0x0F)]
 			var cell_res: PackedFloat64Array = pm.lattice_score(codes, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
-				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, GunneryModel.CITADEL_ELLIPSE,
 				_code_payouts(), 99.0, b)
 			for j in pts.size():
 				var tc: int = int(roundf(cell_res[2 * j])) if cell_res[2 * j + 1] > 0.5 else -1
@@ -598,8 +598,8 @@ func _aimcheck_test() -> void:
 				th[key] = int(th.get(key, 0)) + 1
 			var c60: PackedByteArray = G._resolve(_target.scene_file_path, gk, b, s[2], shell.overmatch, is_he, deg_to_rad(60.0))
 			var r60: PackedFloat64Array = pm.lattice_score(c60, G.bucket_nx(b), G.bucket_ny(b), G.bucket_rect(b),
-				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, BotGunnery.CITADEL_ELLIPSE,
-				payouts, BotGunnery.DMG_TURRET, b)
+				G.bucket_edges(b), aims, Vector2(0.05, 0.05), float(m["sigma"]), 0.0, GunneryModel.CITADEL_ELLIPSE,
+				payouts, GunneryModel.DMG_TURRET, b)
 			var s60 := 0.0
 			for j in pts.size():
 				s60 += maxf(r60[2 * j], 0.0)
@@ -645,8 +645,8 @@ func _map_test() -> void:
 	var a := deg_to_rad(aspect)
 	var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
 	var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
-	var at: Array = G._shell_at(G._shell_table(shell), range_m)
-	var di: int = G._descent_index(at[0])
+	var at: Array = G.shell_at(G.shell_table(shell), range_m)
+	var di: int = G.descent_index(at[0])
 	var bid: int = G.bucket_id(aspect_i, di)
 	var b: PackedByteArray = table["buckets"][bid]
 	var frame: Array = G.lattice_frame(aspect_i)
@@ -654,12 +654,12 @@ func _map_test() -> void:
 	var ny: int = G.bucket_ny(b)
 	var pts: PackedVector3Array = G.lattice_points(frame, G.bucket_rect(b), nx, G.bucket_edges(b))
 	var baked: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2], shell.overmatch, false, shell.auto_bounce)
-	var from: Vector3 = _target.global_position + (_target.global_basis * g) + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var from: Vector3 = _target.global_position + (_target.global_basis * g) + Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 	_shooter.global_position = Vector3(from.x, 0.0, from.z)
 	_shooter.force_update_transform()
 	var live: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
 	_say("%.0f m, %.1f deg off bow: bucket aspect %.1f deg, descent %.1f deg, pen %.0f mm, %d x %d" % [range_m, aspect,
-		G._aspect_center(aspect_i), at[0], at[2], nx, ny])
+		G.aspect_center(aspect_i), at[0], at[2], nx, ny])
 	var sym := "PpROSCc"
 	var ch := func(c: int) -> String:
 		return "." if c == 0xFF or c == 0xFE else sym[c & 0x0F] if (c & 0x0F) < sym.length() else "?"
@@ -843,9 +843,9 @@ func _saturation_test() -> void:
 	_say("")
 	_say("AP payout by section, fresh vs bow saturated (fraction of shell damage):")
 	_restore_pools(hp)
-	var fresh: PackedFloat64Array = G._payouts(_target, ap.damage)
+	var fresh: PackedFloat64Array = G.live_payouts(_target, ap.damage)
 	_drain_pool(hp, "bow")
-	var spent: PackedFloat64Array = G._payouts(_target, ap.damage)
+	var spent: PackedFloat64Array = G.live_payouts(_target, ap.damage)
 	_restore_pools(hp)
 	_say("  %-14s %-8s %-8s %-8s" % ["section", "pen", "citadel", "overpen"])
 	for sec in G.SECTION_COUNT:
@@ -878,10 +878,10 @@ func _section_at(G, shell: ShellParams, range_m: float, aspect_deg: float, offse
 	var a := deg_to_rad(aspect_deg)
 	var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
 	var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
-	var at: Array = G._shell_at(G._shell_table(shell), range_m)
+	var at: Array = G.shell_at(G.shell_table(shell), range_m)
 	if at.is_empty():
 		return "?"
-	var di: int = G._descent_index(at[0])
+	var di: int = G.descent_index(at[0])
 	if di < 0:
 		return "?"
 	var bid: int = G.bucket_id(aspect_i, di)
@@ -891,7 +891,7 @@ func _section_at(G, shell: ShellParams, range_m: float, aspect_deg: float, offse
 	var codes: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2],
 		shell.overmatch, shell.type == ShellParams.ShellType.HE, shell.auto_bounce)
 	var frame: Array = G.lattice_frame(aspect_i)
-	var aim: Vector2 = G._to_plane(offset, G.bucket_dir(b), frame)
+	var aim: Vector2 = G.to_plane(offset, G.bucket_dir(b), frame)
 	var r: Vector4 = G.bucket_rect(b)
 	var nx: int = G.bucket_nx(b)
 	var ix: int = clampi(int((aim.x - r.x) / ((r.z - r.x) / nx)), 0, nx - 1)
@@ -928,7 +928,7 @@ func _profile(b: PackedByteArray, pi: int) -> Dictionary:
 
 ## The range at which `shell` arrives at `descent_deg`, off its range table.
 func _range_for_descent(G, shell: ShellParams, descent_deg: float) -> float:
-	var t: Dictionary = G._shell_table(shell)
+	var t: Dictionary = G.shell_table(shell)
 	var rs: PackedFloat32Array = t["r"]
 	var ds: PackedFloat32Array = t["desc"]
 	for i in range(1, rs.size()):
@@ -969,7 +969,7 @@ func _validate() -> void:
 	GunneryBake._force_turrets(_target)
 	var space := GunneryBake.survey_space_state(_target)
 	space = GunneryBake.survey_space_state(_target)
-	_say("descent buckets: %d, table ref %.0fmm" % [BotGunnery.descent_edges().size(),
+	_say("descent buckets: %d, table ref %.0fmm" % [GunneryModel.descent_edges().size(),
 		float(table["ref_caliber"])])
 	var totals := {}
 	for shell in [gp.shell1, gp.shell2]:
@@ -988,11 +988,11 @@ func _validate() -> void:
 			var a := deg_to_rad(float(pr[1]))
 			var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
 			var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
-			var at: Array = G._shell_at(G._shell_table(shell), range_m)
+			var at: Array = G.shell_at(G.shell_table(shell), range_m)
 			if at.is_empty():
 				_say("%s %6.0f m %5.1f deg: out of range" % [label, range_m, pr[1]])
 				continue
-			var di: int = G._descent_index(at[0])
+			var di: int = G.descent_index(at[0])
 			var bid: int = G.bucket_id(aspect_i, di)
 			var b = table["buckets"].get(bid)
 			if b == null:
@@ -1002,21 +1002,21 @@ func _validate() -> void:
 			var pts: PackedVector3Array = G.lattice_points(frame, G.bucket_rect(b), G.bucket_nx(b), G.bucket_edges(b))
 			var baked: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2],
 				shell.overmatch, shell.type == ShellParams.ShellType.HE, shell.auto_bounce)
-			var from: Vector3 = _target.global_position + (_target.global_basis * g) 				+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+			var from: Vector3 = _target.global_position + (_target.global_basis * g) 				+ Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 			_shooter.global_position = Vector3(from.x, 0.0, from.z)
 			_shooter.force_update_transform()
 			var live: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
 			# Same shell fired from the bucket's own centre: aspect at the centre,
 			# range where this shell's descent equals the bucket's.
-			var ac := deg_to_rad(G._aspect_center(aspect_i))
-			var rc := _range_for_descent(G, shell, G._descent_center(di))
+			var ac := deg_to_rad(G.aspect_center(aspect_i))
+			var rc := _range_for_descent(G, shell, G.descent_center(di))
 			var gc := Vector3(sin(ac), 0.0, -cos(ac)) * rc
 			var from_c: Vector3 = _target.global_position + (_target.global_basis * gc) \
-				+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+				+ Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 			_shooter.global_position = Vector3(from_c.x, 0.0, from_c.z)
 			_shooter.force_update_transform()
 			var live_c: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from_c, pts, space)
-			var at_c: Array = G._shell_at(G._shell_table(shell), rc)
+			var at_c: Array = G.shell_at(G.shell_table(shell), rc)
 			var baked_c: PackedByteArray = G._resolve(_target.scene_file_path, bid, b,
 				at_c[2] if not at_c.is_empty() else at[2], shell.overmatch,
 				shell.type == ShellParams.ShellType.HE, shell.auto_bounce)
@@ -1050,7 +1050,7 @@ func _validate() -> void:
 			count_all += count
 			_say("")
 			_say("%s  %6.0f m %5.1f deg  bucket aspect %.1f descent %.1f  pen %.0f mm  v %.0f  desc %.1f  %dx%d  agree asked %d/%d  centre %d/%d (at %.0f m)" % [
-				label, range_m, pr[1], G._aspect_center(aspect_i), G._descent_center(di),
+				label, range_m, pr[1], G.aspect_center(aspect_i), G.descent_center(di),
 				at[2], at[1], at[0], G.bucket_nx(b), G.bucket_ny(b), agree, count, agree_c, count, rc])
 			_say("   baked | live at asked geometry | live at bucket centre")
 			var nx: int = G.bucket_nx(b)
@@ -1065,7 +1065,7 @@ func _validate() -> void:
 					_say("   HE cell %d (%d,%d) plane y=%.2f x=%.1f: baked %s  live %s  profile first %.0fmm flags 0x%02X  live walk: %s" % [
 						i, i % nx, i / nx, pts[i].y, pts[i].x, _glyph(baked_c[i]), _glyph(live_c[i]),
 						prof_he["first_mm"], b.decode_u8(BotGunnery.bucket_prof_off(b) + 2 * b.decode_u16(2) + pi_he),
-						_detail(shell, pts[i], G._aspect_center(aspect_i), rc)])
+						_detail(shell, pts[i], G.aspect_center(aspect_i), rc)])
 					# The bake's own crossing test, redone on the same ray.
 					var bd: Vector3 = G.bucket_dir(b)
 					var hitd: Dictionary = pm.armor_raycast(_target, pts[i] - bd * 90.0, pts[i] + bd * 90.0)
@@ -1086,7 +1086,7 @@ func _validate() -> void:
 					_say("   cell %d (%d,%d): baked %s  live %s  first plate %.0fmm  breakpoints [%s]  live walk: %s" % [
 						i, i % nx, i / nx, _glyph(baked_c[i]), _glyph(live_c[i]),
 						prof["first_mm"], " ".join(prof["bps"]),
-						_detail(shell, pts[i], G._aspect_center(aspect_i), rc)])
+						_detail(shell, pts[i], G.aspect_center(aspect_i), rc)])
 			for iy in range(G.bucket_ny(b) - 1, -1, -1):
 				var lb := ""
 				var ll := ""
@@ -1417,7 +1417,7 @@ func _say(line: String) -> void:
 func _detail(shell: ShellParams, local_aim: Vector3, asp: float, rng: float) -> String:
 	var a := deg_to_rad(asp)
 	var bearing: Vector3 = _target.global_basis * Vector3(sin(a), 0.0, -cos(a))
-	var from: Vector3 = _target.global_position + bearing * rng + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var from: Vector3 = _target.global_position + bearing * rng + Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 	var to: Vector3 = _target.to_global(local_aim)
 	var launch: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(from, to, shell)
 	if launch.is_empty() or not launch[0]:
@@ -1507,11 +1507,11 @@ func _citadel_test() -> void:
 		var a := deg_to_rad(float(pr[1]))
 		var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
 		var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
-		var at: Array = G._shell_at(G._shell_table(shell), range_m)
+		var at: Array = G.shell_at(G.shell_table(shell), range_m)
 		if at.is_empty():
 			_say("%6.0f m %5.1f deg: out of range" % [range_m, pr[1]])
 			continue
-		var di: int = G._descent_index(at[0])
+		var di: int = G.descent_index(at[0])
 		var bid: int = G.bucket_id(aspect_i, di)
 		var b = table["buckets"].get(bid)
 		if b == null:
@@ -1527,11 +1527,11 @@ func _citadel_test() -> void:
 		var edges_d: PackedFloat32Array = G.uniform_edges(rect.y, rect.w, ny_d)
 		var pts_n: PackedVector3Array = G.lattice_points(frame, rect, nx, edges)
 		var pts_d: PackedVector3Array = G.lattice_points(frame, rect, nx, edges_d)
-		var ac := deg_to_rad(G._aspect_center(aspect_i))
-		var rc := _range_for_descent(G, shell, G._descent_center(di))
+		var ac := deg_to_rad(G.aspect_center(aspect_i))
+		var rc := _range_for_descent(G, shell, G.descent_center(di))
 		var gc := Vector3(sin(ac), 0.0, -cos(ac)) * rc
 		var from_c: Vector3 = _target.global_position + (_target.global_basis * gc) \
-			+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+			+ Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 		_shooter.global_position = Vector3(from_c.x, 0.0, from_c.z)
 		_shooter.force_update_transform()
 		var live_n: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from_c, pts_n, space)
@@ -1558,7 +1558,7 @@ func _citadel_test() -> void:
 				band_lo = minf(band_lo, pts_d[i].y)
 				band_hi = maxf(band_hi, pts_d[i].y)
 
-		var mounts: Array = G._batteries(_shooter, BotGunnery.KIND_MAIN, rc)
+		var mounts: Array = G.batteries(_shooter, GunneryModel.KIND_MAIN, rc)
 		if mounts.is_empty():
 			_say("%6.0f m %5.1f deg: no battery in range" % [range_m, pr[1]])
 			continue
@@ -1566,13 +1566,13 @@ func _citadel_test() -> void:
 		var aims := PackedVector2Array()
 		aims.resize(pts_n.size())
 		for i in pts_n.size():
-			aims[i] = G._to_plane(pts_n[i], dir, frame)
-		var payouts: PackedFloat64Array = G._payouts(_target, shell.damage)
-		var hd: Vector2 = G._half_disp(m, rc)
+			aims[i] = G.to_plane(pts_n[i], dir, frame)
+		var payouts: PackedFloat64Array = G.live_payouts(_target, shell.damage)
+		var hd: Vector2 = G.half_disp(m, rc)
 		var res_n: PackedFloat64Array = pm.lattice_score(live_n, nx, ny, rect, edges, aims, hd,
-			m["sigma"], m["guarantee"], BotGunnery.CITADEL_ELLIPSE, payouts, BotGunnery.DMG_TURRET, PackedByteArray())
+			m["sigma"], m["guarantee"], GunneryModel.CITADEL_ELLIPSE, payouts, GunneryModel.DMG_TURRET, PackedByteArray())
 		var res_d: PackedFloat64Array = pm.lattice_score(live_d, nx, ny_d, rect, edges_d, aims, hd,
-			m["sigma"], m["guarantee"], BotGunnery.CITADEL_ELLIPSE, payouts, BotGunnery.DMG_TURRET, PackedByteArray())
+			m["sigma"], m["guarantee"], GunneryModel.CITADEL_ELLIPSE, payouts, GunneryModel.DMG_TURRET, PackedByteArray())
 		var best_n := -1
 		var best_d := -1
 		for i in pts_n.size():
@@ -1624,7 +1624,7 @@ func _column_test() -> void:
 		box.position.y, box.position.y + box.size.y, shell.caliber, shell.overmatch])
 	for pr in COLUMN_GEOMETRIES:
 		var range_m: float = pr[0]
-		var at: Array = G._shell_at(G._shell_table(shell), range_m)
+		var at: Array = G.shell_at(G.shell_table(shell), range_m)
 		if at.is_empty():
 			continue
 		_say("")
@@ -1633,7 +1633,7 @@ func _column_test() -> void:
 		var a := deg_to_rad(float(pr[1]))
 		var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
 		var from: Vector3 = _target.global_position + (_target.global_basis * g) \
-			+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+			+ Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 		_shooter.global_position = Vector3(from.x, 0.0, from.z)
 		_shooter.force_update_transform()
 		var pts := PackedVector3Array()
@@ -1657,7 +1657,7 @@ func _column_test() -> void:
 func _first_plate(shell: ShellParams, local_aim: Vector3, asp: float, rng: float) -> String:
 	var a := deg_to_rad(asp)
 	var bearing: Vector3 = _target.global_basis * Vector3(sin(a), 0.0, -cos(a))
-	var from: Vector3 = _target.global_position + bearing * rng + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var from: Vector3 = _target.global_position + bearing * rng + Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0)
 	var to: Vector3 = _target.to_global(local_aim)
 	var launch: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(from, to, shell)
 	if launch.is_empty() or not launch[0]:

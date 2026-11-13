@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 19;
+pub const STRIDE: usize = 23;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -53,6 +53,10 @@ pub struct ShipState {
     pub gun_range: f32,
     /// Hull top above the ship origin.
     pub top: f32,
+    pub turn_radius: f32,
+    pub air_radius: f32,
+    pub torp_detect_mult: f32,
+    pub torp_detect_floor: f32,
 }
 
 impl ShipState {
@@ -75,6 +79,10 @@ impl ShipState {
             hp_max: r[16],
             reverse_ratio: r[17],
             top: r[18],
+            turn_radius: r[19],
+            air_radius: r[20],
+            torp_detect_mult: r[21],
+            torp_detect_floor: r[22],
         }
     }
 

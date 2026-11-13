@@ -351,37 +351,23 @@ static func _create_convex_collision(shape_name: String, points: PackedVector3Ar
 
 
 static func _calculate_hull_aabb(ship: Node3D) -> AABB:
-	var combined_aabb = AABB()
-	var found_any = false
+	var boxes: Array[AABB] = []
+	_collect_aabb_recursive(ship, Transform3D.IDENTITY, boxes)
+	if boxes.is_empty():
+		return AABB()
+	var out := boxes[0]
+	for b in boxes:
+		out = out.merge(b)
+	return out
 
-	_collect_aabb_recursive(ship, combined_aabb, found_any)
 
-	return combined_aabb
-
-
-static func _collect_aabb_recursive(node: Node, combined_aabb: AABB, found_any: bool) -> void:
-	var node_name_lower = node.name.to_lower()
-	var is_hull_mesh = (
-		node_name_lower.contains("hull") or
-		node_name_lower.contains("bow") or
-		node_name_lower.contains("stern")
-	)
-
-	if node is MeshInstance3D and is_hull_mesh:
-		var mesh_instance = node as MeshInstance3D
-		var mesh_aabb = mesh_instance.get_aabb()
-		# Transform AABB to parent space
-		var transformed_aabb = mesh_instance.transform * mesh_aabb
-
-		if not found_any:
-			combined_aabb.position = transformed_aabb.position
-			combined_aabb.size = transformed_aabb.size
-			found_any = true
-		else:
-			combined_aabb = combined_aabb.merge(transformed_aabb)
-
+## Collects into `boxes`: AABB is passed by value, so it cannot be accumulated through a parameter.
+static func _collect_aabb_recursive(node: Node, to_ship: Transform3D, boxes: Array[AABB]) -> void:
+	var lower := node.name.to_lower()
+	if node is MeshInstance3D and (lower.contains("hull") or lower.contains("bow") or lower.contains("stern")):
+		boxes.append(to_ship * (node as MeshInstance3D).get_aabb())
 	for child in node.get_children():
-		_collect_aabb_recursive(child, combined_aabb, found_any)
+		_collect_aabb_recursive(child, to_ship * (child as Node3D).transform if child is Node3D else to_ship, boxes)
 
 
 static func _calculate_optimal_cell_size(points: PackedVector3Array, target_count: int) -> float:

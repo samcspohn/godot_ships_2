@@ -924,6 +924,10 @@ func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
 
+## Seeded from the first part: merging into the default AABB() would pull in the origin.
+func _grow_aabb(b: AABB) -> void:
+	aabb = aabb.merge(b) if aabb.has_volume() else b
+
 ## Compute the transform from a descendant node to this ship's local space.
 func _node_to_ship_transform(node: Node3D) -> Transform3D:
 	var xform := node.transform
@@ -957,7 +961,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.add_child(armor_part)
 		armor_parts.append(armor_part)
-		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as MeshInstance3D).get_aabb())
+		_grow_aabb(_node_to_ship_transform(node) * (node as MeshInstance3D).get_aabb())
 		# static_body.collision_layer = 1 << 1
 		# static_body.collision_mask = 0
 		#if node.name == "Hull":
@@ -999,7 +1003,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.get_parent().add_child(armor_part)
 		armor_parts.append(armor_part)
-		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as StaticBody3D).get_aabb())
+		_grow_aabb(_node_to_ship_transform(node) * (node as StaticBody3D).get_aabb())
 		# node.collision_layer = 1 << 1
 		# node.collision_mask = 0
 		# if node.name == "Hull":

@@ -30,9 +30,12 @@ pub(crate) struct EdgeSim {
     trees: Option<std::sync::Arc<crate::nav::edge_tree::EdgeTrees>>,
 }
 
-/// The key EdgeSim answers and EdgeTrees are kept under: one per shell resource and muzzle height.
-pub(crate) fn edge_key(shell: &Gd<Resource>, gun_h: f32) -> i64 {
-    shell.instance_id().to_i64() ^ ((gun_h * 10.0) as i64) << 48
+/// The key EdgeSim answers and EdgeTrees are kept under: the shell's flight values, so an edited shell gets new trees.
+pub(crate) fn edge_key(shell: &Gd<Resource>, gun_h: f32, range: f32) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    shell_raw(shell, gun_h, range).map(|r| r.map(f64::to_bits)).hash(&mut h);
+    h.finish() as i64
 }
 
 /// The shell's (v0, beta, vt, tau) as the live solver reads them, `gun_h` and the gun's `range`.
@@ -53,7 +56,7 @@ impl EdgeSim {
         let space = o.get("sim_space")?.try_to::<Gd<PhysicsDirectSpaceState3D>>().ok()?;
         let gun_h = o.get("sim_gun_h").map_or(5.0, |v| v.to::<f32>());
         let range = o.get("sim_range").map_or(0.0, |v| v.to::<f32>());
-        let key = edge_key(&shell, gun_h);
+        let key = edge_key(&shell, gun_h, range);
         let trees = crate::nav::edge_tree::get();
         if let Some(t) = &trees {
             t.register(key, || shell_raw(&shell, gun_h, range));

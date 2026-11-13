@@ -1365,6 +1365,9 @@ impl ReachField {
                         moved = true;
                         e.marked = origin;
                     }
+                    if e.shell != shell {
+                        e.pin_id = 0;
+                    }
                     (e.origin, e.spread, e.shell, e.weight, e.force_spot) = (origin, spread, shell, weight, force_spot);
                     e.repin();
                 }
@@ -1512,7 +1515,7 @@ impl ReachField {
     fn edge_prefetch(&self, shell: Gd<godot::classes::Resource>, gun_h: f32, range: f32, targets: PackedVector2Array,
             shooters: PackedVector2Array) {
         let (Some(t), Some(vis)) = (crate::nav::edge_tree::get(), self.vis.as_ref()) else { return };
-        let key = crate::nav::edge_sim::edge_key(&shell, gun_h);
+        let key = crate::nav::edge_sim::edge_key(&shell, gun_h, range);
         t.register(key, || crate::nav::edge_sim::shell_raw(&shell, gun_h, range));
         let v = vis.bind();
         for p in targets.as_slice() {

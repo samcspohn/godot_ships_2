@@ -1114,7 +1114,7 @@ func _ap_forecast(target: Ship) -> Vector2:
 	var ap := PackedFloat32Array()
 	var he := 0.0
 	for x in a:
-		var k: int = BotGunnery._aspect_index(x)
+		var k: int = GunneryModel.aspect_index(x)
 		if not by_bucket.has(k):
 			var e := BotGunnery.expected(_ship, target, rng, x)
 			by_bucket[k] = Vector2(float(e.get("ap_ev", 0.0)), float(e.get("he_ev", 0.0)))
@@ -3858,7 +3858,7 @@ static func _secondary_dps(shooter: Ship, target: Ship, range_m: float, aspect_d
 	var key := [shooter.get_instance_id(), target.get_instance_id(), int(range_m / SEC_RANGE_BUCKET_M), int(aspect_deg / SEC_ASPECT_BUCKET_DEG),
 		int(brg / SEC_BEARING_BUCKET_DEG)]
 	if not _sec_dps_cache.has(key):
-		var e: Dictionary = BotGunnery.expected(shooter, target, range_m, aspect_deg, BotGunnery.KIND_SECONDARY, brg)
+		var e: Dictionary = BotGunnery.expected(shooter, target, range_m, aspect_deg, GunneryModel.KIND_SECONDARY, brg)
 		_sec_dps_cache[key] = maxf(float(e.get("ap_dps", 0.0)), float(e.get("he_dps", 0.0)))
 	return _sec_dps_cache[key]
 
@@ -4236,8 +4236,8 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	if not c.is_empty() and (made == null or SimClock.now() - float(made[0]) < PROVISIONAL_CURVE_S or _provisional_spent()):
 		return c
 	var t0 := Time.get_ticks_usec()
-	var ready := BotGunnery.point_tables_ready(shooter, target)
-	var progress := BotGunnery.pair_progress(shooter, target) if not ready else 0
+	var ready := PointTables.point_tables_ready(shooter, target)
+	var progress := PointTables.pair_progress(shooter, target) if not ready else 0
 	if not c.is_empty() and not ready and progress == int(made[1]):
 		made[0] = SimClock.now()
 		return c
@@ -4255,7 +4255,7 @@ static func dps_curve(shooter: Ship, target: Ship) -> PackedFloat32Array:
 	while r <= p._range:
 		ranges.append(r)
 		r += DESIRED_STEP_M
-	var main: PackedFloat64Array = StanceSim.gun_dealt(BotGunnery._projectile_native(), BotGunnery.stance_cell_pack(shooter, target),
+	var main: PackedFloat64Array = StanceSim.gun_dealt(GunneryModel.native_pm(), BotGunnery.stance_cell_pack(shooter, target),
 		ranges, aspect, DamageExpectation.salvo_affine(shooter, target, int(p._range / DamageExpectation.RANGE_BAND_M) + 2, aspect))
 	var sec := SkillStance.sec_curve(shooter, target, ranges, aspect)
 	for i in ranges.size():
@@ -4841,7 +4841,7 @@ func salvo_wait_s(target: Ship, contact: Dictionary, ammo: int, reload: float, h
 		return 0.0
 	var me := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var p := Vector2(contact.position.x, contact.position.z)
-	var tof: float = BotGunnery.flight_time(_ship, me.distance_to(p)) / maxf(ProjectileManager.get_shell_time_multiplier(), 0.01)
+	var tof: float = GunneryModel.flight_time(_ship, me.distance_to(p)) / maxf(ProjectileManager.get_shell_time_multiplier(), 0.01)
 	if not is_finite(tof):
 		return 0.0
 	var fwd: Vector3 = -(contact.basis as Basis).z

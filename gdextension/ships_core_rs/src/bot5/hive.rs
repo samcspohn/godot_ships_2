@@ -15,10 +15,15 @@ const HOLD_RADIUS_M: f32 = 400.0;
 const ORBIT_STEP: f32 = 0.45;
 const BLOCKED_SWING: f32 = 0.6;
 const BLOCKED_RELEASE_S: f32 = 3.0;
+const TORP_RUN_HP: f32 = 0.5;
+const TORP_RUN_RANGE: f32 = 0.7;
+const TORP_RUN_REACH: f32 = 0.8;
+const TORP_RUN_LEAD: f32 = 0.7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
     Engage,
+    TorpRun,
     Retreat,
 }
 
@@ -26,6 +31,7 @@ impl Posture {
     pub fn name(self) -> &'static str {
         match self {
             Posture::Engage => "engage",
+            Posture::TorpRun => "torp_run",
             Posture::Retreat => "retreat",
         }
     }
@@ -66,6 +72,8 @@ pub struct Member<'a> {
     pub assign: Assignment,
     /// Seconds the guns recently could not clear terrain to the target.
     pub blocked_s: f32,
+    /// Torpedo range and whether any launcher is loaded.
+    pub torp: Option<(f32, bool)>,
 }
 
 pub struct Committed {
@@ -98,6 +106,13 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     };
 
     assign.target = pick_target(m, snap, committed, now, &mut assign, ev);
+    let (lo, hi) = (m.style.band.0 * me.gun_range, m.style.band.1 * me.gun_range);
+    let run_target = assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen);
+    let posture = match (posture, m.torp, run_target) {
+        (Posture::Engage, Some((range, true)), Some(_)) if me.hp_frac >= TORP_RUN_HP
+            && (lo + hi) * 0.5 > TORP_RUN_REACH * range => Posture::TorpRun,
+        (p, _, _) => p,
+    };
 
     let anchor = assign.target.and_then(|id| view.iter().find(|(e, _)| e.id == id).map(|&(_, p)| p))
         .or_else(|| view.iter().map(|&(_, p)| p).min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my))))
@@ -125,7 +140,6 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         Some(_) => "expired",
     };
 
-    let (lo, hi) = (m.style.band.0 * me.gun_range, m.style.band.1 * me.gun_range);
     let plan = match posture {
         Posture::Engage => {
             let d = my.distance_to(anchor);
@@ -137,6 +151,15 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let station = anchor + rotate(away, swing * side) * if swing > 0.0 { r } else { (lo + hi) * 0.5 };
             Plan { posture, station, anchor, heading: broadside(my, anchor, me.heading()), heading_weight: 0.0,
                 hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0 }
+        }
+        Posture::TorpRun => {
+            let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
+            let tp = t.p2();
+            let away = dir_or(my - tp, Vector2::new(0.0, 1.0));
+            let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
+            let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
+            Plan { posture, station: tp + dir * (TORP_RUN_RANGE * range), anchor: tp, heading: broadside(my, tp, me.heading()),
+                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0 }
         }
         Posture::Retreat => {
             let threat = centroid(view.iter().map(|&(_, p)| p)).unwrap_or(anchor);

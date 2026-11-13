@@ -224,8 +224,8 @@ func _warm_gunnery() -> void:
 	BotBehavior.warm_proxy_curves(self, all_ships)
 	parts.append("proxy_curves %d" % (Time.get_ticks_msec() - tw))
 	tw = Time.get_ticks_msec()
-	if BotGunnery.point_tables_on():
-		BotGunnery.start_runtime_tables(all_ships)
+	if PointTables.point_tables_on():
+		PointTables.start_runtime_tables(all_ships)
 	parts.append("point_jobs %d" % (Time.get_ticks_msec() - tw))
 	tw = Time.get_ticks_msec()
 	var brawlers := []
@@ -1555,7 +1555,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"manoeuvres": GunneryCalibration.probe_summary(),
 		"vetoes": GunneryCalibration.veto_summary(),
 		"aims": GunneryCalibration.aim_summary(),
-		"point_tables": BotGunnery.point_table_summary(),
+		"point_tables": PointTables.point_table_summary(),
 		"bot5": bot5_hub.telemetry() if bot5_hub != null else {},
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
@@ -1695,8 +1695,8 @@ func _physics_process(_delta: float) -> void:
 			matchmaker_heartbeat_timer = MATCHMAKER_HEARTBEAT_INTERVAL
 
 	current_time = SimClock.now()
-	if Engine.get_physics_frames() % 12 == 0 and BotGunnery.point_tables_on():
-		BotGunnery.poll_runtime_tables()
+	if Engine.get_physics_frames() % 12 == 0 and PointTables.point_tables_on():
+		PointTables.poll_runtime_tables()
 	for t in teams:
 		t.ships = _get_team(t.id)
 
@@ -2070,7 +2070,7 @@ func _sync_gun_matrices(field: ReachField) -> void:
 ## positions, presumed contacts), for the reach field's on-demand queries.
 func _sweep_reach_fields() -> void:
 	var field: ReachField = NavigationMapManager.get_reach_field()
-	if field == null or not field.is_built():
+	if field == null or not field.is_built() or not _any_v4_bot():
 		return
 	var team_ships := [teams[0].ships, teams[1].ships]
 	if not _reach_prebuilt:
@@ -2139,6 +2139,14 @@ func _sweep_reach_fields() -> void:
 	_sync_gun_matrices(field)
 
 
+func _any_v4_bot() -> bool:
+	for t in teams:
+		for ship in t.ships:
+			if is_instance_valid(ship) and ship.is_alive() and ship.get_node_or_null("Modules/BotController") != null:
+				return true
+	return false
+
+
 ## Our guns' EdgeTrees sectors round every enemy the team believes in, facing the ships carrying them, built before the
 ## shooting needs them.
 func _prefetch_edge_trees(field: ReachField, ships: Array, at: PackedVector2Array) -> void:
@@ -2171,10 +2179,14 @@ func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:
 			var g: Dictionary = NavigationMapManager.reach_gun(ship)
 			if g.is_empty():
 				continue
-			speeds.append(g.speed)
-			drags.append(g.drag)
-			heights.append(g.gun_h)
-			ranges.append(g.range)
+			for i in 2:
+				var shell: ShellParams = ship.artillery_controller.shell_at(i)
+				if shell == null or shell.speed <= 0.0 or shell.drag <= 0.0:
+					continue
+				speeds.append(shell.speed)
+				drags.append(shell.drag)
+				heights.append(g.gun_h)
+				ranges.append(g.range)
 	field.prebuild_tables(speeds, drags, heights, ranges, 0.0)
 
 

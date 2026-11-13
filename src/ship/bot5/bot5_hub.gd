@@ -3,8 +3,10 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 19
-const CMD_STRIDE := 12
+const STRIDE := 23
+const CMD_STRIDE := 19
+const TORP_REAIM_FRAMES := 2
+const SPOT_REISSUE_M := 300.0
 const AIM_TOL_M := 5.0
 const PAIR_RETRY_S := 2.0
 const LIVE_EVERY_S := 0.5
@@ -18,6 +20,10 @@ var _ships: Array[Ship] = []
 var _slot_of: Dictionary = {}
 var _repair_slot: PackedInt32Array = []
 var _dc_slot: PackedInt32Array = []
+var _spot_idx: PackedInt32Array = []
+var _spot_wp: PackedVector2Array = []
+var _torp_pt: PackedVector2Array = []
+var _torp_frame: PackedInt64Array = []
 var _shots := PackedInt32Array()
 var _static: Dictionary = {}
 var _static_t := -INF
@@ -113,12 +119,46 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 		damage_ap = gp.shell1.damage if gp.shell1 != null else 0.0,
 		damage_he = gp.shell2.damage if gp.shell2 != null else 0.0,
 		gun_h = mv.ship_draft / 2.0,
-	})
+	}.merged(_torp_cfg(ship)).merged(_spot_cfg(ship)))
 	_ships.append(ship)
 	_slot_of[ship] = slot
 	_repair_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.REPAIR_PARTY))
 	_dc_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.DAMAGE_CONTROL))
+	_spot_idx.append(_spotter_index(ship))
+	_spot_wp.append(Vector2.INF)
+	_torp_pt.append(Vector2.INF)
+	_torp_frame.append(0)
 	_shots.append_array([0, 0])
+
+
+static func _torp_cfg(ship: Ship) -> Dictionary:
+	var tc := ship.torpedo_controller
+	if tc == null or tc.launchers.is_empty():
+		return {}
+	var tubes := 1
+	for l in tc.launchers:
+		tubes = maxi(tubes, l.muzzles.size())
+	var tp := tc.get_torp_params()
+	return {torp_speed = tp.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, torp_range = tc.get_params()._range,
+		torp_tubes = tubes, torp_detect = tp.detection_range}
+
+
+static func _spotter_index(ship: Ship) -> int:
+	var av := ship.aviation_controller
+	if av == null:
+		return -1
+	for i in av.squadrons.size():
+		var sq: Squadron = av.squadrons[i]
+		if not sq.aircraft.is_empty() and sq.aircraft[0] is SpottingAircraft:
+			return i
+	return -1
+
+
+static func _spot_cfg(ship: Ship) -> Dictionary:
+	var i := _spotter_index(ship)
+	if i < 0:
+		return {}
+	return {spot_reach = (ship.aviation_controller.squadrons[i].params.p() as AircraftParams)._range}
 
 
 static func _consumable_slot(ship: Ship, type: int) -> int:
@@ -136,9 +176,12 @@ func _ship_static(ship: Ship) -> Array:
 	var mv = ship.movement_controller
 	var ac = ship.artillery_controller
 	var rev: float = mv._p().reverse_speed_ratio if mv else 0.5
+	var cp: ConcealmentParams = ship.concealment.params.p() as ConcealmentParams if ship.concealment and ship.concealment.params else null
 	return [mv.max_speed if mv else 0.0, mv.ship_length if mv else 200.0, mv.ship_beam if mv else 20.0,
 		float(ship.ship_class), ac.get_params()._range if ac else 0.0, ship.health_controller.max_hp, rev,
-		(mv.ship_height - mv.ship_draft) if mv else 10.0]
+		(mv.ship_height - mv.ship_draft) if mv else 10.0, mv._p().turning_circle_radius if mv else 500.0,
+		cp.air_radius if cp else 2500.0, cp.torpedo_detection_multiplier if cp else 1.0,
+		cp.torpedo_detection_range_override if cp else -1.0]
 
 
 func _push_ships(now: float) -> void:
@@ -177,13 +220,17 @@ func _push_ships(now: float) -> void:
 		_data[o + 16] = st[5]
 		_data[o + 17] = st[6]
 		_data[o + 18] = st[7]
+		_data[o + 19] = st[8]
+		_data[o + 20] = st[9]
+		_data[o + 21] = st[10]
+		_data[o + 22] = st[11]
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)
 	world.set_ships(_ids, _data)
 
 
-## Point-table keys. BotGunnery is used here only as the point-table store/loader, never its db or solver.
+## Point-table keys and loading (PointTables), the v4 solver never involved.
 func _push_pairs() -> void:
 	for slot in _ships.size():
 		var me := _ships[slot]
@@ -195,11 +242,11 @@ func _push_pairs() -> void:
 				continue
 			if world.has_pair(slot, t.get_instance_id()):
 				continue
-			var ap := BotGunnery._point_table(me, t, 0) if gp.shell1 != null else ""
-			var he := BotGunnery._point_table(me, t, 1) if gp.shell2 != null else ""
+			var ap := PointTables.table_key(me, t, 0) if gp.shell1 != null else ""
+			var he := PointTables.table_key(me, t, 1) if gp.shell2 != null else ""
 			if (gp.shell1 != null and ap == "") or (gp.shell2 != null and he == ""):
 				continue
-			var raw: float = BotGunnery._raw_fire_chance(gp.shell2, t) if gp.shell2 != null else 0.0
+			var raw: float = GunneryModel.raw_fire_chance(gp.shell2, t) if gp.shell2 != null else 0.0
 			world.set_pair(slot, t.get_instance_id(), ap, he, raw)
 
 
@@ -213,8 +260,8 @@ func _push_live() -> void:
 				if f != null:
 					var p: Vector3 = (f as Fire).position
 					fires.append_array([p.x, p.y, p.z, 1.0 if (f as Fire).lifetime > 0.0 else 0.0])
-		world.set_target_live(t.get_instance_id(), BotGunnery.saturation_mask(t), fires,
-			BotGunnery.fire_dps(t) * BotGunnery.fire_burn_s(t))
+		world.set_target_live(t.get_instance_id(), PointTables.saturation_mask(t), fires,
+			GunneryModel.fire_dps(t) * GunneryModel.fire_burn_s(t))
 
 
 func _push_inputs(slot: int) -> void:
@@ -247,12 +294,32 @@ func _push_inputs(slot: int) -> void:
 	if ds >= 0:
 		dc_ready = s.consumable_manager.can_use_item(s.consumable_manager.equipped_consumables[ds])
 	var mv: ShipMovementV4 = s.movement_controller
+	var torp_ready := 0
+	var torp_live := 0
+	var lc := Vector3.ZERO
+	var tc := s.torpedo_controller
+	if tc != null:
+		for l in tc.launchers:
+			if l.disabled:
+				continue
+			torp_live += 1
+			lc += l.global_position
+			if l.reload >= 1.0:
+				torp_ready += 1
+	lc = lc / torp_live if torp_live > 0 else s.global_position
+	var spot_ready := false
+	var spot_up := false
+	var si: int = _spot_idx[slot]
+	if si >= 0:
+		spot_ready = s.aviation_controller.can_launch(si)
+		spot_up = s.aviation_controller.squadrons[si].active
 	world.set_bot_inputs(slot, PackedFloat32Array([ready, live, lag,
 		hp.healable_damage / maxf(hp.max_hp, 1.0), heal,
 		s.fire_manager.get_active_fires() if s.fire_manager else 0,
 		s.flood_manager.get_active_floods() if s.flood_manager else 0,
 		1.0 if repair_ready else 0.0, 1.0 if dc_ready else 0.0,
-		mv.rudder_input, mv.engine_power, 1.0 if mv.is_grounded else 0.0]))
+		mv.rudder_input, mv.engine_power, 1.0 if mv.is_grounded else 0.0,
+		torp_ready, torp_live, lc.x, lc.z, 1.0 if spot_ready else 0.0, 1.0 if spot_up else 0.0]))
 
 
 func _apply(cmd: PackedFloat64Array, now: float) -> void:
@@ -275,6 +342,9 @@ func _apply(cmd: PackedFloat64Array, now: float) -> void:
 			s.consumable_manager.use_consumable(_repair_slot[slot])
 		if cmd[o + 9] > 0.5:
 			s.consumable_manager.use_consumable(_dc_slot[slot])
+		if cmd[o + 12] > 0.5:
+			_torps(slot, s, Vector2(cmd[o + 13], cmd[o + 14]), cmd[o + 15] > 0.5, now)
+		_spotter(slot, s, cmd[o + 16] > 0.5, Vector2(cmd[o + 17], cmd[o + 18]))
 		if Engine.get_physics_frames() % 8 == slot % 8:
 			_secondaries(slot, s)
 
@@ -306,6 +376,39 @@ func _fire_one(slot: int, s: Ship, aim: Vector3, now: float) -> void:
 		_gate(slot, "not_aimed")
 	else:
 		_gate(slot, "none_ready")
+
+
+## A launcher's can_fire is from the last aim until it re-aims next frame, so a new spread point waits.
+func _torps(slot: int, s: Ship, p: Vector2, fire: bool, now: float) -> void:
+	var tc := s.torpedo_controller
+	var frame := Engine.get_physics_frames()
+	if p != _torp_pt[slot]:
+		_torp_pt[slot] = p
+		_torp_frame[slot] = frame
+	tc.set_aim_input(Vector3(p.x, 0.0, p.y))
+	if not fire or frame - _torp_frame[slot] < TORP_REAIM_FRAMES:
+		return
+	for l in tc.launchers:
+		if not l.disabled and l.reload >= 1.0 and l.can_fire:
+			l.fire()
+			world.note_torp_fired(slot, now)
+			return
+
+
+func _spotter(slot: int, s: Ship, want: bool, p: Vector2) -> void:
+	var i: int = _spot_idx[slot]
+	if i < 0:
+		return
+	var av := s.aviation_controller
+	var sq: Squadron = av.squadrons[i]
+	if not sq.active:
+		_spot_wp[slot] = Vector2.INF
+		if want:
+			av.ensure_launched(i)
+		return
+	if want and not sq.returning and sq.station_lock <= 0.0 and p.distance_to(_spot_wp[slot]) > SPOT_REISSUE_M:
+		sq.set_attack(p, p - Vector2(s.global_position.x, s.global_position.z))
+		_spot_wp[slot] = p
 
 
 func _gate(slot: int, k: String) -> void:

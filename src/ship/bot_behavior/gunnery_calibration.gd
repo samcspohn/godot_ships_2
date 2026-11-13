@@ -116,11 +116,11 @@ static func _book_aim(shooter: Ship, target: Ship, aim: Vector3, range_m: float,
 	r.abs_along += absf(o.z) / half_len
 	r.abs_across += absf(o.x) / half_beam
 	r.height += o.y
-	var mounts := BotGunnery._batteries(shooter, BotGunnery.KIND_MAIN, range_m)
-	var hd: float = BotGunnery._half_disp(mounts[0], range_m).x if not mounts.is_empty() else 0.0
+	var mounts := GunneryModel.batteries(shooter, GunneryModel.KIND_MAIN, range_m)
+	var hd: float = GunneryModel.half_disp(mounts[0], range_m).x if not mounts.is_empty() else 0.0
 	# The shell's own flight to the aim point, in shell-seconds, which the projectile manager runs time_mult times fast.
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(shooter.global_position, aim, shell)
-	var tof: float = float(sol[1]) if sol[0] != null else BotGunnery.flight_time(shooter, range_m)
+	var tof: float = float(sol[1]) if sol[0] != null else GunneryModel.flight_time(shooter, range_m)
 	_pending_aims.append({"target": target, "aim": aim, "o": o, "row": r, "hd": hd, "half_len": half_len,
 		"half_beam": half_beam, "t": SimClock.now() + tof / ProjectileManager.get_shell_time_multiplier(),
 		"lead": "%s|%d" % [_hull(target), int(range_m / DamageExpectation.LEAD_BAND_M)]})
@@ -301,8 +301,8 @@ static func _book_turnout(o: Dictionary) -> void:
 ## Shooter instance id -> the main-battery shell it last fired, for a hit's full-pool payout.
 static var _shell_of: Dictionary = {}
 ## Of a shell's damage, what each NativeArmorInteraction result pays into full pools.
-const PAYOUT := [BotGunnery.DMG_PENETRATION, BotGunnery.DMG_PARTIAL_PEN, 0.0, BotGunnery.DMG_OVERPENETRATION, 0.0,
-	BotGunnery.DMG_CITADEL, BotGunnery.DMG_CITADEL_OVERPEN]
+const PAYOUT := [GunneryModel.DMG_PENETRATION, GunneryModel.DMG_PARTIAL_PEN, 0.0, GunneryModel.DMG_OVERPENETRATION, 0.0,
+	GunneryModel.DMG_CITADEL, GunneryModel.DMG_CITADEL_OVERPEN]
 
 
 static func _row(shooter: Ship, target: Ship, range_m: float) -> Dictionary:

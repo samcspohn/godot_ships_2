@@ -119,7 +119,7 @@ func _physics_process(_delta: float) -> void:
 		_hulls.size(), shells.size(), ref.caliber, ref.mass, v_ref.size()])
 	var cols: PackedStringArray = []
 	for i in v_ref.size():
-		cols.append("%.1fdeg:%.0f" % [BotGunnery._descent_center(i), v_ref[i]])
+		cols.append("%.1fdeg:%.0f" % [GunneryModel.descent_center(i), v_ref[i]])
 	print("bake: reference speeds " + " ".join(cols))
 	print("bake: hulls loaded at %.1f s" % ((_t_loaded - _t0) / 1000.0))
 	_bounce_classes = bounce_classes(shells)
@@ -196,19 +196,19 @@ static func _reference_shell(shells: Array) -> ShellParams:
 
 ## Median striking speed per descent bucket over every shell's real trajectory.
 static func _reference_speeds(shells: Array) -> PackedFloat32Array:
-	var edges := BotGunnery.descent_edges()
+	var edges := GunneryModel.descent_edges()
 	var samples: Array = []
 	for i in edges.size():
 		samples.append([])
 	for sh in shells:
 		var r: float = RANGE_STEP_M
-		while r <= BotGunnery.RANGE_TOP_M:
+		while r <= GunneryModel.RANGE_TOP_M:
 			var l: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(
-				Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0), Vector3(r, 0.0, 0.0), sh)
+				Vector3(0.0, GunneryModel.GUN_HEIGHT_M, 0.0), Vector3(r, 0.0, 0.0), sh)
 			if l.is_empty() or not l[0]:
 				break
 			var v: Vector3 = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(l[0], l[1], sh)
-			var di := BotGunnery._descent_index(rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length())))
+			var di := GunneryModel.descent_index(rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length())))
 			if di >= 0:
 				samples[di].append(v.length())
 			r += RANGE_STEP_M
@@ -325,9 +325,9 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 	var ev_jobs := PackedByteArray()
 	var job_refine: Array = []
 	for h in todo.size():
-		for ai in BotGunnery._aspect_edges().size():
-			for di in BotGunnery.descent_edges().size():
-				var geo := BotGunnery.build_lattice(todo[h], ai, di)
+		for ai in GunneryModel.aspect_edges().size():
+			for di in GunneryModel.descent_edges().size():
+				var geo := GunneryModel.build_lattice(todo[h], ai, di)
 				if geo.is_empty():
 					continue
 				job_hull.append(h)
@@ -346,9 +346,9 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
 		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
 		"bisect_mm": BISECT_MM, "merge_mm": BotGunnery.PEN_QUANTUM_MM, "bounce_classes": _bounce_classes, "om_max": om_max, "threads": _threads, "smt": _smt,
-		"ev_jobs": ev_jobs, "job_refine": job_refine, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(),
+		"ev_jobs": ev_jobs, "job_refine": job_refine, "ev_payouts": GunneryModel.full_payouts(), "ev_levels": GunneryModel.full_levels(),
 		"ev_guarantee": 0.0,
-		"ev_turret_cap": BotGunnery.DMG_TURRET})
+		"ev_turret_cap": GunneryModel.DMG_TURRET})
 	var st: Dictionary = res.get("stats", {})
 	print("bake: %d buckets  geometry %.1f s  sweep %.1f s  threads %d  busy %.0f/%.0f/%.0f ms (min/mean/max)  steals %d (%d cross-node)" % [
 		job_hull.size(), (t_geo - t0) / 1000.0, float(st.get("wall_ms", 0.0)) / 1000.0,
@@ -364,8 +364,8 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 			"version": BotGunnery.SOLVER_VERSION,
 			"glb_md5": md5s[h],
 			"hull": todo[h].scene_file_path,
-			"aspect_edges": BotGunnery._aspect_edges(),
-			"descent_edges": BotGunnery.descent_edges(),
+			"aspect_edges": GunneryModel.aspect_edges(),
+			"descent_edges": GunneryModel.descent_edges(),
 			"ref_caliber": ref.caliber,
 			"ref_mass": ref.mass,
 			"v_ref": v_ref,

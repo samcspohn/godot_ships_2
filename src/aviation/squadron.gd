@@ -39,6 +39,11 @@ var next_target_line: MeshInstance3D
 
 var waypoints: Array[Vector2] = []
 var idle_pos: Vector2
+# Unit world-space bearing from the carrier, set once an order is clamped to range;
+# ZERO = unpinned. Keeps a clamped order abeam instead of dragging behind the ship.
+var _waypoint_pins: Array[Vector2] = []
+var _idle_pin: Vector2 = Vector2.ZERO
+var _attack_pin: Vector2 = Vector2.ZERO
 # Clearing this always returns the formation to the cruise wedge. It does NOT
 # switch to the attack layout on its own - that only happens once the
 # squadron closes within attack_descent_radius (see in_attack_run below), so
@@ -77,6 +82,9 @@ var in_attack_run: bool = false:
 # point (e.g. spotting) rather than patrolling near the carrier - determines
 # which orbit radius to use (circle_range vs idle_radius)
 var holding_attack: bool = false
+## Seconds a squadron that just took up a station (spotters) still ignores new orders.
+var station_lock: float = 0.0
+const STATION_COMMIT_S: float = 30.0
 # true once a one-shot attack run has fired and the squadron is flying itself
 # back to the launcher instead of being teleported home instantly. While
 # returning, the squadron ignores any further attack commands.
@@ -472,6 +480,7 @@ func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -
 	next_target_line.reparent(game_world)
 	world_node = game_world
 	idle_pos = Vector2(launch_pos.x, launch_pos.z)
+	_clear_pins()
 	active = true
 	holding_attack = false
 	returning = false
@@ -506,6 +515,7 @@ func recall(launcher: Node3D) -> void:
 	in_landing_approach = false
 	fuel_remaining = 0.0
 	waypoints.clear()
+	_clear_pins()
 	for plane in aircraft:
 		plane.visible = false
 		plane.set_physics_process(false)
@@ -605,15 +615,17 @@ func all_dead() -> bool:
 
 func set_waypoint(waypoint: Vector2, append: bool) -> void:
 	# ignore new waypoints while flying itself home after a completed run
-	if returning:
+	if returning or station_lock > 0.0:
 		return
-	if append:
-		waypoints.append(waypoint)
-	else:
+	if not append:
 		waypoints.clear()
-		waypoints.append(waypoint)
+		_waypoint_pins.clear()
+	waypoints.append(waypoint)
+	_waypoint_pins.append(Vector2.ZERO)
 	attack_point = null
+	_attack_pin = Vector2.ZERO
 	idle_pos = waypoint
+	_idle_pin = Vector2.ZERO
 
 # Widest angle an attack run may deviate from the carrier-to-target line. The
 # squadron can be angled off the direct approach, but not swung around onto the
@@ -650,7 +662,7 @@ func _carrier_position() -> Vector2:
 # spread once fired (see _fire).
 func set_attack(point: Vector2, direction: Vector2) -> void:
 	# ignore new attack orders while flying itself home after a completed run
-	if returning:
+	if returning or station_lock > 0.0:
 		return
 	attack_direction = clamp_attack_direction(direction, point, _carrier_position())
 	attack_fired = false
@@ -658,16 +670,18 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	in_attack_run = false
 	passed_entry_point = false
 	attack_point = point
-	# attack_point = aircraft[0].process_attack_point(point, direction)
-	# add append flag
+	_attack_pin = Vector2.ZERO
 	waypoints.clear()
+	_waypoint_pins.clear()
 
 # Breaks off whatever the squadron is doing and sends it home. Used when the
 # sortie runs out of endurance, and by the bots to cut a sortie short that is no
 # longer worth flying; the normal end-of-attack return goes through _fire().
 func abort_sortie() -> void:
+	station_lock = 0.0
 	attack_point = null
 	waypoints.clear()
+	_clear_pins()
 	holding_attack = false
 	attack_fired = false
 	returning = true
@@ -678,8 +692,11 @@ func update_flight(delta: float, ship: Ship) -> void:
 	# while it is still out working - once it has turned for base it flies the
 	# return leg however long that takes.
 	fuel_remaining = maxf(fuel_remaining - delta, 0.0)
+	station_lock = maxf(station_lock - delta, 0.0)
 	if fuel_remaining <= 0.0 and not returning:
 		abort_sortie()
+	if not returning:
+		_clamp_orders_to_range(ship, p._range)
 	var wp: Vector2
 	var altitude: float = p.altitude
 	var climb_rate: float = p.climb_rate
@@ -756,7 +773,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 					var required_climb_rate: float = altitude_diff * p.speed / dist_to_wp
 					climb_rate = maxf(climb_rate, required_climb_rate)
 	else:
-		var wp_or_null = _process_waypoints(ship, p)
+		var wp_or_null = _process_waypoints()
 		if wp_or_null == null:
 			var orbit_radius: float = p.circle_range if holding_attack else p.idle_radius
 			wp = _orbit_target(idle_pos, orbit_radius, p.speed, delta)
@@ -774,6 +791,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 		if dist_after < 0.001:
 			_fire()
 			waypoints.clear()
+			_waypoint_pins.clear()
 
 # Fires every aircraft's ordnance once the squadron arrives at the attack
 # point. If every aircraft reports a one-shot run, the whole squadron is
@@ -795,28 +813,51 @@ func _fire() -> void:
 		attack_point = null
 	else:
 		idle_pos = attack_point
+		_idle_pin = _attack_pin
+		_attack_pin = Vector2.ZERO
 		attack_fired = false
 		holding_attack = true
+		station_lock = STATION_COMMIT_S
 		attack_point = null
 
-# clamp waypoints to within range of ship and return current waypoint;
+func _clear_pins() -> void:
+	_waypoint_pins.clear()
+	_idle_pin = Vector2.ZERO
+	_attack_pin = Vector2.ZERO
+
+static func _pin_for(point: Vector2, pin: Vector2, center: Vector2, r: float) -> Vector2:
+	if pin != Vector2.ZERO:
+		return pin
+	var disp := point - center
+	if disp.length_squared() > r * r:
+		return disp.normalized()
+	return Vector2.ZERO
+
+func _clamp_orders_to_range(ship: Ship, r: float) -> void:
+	var ship_pos := Vector2(ship.global_position.x, ship.global_position.z)
+	_waypoint_pins.resize(waypoints.size())
+	for i in range(waypoints.size()):
+		_waypoint_pins[i] = _pin_for(waypoints[i], _waypoint_pins[i], ship_pos, r)
+		if _waypoint_pins[i] != Vector2.ZERO:
+			waypoints[i] = ship_pos + _waypoint_pins[i] * r
+	_idle_pin = _pin_for(idle_pos, _idle_pin, ship_pos, r)
+	if _idle_pin != Vector2.ZERO:
+		idle_pos = ship_pos + _idle_pin * r
+	if attack_point != null:
+		_attack_pin = _pin_for(attack_point, _attack_pin, ship_pos, r)
+		if _attack_pin != Vector2.ZERO:
+			attack_point = ship_pos + _attack_pin * r
+
 # remove waypoints once the formation leader reaches them
-func _process_waypoints(ship: Ship, p: AircraftParams):
+func _process_waypoints():
 	if waypoints.size() == 0:
 		return null
-	var ship_pos := Vector2(ship.global_position.x, ship.global_position.z)
-	for i in range(waypoints.size()):
-		var wp: Vector2 = waypoints[i]
-		var disp := wp - ship_pos
-		if disp.length_squared() > p._range * p._range:
-			disp = disp.normalized() * p._range
-			wp = ship_pos + disp
-			waypoints[i] = wp
-
 	var wp: Vector2 = waypoints[0]
 	var disp := wp - Vector2(node.global_position.x, node.global_position.z)
 	if disp.length_squared() < 100.0: # reached waypoint
 		waypoints.remove_at(0)
+		if not _waypoint_pins.is_empty():
+			_waypoint_pins.remove_at(0)
 	if waypoints.size() == 0:
 		return null
 	return waypoints[0]
