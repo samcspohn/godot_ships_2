@@ -366,6 +366,11 @@ func _torpedo_reach(ship: Ship) -> float:
 
 
 func engagement_range(ship: Ship, threat: float) -> float:
+	var fixed := threat_free_range(ship)
+	return fixed if not is_nan(fixed) else super(ship, threat)
+
+
+func threat_free_range(ship: Ship) -> float:
 	# Tubes alone are not the test - the band they can be fired from is. Without
 	# one the min() below returns a standoff short of the boat's own guns that it
 	# still cannot launch from, which is the worst of both weapons.
@@ -377,7 +382,7 @@ func engagement_range(ship: Ship, threat: float) -> float:
 			# undetected launch at all, and the boat has to close to tube range
 			# and accept being seen.
 			return minf(conceal * SkillSpot.SAFE_MARGIN, torp_range * TORPEDO_ENGAGE_RATIO)
-	return super(ship, threat)
+	return NAN
 
 
 ## Whether the active station skill found a cell the router can reach dark.

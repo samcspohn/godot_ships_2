@@ -21,7 +21,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_BURN_SHARE: float = 0.7
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 20
+const SOLVER_VERSION: int = 22
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -112,8 +112,8 @@ const ANSWER_TTL_FRAMES: int = 64
 const RESOLVE_CACHE_MAX: int = 1024
 const PEN_QUANTUM_MM: float = 5.0
 
-## DispersionCalculator: 3 of 4 salvos apply the guarantee to 1 of 3 shells.
-const CITADEL_GUARANTEE_FRAC: float = 0.25
+## DispersionCalculator moves at most 1 shell per batch; native code reads the batch size back as 1 / frac.
+const CITADEL_GUARANTEE_FRAC: float = 1.0 / DispersionCalculator.BATCH_SIZE
 const CITADEL_ELLIPSE := Vector2(0.36, 0.1)
 ## Spread of the guarantee's moved shell, in ellipse half-axes: DamageModel GUAR_H_SD, GUAR_V_SD.
 const GUARANTEE_SD := Vector2(0.577, 0.40)

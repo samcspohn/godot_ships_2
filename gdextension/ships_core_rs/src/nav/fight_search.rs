@@ -287,6 +287,8 @@ pub(crate) struct RouteField {
     /// Per water cell, INF where not settled; empty for no field.
     pub cost: Vec<f32>,
     pub settled: usize,
+    /// Ended by route_stop: no target left unsettled can win.
+    pub stopped: bool,
 }
 
 /// route_field searches out to this many times the farthest target's straight distance.
@@ -426,6 +428,11 @@ impl VisibilityGrid {
     /// A hidden cell gaining CHECKPOINT_MIN_M from `from` toward the goal, out of
     /// every ring: worth `checkpoint` of `best` per full window gained, less what it takes.
     pub(crate) fn checkpoint_cell(&self, k: usize, from: Vector2, best: f32, inp: &SpotInputs, a: &FightArgs) -> Option<FightCell> {
+        self.checkpoint_value(k, from, best, inp, a).map(|value| FightCell { mask: 0, value, harm: exposure_ahead(self, k, inp, a) })
+    }
+
+    /// checkpoint_cell's value, before what it takes.
+    fn checkpoint_value(&self, k: usize, from: Vector2, best: f32, inp: &SpotInputs, a: &FightArgs) -> Option<f32> {
         if a.checkpoint <= 0.0 || !a.goal.is_finite() || best <= 0.0 || self.sdf_c[k] < inp.clearance {
             return None;
         }
@@ -433,8 +440,7 @@ impl VisibilityGrid {
         if gain < CHECKPOINT_MIN_M || !self.hidden_from_free(k, inp, a) || self.ringed(k, inp, a) {
             return None;
         }
-        let value = a.checkpoint * best * gain.min(a.window_m) / a.window_m;
-        Some(FightCell { mask: 0, value, harm: exposure_ahead(self, k, inp, a) })
+        Some(a.checkpoint * best * gain.min(a.window_m) / a.window_m)
     }
 
     /// fight_cell, else checkpoint_cell from `from`.
@@ -496,10 +502,10 @@ impl VisibilityGrid {
     }
 
     /// Weighted metres through water at our clearance from `origin` to each of `targets`,
-    /// stopping once all are settled (with `reach_m`, to every cell within it); a target with no route is left out.
-    /// Without `reach_m`, also once `must` is settled and no cell of `scored` can win (route_stop).
+    /// out to `reach_m` (else ROUTE_REACH), stopping once all are settled, or `must` is and no cell of `scored` can win
+    /// (route_stop); a target with no route is left out. A `scored` score leaves out `harm_of` its cell, taken once settled.
     pub(crate) fn route_field(&self, origin: Vector2, targets: &[usize], reach_m: Option<f32>, scored: &[(usize, f32)], must: Option<usize>,
-            inp: &SpotInputs, a: &FightArgs) -> RouteField {
+            harm_of: &mut dyn FnMut(usize) -> f32, inp: &SpotInputs, a: &FightArgs) -> RouteField {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
         let mut out = RouteField::default();
@@ -530,25 +536,24 @@ impl VisibilityGrid {
                 continue;
             }
             if d > stop {
+                out.stopped = true;
                 break;
             }
             out.settled += 1;
             fprof(7, 1);
-            if reach_m.is_some() || want[k] {
+            if want[k] {
                 out.cost[k] = d;
-                if want[k] {
-                    want[k] = false;
-                    left -= 1;
-                    if left == 0 && reach_m.is_none() {
-                        break;
+                want[k] = false;
+                left -= 1;
+                if left == 0 {
+                    break;
+                }
+                if !scored.is_empty() {
+                    must_open = must_open && must != Some(k);
+                    if let Some(i) = open.iter().position(|c| c.0 == k) {
+                        best = best.max(open.swap_remove(i).1 - harm_of(k) - a.move_cost * d);
                     }
-                    if reach_m.is_none() && !scored.is_empty() {
-                        must_open = must_open && must != Some(k);
-                        if let Some(i) = open.iter().position(|c| c.0 == k) {
-                            best = best.max(open.swap_remove(i).1 - a.move_cost * d);
-                        }
-                        stop = if must_open { f32::INFINITY } else { self.route_stop(&open, best, a) };
-                    }
+                    stop = if must_open { f32::INFINITY } else { self.route_stop(&open, best, a) };
                 }
             }
             if weight[k].is_nan() {
@@ -717,19 +722,49 @@ impl VisibilityGrid {
         let t_cells = std::time::Instant::now();
         let cells: Vec<(usize, Option<FightCell>)> = cand.iter().map(|&k| (k, self.fight_cell(k, inp, a))).collect();
         fprof(1, fus(t_cells));
-        let t_route = std::time::Instant::now();
-        let mut targets: Vec<usize> = cells.iter().filter(|c| c.1.is_some()).map(|c| c.0).collect();
-        targets.extend(held_k);
         let origin = if a.anchor.is_finite() { a.anchor } else { from };
         let top = a.best_value(inp);
         let checkpoints = a.checkpoint > 0.0 && a.goal.is_finite() && top > 0.0;
-        let route = if a.move_cost <= 0.0 || (targets.is_empty() && !checkpoints) {
+        let mut weighed = cand.len();
+        let t_ck = std::time::Instant::now();
+        // Scored before the route so it can stop short of them too.
+        // Exposure is the dear part: priced only for checkpoints the route reaches before route_stop rules the rest out.
+        let mut points: Vec<(usize, f32)> = Vec::new();
+        if checkpoints {
+            let r = (a.window_m / self.cell).ceil() as i32;
+            let (cx, cz) = self.grid_of(from);
+            for iz in cz - r..=cz + r {
+                for ix in cx - r..=cx + r {
+                    let Some(k) = self.water(ix, iz) else { continue };
+                    if seen.contains(&k) || self.centres[k].distance_to(from) > a.window_m || !self.walk_ok(self.centres[k], true, a) {
+                        continue;
+                    }
+                    weighed += 1;
+                    if let Some(v) = self.checkpoint_value(k, from, top, inp, a) {
+                        points.push((k, v));
+                    }
+                }
+            }
+        }
+        fprof(8, (weighed - cand.len()) as u64);
+        fprof(3, fus(t_ck));
+        let t_route = std::time::Instant::now();
+        let scored: Vec<(usize, f32)> = cells.iter().filter_map(|(k, c)| c.as_ref().map(|c| (*k, c.value - c.harm)))
+            .chain(points.iter().copied())
+            .map(|(k, v)| (k, v - a.claim_cost * self.crowd(k, a))).collect();
+        let mut targets: Vec<usize> = scored.iter().map(|c| c.0).collect();
+        targets.extend(held_k);
+        let reach = checkpoints.then(|| a.window_m + origin.distance_to(from));
+        let point_at: std::collections::HashMap<usize, usize> = points.iter().enumerate().map(|(i, p)| (p.0, i)).collect();
+        let mut harm = vec![f32::NAN; points.len()];
+        let route = if a.move_cost <= 0.0 || targets.is_empty() {
             RouteField::default()
         } else {
-            let scored: Vec<(usize, f32)> = if checkpoints { Vec::new() } else {
-                cells.iter().filter_map(|(k, c)| c.as_ref().map(|c| (*k, c.value - c.harm - a.claim_cost * self.crowd(*k, a)))).collect()
-            };
-            self.route_field(origin, &targets, checkpoints.then(|| a.window_m + origin.distance_to(from)), &scored, held_k, inp, a)
+            let mut harm_of = |k: usize| point_at.get(&k).map_or(0.0, |&i| {
+                harm[i] = exposure_ahead(self, k, inp, a);
+                harm[i]
+            });
+            self.route_field(origin, &targets, reach, &scored, held_k, &mut harm_of, inp, a)
         };
         fprof(2, fus(t_route));
         let mut best: Option<(usize, f32, FightCell)> = None;
@@ -747,29 +782,16 @@ impl VisibilityGrid {
                 }
             }
         }
-        let mut weighed = cand.len();
-        let t_ck = std::time::Instant::now();
-        if checkpoints {
-            let r = (a.window_m / self.cell).ceil() as i32;
-            let (cx, cz) = self.grid_of(from);
-            for iz in cz - r..=cz + r {
-                for ix in cx - r..=cx + r {
-                    let Some(k) = self.water(ix, iz) else { continue };
-                    if seen.contains(&k) || self.centres[k].distance_to(from) > a.window_m || !self.walk_ok(self.centres[k], true, a) {
-                        continue;
-                    }
-                    weighed += 1;
-                    if let Some(fc) = self.checkpoint_cell(k, from, top, inp, a) {
-                        let sc = fc.value - fc.harm - self.penalty(k, a, &route);
-                        if best.as_ref().is_none_or(|b| sc > b.1) {
-                            best = Some((k, sc, fc));
-                        }
-                    }
-                }
+        for (i, (k, value)) in points.into_iter().enumerate() {
+            if harm[i].is_nan() && route.stopped {
+                continue;
+            }
+            let h = if harm[i].is_nan() { exposure_ahead(self, k, inp, a) } else { harm[i] };
+            let sc = value - h - self.penalty(k, a, &route);
+            if best.as_ref().is_none_or(|b| sc > b.1) {
+                best = Some((k, sc, FightCell { mask: 0, value, harm: h }));
             }
         }
-        fprof(8, (weighed - cand.len()) as u64);
-        fprof(3, fus(t_ck));
         let t_held = std::time::Instant::now();
         let held = held_k
             .filter(|&k| self.walk_ok(self.centres[k], false, a))

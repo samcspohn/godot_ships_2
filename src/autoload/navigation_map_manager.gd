@@ -15,6 +15,7 @@ var _reach_field: ReachField = null
 var _visibility: VisibilityGrid = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
+var bounds := Rect2()
 
 ## Default minimum ship radius for waypoint graph generation (smallest ship beam / 2).
 const DEFAULT_MIN_SHIP_RADIUS := 25.0
@@ -28,6 +29,7 @@ const VISIBILITY_CACHE_DIR := "user://visibility"
 ## map_bounds: Rect2 defining the playable area in XZ space (position = min corner, size = extent)
 ## cell_size: SDF grid cell size in meters (default 50.0, matching existing nav mesh cell size)
 func build_map(island_bodies: Array[StaticBody3D], map_bounds: Rect2, cell_size: float = 50.0) -> void:
+	bounds = map_bounds
 	var start_time = Time.get_ticks_msec()
 
 	_map = NavigationMap.new()
@@ -72,6 +74,7 @@ func build_map(island_bodies: Array[StaticBody3D], map_bounds: Rect2, cell_size:
 ## collision_mask: physics layer mask for the raycast (default 1 = terrain)
 func build_map_raycast(island_bodies: Array[StaticBody3D], map_bounds: Rect2,
 					   cell_size: float = 50.0, collision_mask: int = 1) -> void:
+	bounds = map_bounds
 	var start_time = Time.get_ticks_msec()
 
 	_map = NavigationMap.new()
@@ -144,6 +147,9 @@ func get_visibility() -> VisibilityGrid:
 ## Loads the cached grid for this map, or builds and caches it (~2 s).
 ## The visibility grid's cache signature: map geometry and cell size.
 var _visibility_signature: int = 0
+const SAIL_CELL_M := 500.0
+## Bump when SailTable's distances change.
+const SAIL_VERSION := 2
 
 func get_visibility_signature() -> int:
 	return _visibility_signature
@@ -163,6 +169,7 @@ func build_visibility() -> void:
 		var w := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
 		if w != null:
 			w.store_buffer(vis.to_bytes())
+	_load_sail(vis)
 	_visibility = vis
 	if _reach_field != null:
 		_reach_field.set_visibility(vis)
@@ -171,6 +178,18 @@ func build_visibility() -> void:
 	var info := vis.get_info()
 	print("[NavigationMapManager] Visibility %s in %d ms: %d cells, %.1f MB" % [
 		"loaded" if loaded else "built", Time.get_ticks_msec() - t0, info.cells, info.bytes / 1048576.0])
+
+func _load_sail(vis: VisibilityGrid) -> void:
+	var t0 := Time.get_ticks_msec()
+	var path := "%s/%016x_sail%d_v%d.bin" % [VISIBILITY_CACHE_DIR, _visibility_signature, int(SAIL_CELL_M), SAIL_VERSION]
+	var f := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	var loaded := f != null and vis.sail_from_bytes(SAIL_CELL_M, f.get_buffer(f.get_length()))
+	if not loaded:
+		vis.build_sail(SAIL_CELL_M)
+		var w := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+		if w != null:
+			w.store_buffer(vis.sail_to_bytes())
+	print("[NavigationMapManager] Sail table %s in %d ms" % ["loaded" if loaded else "built", Time.get_ticks_msec() - t0])
 
 ## One key per distinct shell/range/gun-height combination, so ships sharing a
 ## gun share the reach field's ballistic table and cached answers.

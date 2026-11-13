@@ -732,7 +732,7 @@ func update_priorities(server: GameServer) -> void:
 		var t0 := Time.get_ticks_usec()
 		var shoot: bool = d <= _ship.artillery_controller.get_params()._range and _aimable(b.ship) and can_hit_target(b.ship)
 		var t1 := Time.get_ticks_usec()
-		var sail: float = d if shoot else _sail_m("s%d" % b.ship.get_instance_id(), here, b.pos)
+		var sail: float = d if shoot else _sail_m(here, b.pos)
 		var t2 := Time.get_ticks_usec()
 		var th := _team_help(server, b.ship, b.pos)
 		var t3 := Time.get_ticks_usec()
@@ -757,7 +757,7 @@ func update_priorities(server: GameServer) -> void:
 		var u0 := Time.get_ticks_usec()
 		var proxy := _ref_proxy(server, int(r.id))
 		var u1 := Time.get_ticks_usec()
-		var sail: float = _sail_m("r%s" % str(r.id), here, r.pos)
+		var sail: float = _sail_m(here, r.pos)
 		var u2 := Time.get_ticks_usec()
 		fresh.append({"ship": null, "pos": r.pos, "ref": r.id, "d": PRIORITY_ROUTE_W * sail,
 			"score": priority_score(proxy, r.pos, sail, false) if proxy != null else 0.0})
@@ -914,35 +914,13 @@ static func _aggro_take(scorer: Ship, target: Ship, ranges: PackedFloat64Array, 
 	return StanceSim.aggro_take(danger_curve(target, scorer), torpedo_danger(target, scorer), dps_curve(scorer, target), torp, k,
 		ranges, tank, PRIORITY_SWITCH)
 
-## Length of the sea route from `here` to `to` for contact `key`, re-planned
-## when either end moves PRIORITY_PATH_MOVE_M or after PRIORITY_PATH_TTL_S;
-## the straight line without a graph or a route.
 ## A contact our guns cannot reach now is as far as its sea route, counted this many times over.
 const PRIORITY_ROUTE_W: float = 2.0
-const PRIORITY_PATH_TTL_S: float = 5.0
-const PRIORITY_PATH_MOVE_M: float = 500.0
-var _sail_cache: Dictionary = {}
 
-func _sail_m(key: String, here: Vector2, to: Vector2) -> float:
-	var now: float = SimClock.now()
-	var c: Array = _sail_cache.get(key, [])
-	if not c.is_empty() and now - float(c[0]) < PRIORITY_PATH_TTL_S \
-			and here.distance_to(c[1]) < PRIORITY_PATH_MOVE_M and to.distance_to(c[2]) < PRIORITY_PATH_MOVE_M:
-		return float(c[3])
-	var g: HpaGraph = NavigationMapManager.get_hpa_graph()
-	var length: float = here.distance_to(to)
-	if g != null and g.is_built():
-		# The graph is shared: a navigator's threat walls from its last plan must not shape this route.
-		g.debug_clear_threats()
-		var path: PackedVector2Array = g.find_path_packed(here, to, _get_ship_clearance())
-		if not path.is_empty():
-			length = here.distance_to(path[0])
-			for i in range(1, path.size()):
-				length += path[i - 1].distance_to(path[i])
-	if _sail_cache.size() > 128:
-		_sail_cache.clear()
-	_sail_cache[key] = [now, here, to, length]
-	return length
+func _sail_m(here: Vector2, to: Vector2) -> float:
+	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
+	var m: float = vis.sail_m(here, to) if vis != null else -1.0
+	return m if m >= 0.0 else here.distance_to(to)
 
 ## A spawn reference is scored as a ship of our own fleet of the class dealt it
 ## (GameServer.ref_class), at the reference.
@@ -1006,21 +984,16 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 			if enemy.visible_to_enemy or candidates.has(enemy):
 				continue
 			candidates.append(enemy)
-	var value := {}
-	for c in candidates:
-		value[c] = farm_value(c)
-	candidates.sort_custom(func(a: Ship, b: Ship) -> bool: return value[a] > value[b])
-
-	# Find the highest-weight target we have a usable solution for and can shoot at
+	# Shootable first: a bot with no target rescans every tick, and pricing what it cannot hit is wasted.
 	var best: Ship = null
-	for potential in candidates:
-		if is_engageable_contact(get_contact_solution(potential)) and can_hit_target(potential):
-			best = potential
-			break
-
-	if best == null:
-		return null
-
+	var best_v := -INF
+	for c in candidates:
+		if not (is_engageable_contact(get_contact_solution(c)) and can_hit_target(c)):
+			continue
+		var v := farm_value(c)
+		if v > best_v:
+			best_v = v
+			best = c
 	return best
 
 
@@ -4477,7 +4450,7 @@ static func _curve_at(c: PackedFloat32Array, range_m: float) -> float:
 	var k: int = roundi((range_m - POINT_BLANK_M) / DESIRED_STEP_M)
 	return c[k] if k >= 0 and k < c.size() else 0.0
 
-## Every cross-team dps_curve among `ships`, so none is first built mid-match.
+## Every cross-team curve priority scoring reads among `ships`, so none is first built mid-match.
 static func warm_dps_curves(ships: Array) -> void:
 	for a in ships:
 		for b in ships:
@@ -4485,6 +4458,7 @@ static func warm_dps_curves(ships: Array) -> void:
 					and a.team.team_id != b.team.team_id:
 				danger_curve(a, b)
 				torpedo_curve(a, b)
+				torpedo_danger(a, b)
 
 ## Enemy instance id -> [time, desired_range].
 var _desired_cache: Dictionary = {}
@@ -4646,6 +4620,10 @@ func dangerous(enemy: Ship) -> bool:
 	return float(_trade(enemy).best) < 1.0 / TRADE_MARGIN \
 		or (active_shooters_at_me.has(enemy) and _ship.visible_to_enemy and not enemy.visible_to_enemy)
 
+## engagement_range when threat does not move it, else NAN.
+func threat_free_range(_s: Ship) -> float:
+	return NAN
+
 ## The band radius the ship would choose if it sat on it: where
 ## engagement_range(threat there, everyone in reach firing) meets the radius
 ## itself. Threat falls with range, so the two cross once.
@@ -4656,10 +4634,11 @@ func optimal_engagement_range(ctx: SkillContext) -> float:
 		nearest = minf(nearest, (c.position as Vector3).distance_to(_ship.global_position))
 	var lo: float = POINT_BLANK_M
 	var hi: float = max_engagement_range(_ship)
+	var fixed := threat_free_range(_ship)
 	if not is_finite(nearest):
-		return engagement_range(_ship, _threat_from(ctx, contacts, 0.0, false))
+		return fixed if not is_nan(fixed) else engagement_range(_ship, _threat_from(ctx, contacts, 0.0, false))
 	var gap := func(r: float) -> float:
-		return engagement_range(_ship, _threat_from(ctx, contacts, r - nearest, true)) - r
+		return (fixed if not is_nan(fixed) else engagement_range(_ship, _threat_from(ctx, contacts, r - nearest, true))) - r
 	if gap.call(lo) <= 0.0:
 		return lo
 	if gap.call(hi) >= 0.0:

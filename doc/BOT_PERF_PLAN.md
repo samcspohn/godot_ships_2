@@ -206,7 +206,50 @@ checkpoint scan 0.3-1.5 ms, inputs 0.07 ms. Most calls are cheap (settled p50 3-
 
 `route_field` stops once `held` is settled and no unsettled candidate can win at the cost reached (`route_stop`). Side by side with the full
 search: 0 differences in 13.5k searches. 12v12 seeds 3, 5: settled mean 390-433 -> 207-213, route mean 163-175 -> 96-120 us. Route p99 unchanged
-at 1.4-1.5 ms, settled p99 still ~4k: brawler checkpoint searches settle the whole window and are not cut, the likely tail (not confirmed).
+at 1.4-1.5 ms, settled p99 still ~4k: brawler checkpoint searches settled the whole window.
+
+Checkpoints are now scored before the route, so the stop covers them: route p99 0.74-0.88 ms, settled p99 1.65-1.8k.
+
+## Sail distance table (2026-11-10)
+
+`nav/sail_table.rs`: u16 tenths of a 500 m cell between every pair of coarse cells, flooded on the 300 m water grid, no clearance. Built 424 ms,
+loaded 74 ms, 12.6 MB cached. Replaces HPA paths in `_sail_m`. 12v12 seeds 3, 5: prio_sail mean 335 -> 11 us, p99 1.5 ms -> 25 us; intent mean
+5.6-5.7 -> 4.7-4.85 ms, p99 12.4-12.5 -> 10.8-11.6 ms. Against HPA before GRID_STRETCH: median +3.9%, p1 -3.5%, p99 +11%.
+
+## First-tick spike (2026-11-11)
+
+The 120-140 ms max was `brawler()` building (self, self) point tables on a Kaiser Wilhelm's first intent, frame 2, before the server's
+warm-up (2 frames after spawn) computed it. Bots now skip intents while queued for warm-up (`BotControllerV4._warming`). 12v12 seeds 3, 5:
+intent max 137-140 -> 20-21 ms, frame_worst_bot max 30 / 24 ms. Next worst: DD `select` ladder 11-15 ms (Shimakaze).
+
+## Destroyer ladder (2026-11-11)
+
+Shimakaze `select` 11-15 ms: `smoothed_engagement_range` -> `optimal_engagement_range` priced `_threat_from` ~12 times per call (4.5-8.6 ms),
+though a torpedo DD's `engagement_range` ignores threat. `threat_free_range` hook (NAN by default) skips it; result unchanged. Shimakaze worst
+ladder now 8.5 ms (Fight push, ~5 ms fs_march). Next seen: Kaiser Wilhelm `select` 15-16 ms, brawl 1-1.4 ms (seed 5).
+
+## Deferred checkpoint exposure (2026-11-11)
+
+Kaiser Wilhelm 13-15 ms decisions: checkpoint scan priced exposure for every hidden cell (3.1 ms). Checkpoints now enter the route with
+harm 0 and `route_field` prices exposure (`harm_of`) only when it settles one; cells left when route_stop ends the search cannot win.
+Side by side: 0 different picks in ~650 checkpoint searches, exposure priced for 14-48% of checkpoints. 12v12 seeds 3, 5: fx_ckpt p99
+0.3-1.7 ms -> 0.05-0.17 ms, max 2.0-5.3 -> 0.07-0.27 ms; worst ladder 17.6 -> 10.2-11.7 ms. One fx_route max 7.2 ms (lazy exposure inside).
+
+## Per-frame tick (2026-11-11)
+
+Sum over all bots per physics frame (`_tick_behavior`), 12v12 seed 3: mean 4.0 ms, p99 9.9-11.7, p999 12.7-15, max 33 ms.
+A bot with no target rescans every tick (28% of ticks), and `pick_target` priced every candidate (`farm_value`, point tables)
+before checking it could hit any. Now shootable first: 0 different picks in 32.7k, 10.7 s -> 1.35 s per match.
+Left per match: DD `update_torpedo_aim` every frame 8.0 s (131 us), `aviation_engage` 9.2 s, gun `_cached_aim` 6.2 s (max 27 ms),
+`_sync_salvo` 2.8 s.
+
+Warm-up gap: `warm_dps_curves` now also builds `torpedo_danger`; the Kaiser Wilhelms' ~10 ms first team view is gone (worst early call 2.1 ms).
+
+## Station-search inputs (`march_opts`, 2026-11-11)
+
+Mean 0.51 ms, p99 1.2 ms, 4.6 s per match; no single hot part: per-enemy loop 1.86 s (aggro 0.37, front 0.35, busy 0.27, the
+rest scaling and appending the trade curves in GDScript), `_torp_opts` 0.85 s (torpedo_rate per step, p99 0.7 ms on torpedo ships),
+dictionary merges 0.5 s, `_walk_opts` 0.36 s.
 
 ## Log
 

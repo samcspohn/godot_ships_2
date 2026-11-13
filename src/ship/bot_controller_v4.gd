@@ -342,7 +342,7 @@ func _physics_process(delta: float) -> void:
 			should_query_behavior = true
 
 	# Due from a slot, held while this frame's full updates are spent.
-	if should_query_behavior and (_last_intent == null or _full_update_free()):
+	if should_query_behavior and (_last_intent == null or _full_update_free()) and not _warming():
 		should_query_behavior = false
 		_behavior_timer = 0.0
 		var t0 := Time.get_ticks_usec()
@@ -449,6 +449,10 @@ func _physics_process(delta: float) -> void:
 const MAX_FULL_UPDATES_PER_FRAME: int = 2
 static var _full_frame: int = -1
 static var _full_count: int = 0
+
+## Queued for the server's start-of-life loads: deciding first would build those tables on this tick.
+func _warming() -> bool:
+	return server_node != null and server_node._warm_pending.has(_ship)
 
 static func _full_update_free() -> bool:
 	var f := Engine.get_physics_frames()

@@ -104,10 +104,37 @@ static func _threat_axis(ctx: SkillContext) -> float:
 ## The angled away-heading, reprojected every tick.
 func _kite(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship: Ship = ctx.ship
-	var heading: float = wrapf(SkillAngle.calc_heading(ctx, params) + PI, -PI, PI)
+	var danger: float = SkillAngle.calc_heading(ctx, params)
 	var reach: float = maxf(KITE_DISTANCE_M, ship.movement_controller._p().turning_circle_radius * KITE_TURNS)
-	var dest: Vector3 = ship.global_position + Vector3(sin(heading), 0.0, cos(heading)) * reach
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var dir := kite_dir(ctx, here, here + Vector2(sin(danger), cos(danger)), 0.0, reach)
+	var heading: float = atan2(dir.x, dir.y)
+	var dest: Vector3 = ship.global_position + Vector3(dir.x, 0.0, dir.y) * reach
 	dest.y = 0.0
 	var intent := NavIntent.create(ctx.behavior._get_valid_nav_point(dest), heading)
 	intent.directional = true
 	return intent
+
+## Off the map edge, a kite swings off straight away in these steps, up to the max, before it runs into it.
+const KITE_OFF_STEP: float = deg_to_rad(15.0)
+const KITE_OFF_MAX: float = deg_to_rad(150.0)
+const KITE_EDGE_M: float = 500.0
+
+## `off` from straight away from `enemy`, on the side we are moving, else the other, widened until `lead` ahead stays on the map.
+static func kite_dir(ctx: SkillContext, here: Vector2, enemy: Vector2, off: float, lead: float) -> Vector2:
+	var out: Vector2 = (here - enemy).normalized()
+	var v := Vector2(ctx.ship.linear_velocity.x, ctx.ship.linear_velocity.z)
+	var h: float = ctx.behavior._get_ship_heading()
+	var moving: Vector2 = v if v.length() > 2.0 else Vector2(sin(h), cos(h))
+	var side: float = 1.0 if out.rotated(PI / 2.0).dot(moving) >= 0.0 else -1.0
+	var map: Rect2 = NavigationMapManager.bounds.grow(-KITE_EDGE_M)
+	if not map.has_area():
+		return out.rotated(side * off)
+	var a := off
+	while a <= KITE_OFF_MAX:
+		for s in [side, -side]:
+			var dir: Vector2 = out.rotated(s * a)
+			if map.has_point(here + dir * lead):
+				return dir
+		a += KITE_OFF_STEP
+	return out.rotated(side * off)

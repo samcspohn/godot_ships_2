@@ -248,12 +248,12 @@ pub(crate) fn mc_score(
     out
 }
 
-/// Kernel mass along one axis, per disk strip and for the guarantee: per coarse cell, and per fine
+/// Kernel mass along one axis, per kernel term and for the guarantee: per coarse cell, and per fine
 /// cell where cells are split.
 pub(crate) struct AxisW {
-    pub w: [Vec<f64>; DISK_STRIPS],
-    pub wf: [Vec<f64>; DISK_STRIPS],
-    pub runs: [Vec<(usize, usize)>; DISK_STRIPS],
+    pub w: [Vec<f64>; KERNEL_TERMS],
+    pub wf: [Vec<f64>; KERNEL_TERMS],
+    pub runs: [Vec<(usize, usize)>; KERNEL_TERMS],
     pub q: Vec<f64>,
     pub qf: Vec<f64>,
     pub qruns: Vec<(usize, usize)>,
@@ -278,7 +278,7 @@ fn nonzero_runs(w: &[f64]) -> Vec<(usize, usize)> {
 }
 
 impl AxisW {
-    pub fn sums(&self) -> ([f64; DISK_STRIPS], f64) {
+    pub fn sums(&self) -> ([f64; KERNEL_TERMS], f64) {
         (std::array::from_fn(|j| self.w[j].iter().sum()), self.q.iter().sum())
     }
 }
@@ -353,24 +353,24 @@ impl Leaves {
     fn axis(edges: &[f64], groups: impl Fn(usize) -> (usize, usize), n: usize, aim: f64, hd: f64,
             cdf: impl Fn(usize, f64) -> f64, guar: &dyn Fn(f64) -> f64) -> AxisW {
         let group = |f: &[f64]| -> Vec<f64> { (0..n).map(|i| { let (a, b) = groups(i); f[a..b].iter().sum() }).collect() };
-        let wf: [Vec<f64>; DISK_STRIPS] = std::array::from_fn(|j| axis_weights(edges, aim, hd, &|x| cdf(j, x)));
+        let wf: [Vec<f64>; KERNEL_TERMS] = std::array::from_fn(|j| axis_weights(edges, aim, hd, &|x| cdf(j, x)));
         let qf = axis_weights(edges, aim, hd, guar);
-        let w: [Vec<f64>; DISK_STRIPS] = std::array::from_fn(|j| group(&wf[j]));
+        let w: [Vec<f64>; KERNEL_TERMS] = std::array::from_fn(|j| group(&wf[j]));
         let q = group(&qf);
         AxisW { runs: std::array::from_fn(|j| nonzero_runs(&w[j])), qruns: nonzero_runs(&q), w, wf, q, qf }
     }
 
-    pub fn u_weights(&self, aim: f64, hd: f64, k: &DiskKernel, guar: &dyn Fn(f64) -> f64) -> AxisW {
+    pub fn u_weights(&self, aim: f64, hd: f64, k: &ShellKernel, guar: &dyn Fn(f64) -> f64) -> AxisW {
         let kx = self.kx;
         Self::axis(&self.uf, |i| (i * kx, i * kx + kx), self.nx, aim, hd, |j, x| k.x_cdf(j, x), guar)
     }
 
-    pub fn v_weights(&self, aim: f64, hd: f64, k: &DiskKernel, guar: &dyn Fn(f64) -> f64) -> AxisW {
+    pub fn v_weights(&self, aim: f64, hd: f64, k: &ShellKernel, guar: &dyn Fn(f64) -> f64) -> AxisW {
         let vo = &self.vo;
         Self::axis(&self.vf, |i| (vo[i], vo[i + 1]), self.ny, aim, hd, |j, y| k.y_cdf(j, y), guar)
     }
 
-    /// `p` with split grid cells zeroed: the input `u_pass` / `u_pass_disk` expect.
+    /// `p` with split grid cells zeroed: the input `u_pass` / `u_pass_terms` expect.
     pub fn masked(&self, p: &[f64]) -> Vec<f64> {
         let mut m = p.to_vec();
         for (c, &sp) in self.split.iter().enumerate() {
@@ -424,17 +424,17 @@ impl Leaves {
         }
     }
 
-    /// `u_pass` for every disk term.
-    pub fn u_pass_disk(&self, uw: &AxisW, p: &[f64], r: &mut [Vec<f64>; DISK_STRIPS], sub: &mut [Vec<f64>; DISK_STRIPS]) {
+    /// `u_pass` for every kernel term.
+    pub fn u_pass_terms(&self, uw: &AxisW, p: &[f64], r: &mut [Vec<f64>; KERNEL_TERMS], sub: &mut [Vec<f64>; KERNEL_TERMS]) {
         let nx = self.nx;
-        for j in 0..DISK_STRIPS {
+        for j in 0..KERNEL_TERMS {
             r[j].clear();
             sub[j].clear();
             sub[j].resize(self.vo[self.ny], 0.0);
         }
         for iy in 0..self.ny {
             let row = &p[iy * nx..iy * nx + nx];
-            for j in 0..DISK_STRIPS {
+            for j in 0..KERNEL_TERMS {
                 r[j].push(Self::row_dot(&uw.w[j], row, &uw.runs[j]));
                 self.split_rows(iy, &uw.w[j], &uw.wf[j], p, &mut sub[j]);
             }
@@ -501,67 +501,40 @@ pub(super) fn erf(x: f64) -> f64 {
     x.signum() * (1.0 - poly * (-x * x).exp())
 }
 
-pub(crate) const DISK_STRIPS: usize = 4;
+pub(crate) const KERNEL_TERMS: usize = 1;
 
-/// DispersionCalculator's N(0, 1/s^2) truncated to the unit disk, approximated by |y| strips with x
-/// clipped to a per-strip half-width w_k that keeps each strip's exact mass. Regrouped so term m is
-/// x in the band w_{m+1} <= |x| < w_m times y in |y| < y_{m+1}: the x bands are disjoint, so the
-/// across-row passes together touch each column about once.
-pub(crate) struct DiskKernel {
+/// DispersionCalculator's per-axis N(0, 1/s^2) truncated to [-1, 1], as KERNEL_TERMS separable terms.
+/// Its corner-avoiding h/v pairing is not modelled; the product of marginals fits it better than a
+/// disk-truncated Gaussian does.
+pub(crate) struct ShellKernel {
     s: f64,
-    y: [f64; DISK_STRIPS + 1],
-    w: [f64; DISK_STRIPS],
     inv_z: f64,
 }
 
-impl DiskKernel {
+impl ShellKernel {
     pub fn new(sigma: f64) -> Self {
         let s = sigma.max(0.01);
-        let y: [f64; DISK_STRIPS + 1] =
-            std::array::from_fn(|k| (std::f64::consts::FRAC_PI_2 * k as f64 / DISK_STRIPS as f64).sin());
-        let phi = |x: f64| 0.5 + 0.5 * erf(x * s / std::f64::consts::SQRT_2);
-        let w: [f64; DISK_STRIPS] = std::array::from_fn(|k| {
-            const N: usize = 64;
-            let (mut num, mut den) = (0.0, 0.0);
-            for i in 0..N {
-                let yy = y[k] + (i as f64 + 0.5) * (y[k + 1] - y[k]) / N as f64;
-                let d = (-0.5 * s * s * yy * yy).exp();
-                num += d * (2.0 * phi((1.0 - yy * yy).max(0.0).sqrt()) - 1.0);
-                den += d;
-            }
-            let target = num / den;
-            let (mut lo, mut hi) = (0.0, 1.0);
-            for _ in 0..50 {
-                let m = 0.5 * (lo + hi);
-                if 2.0 * phi(m) - 1.0 < target { lo = m } else { hi = m }
-            }
-            0.5 * (lo + hi)
-        });
-        let w: [f64; DISK_STRIPS] = std::array::from_fn(|k| w[..=k].iter().copied().fold(f64::INFINITY, f64::min));
-        let z: f64 = (0..DISK_STRIPS).map(|k| (2.0 * phi(w[k]) - 1.0) * 2.0 * (phi(y[k + 1]) - phi(y[k]))).sum();
-        Self { s, y, w, inv_z: 1.0 / z }
+        let e = erf(s / std::f64::consts::SQRT_2);
+        Self { s, inv_z: 1.0 / (e * e) }
     }
 
     fn phi(&self, x: f64) -> f64 {
         0.5 + 0.5 * erf(x * self.s / std::f64::consts::SQRT_2)
     }
 
-    /// Unnormalised x mass below `x` in term `m`'s band.
-    pub fn x_cdf(&self, m: usize, x: f64) -> f64 {
-        let (a, b) = (self.w.get(m + 1).copied().unwrap_or(0.0), self.w[m]);
-        let part = |lo: f64, hi: f64| (self.phi(x.clamp(lo, hi)) - self.phi(lo)).max(0.0);
-        if a <= 0.0 { part(-b, b) } else { part(-b, -a) + part(a, b) }
+    /// Unnormalised x mass below `x` in term `m`.
+    pub fn x_cdf(&self, _m: usize, x: f64) -> f64 {
+        self.phi(x.clamp(-1.0, 1.0)) - self.phi(-1.0)
     }
 
-    /// y mass below `y` within |y| < y_{m+1}, normalised so the term products sum to 1.
-    pub fn y_cdf(&self, m: usize, y: f64) -> f64 {
-        let b = self.y[m + 1];
-        (self.phi(y.clamp(-b, b)) - self.phi(-b)) * self.inv_z
+    /// y mass below `y` in term `m`, normalised so the term products sum to 1.
+    pub fn y_cdf(&self, _m: usize, y: f64) -> f64 {
+        (self.phi(y.clamp(-1.0, 1.0)) - self.phi(-1.0)) * self.inv_z
     }
 
     /// Mass inside |x| < ea, |y| < eb.
     pub fn p_in(&self, ea: f64, eb: f64) -> f64 {
-        (0..DISK_STRIPS).map(|k| (self.x_cdf(k, ea) - self.x_cdf(k, -ea)) * (self.y_cdf(k, eb) - self.y_cdf(k, -eb))).sum()
+        (0..KERNEL_TERMS).map(|k| (self.x_cdf(k, ea) - self.x_cdf(k, -ea)) * (self.y_cdf(k, eb) - self.y_cdf(k, -eb))).sum()
     }
 }
 
@@ -1505,12 +1478,12 @@ impl ProjectileManager {
             out.fill(-1.0);
             return out;
         }
-        let kern = DiskKernel::new(sigma);
+        let kern = ShellKernel::new(sigma);
         let ea = (ellipse.x as f64).max(0.01);
         let eb = (ellipse.y as f64).max(0.01) * 0.785;
         let guar_h = |x: f64| ((x + ea) / (2.0 * ea)).clamp(0.0, 1.0);
         let guar_v = |y: f64| 0.5 + 0.5 * y.signum() * (y.abs() / eb).min(1.0).powf(1.0 / 1.6);
-        let g = if guarantee > 0.0 { guarantee * (1.0 - kern.p_in(ea, eb)).powi(3) } else { 0.0 };
+        let g = if guarantee > 0.0 { guarantee * (1.0 - kern.p_in(ea, eb)).powi(super::ev::guarantee_batch(guarantee)) } else { 0.0 };
 
         // `payouts` is section-major, 16 result codes per section: what one
         // shell of this type is worth where it lands, already carrying the
@@ -1532,10 +1505,10 @@ impl ProjectileManager {
         let arrays = [&walked, &hit, &pay];
 
         // Aims share columns, so the across-row pass is made once per distinct u.
-        // Per array: DISK_STRIPS strip passes then the guarantee pass.
-        const T: usize = DISK_STRIPS + 1;
+        // Per array: KERNEL_TERMS term passes then the guarantee pass.
+        const T: usize = KERNEL_TERMS + 1;
         struct UPass {
-            sums: ([f64; DISK_STRIPS], f64),
+            sums: ([f64; KERNEL_TERMS], f64),
             r: [Vec<f64>; 3 * T],
             s: [Vec<f64>; 3 * T],
         }
@@ -1548,26 +1521,26 @@ impl ProjectileManager {
                 let mut sb: [Vec<f64>; 3 * T] = Default::default();
                 for (k, p) in arrays.iter().enumerate() {
                     {
-                        let (rd, sd) = (&mut r[T * k..T * k + DISK_STRIPS], &mut sb[T * k..T * k + DISK_STRIPS]);
-                        leaves.u_pass_disk(&uw, p, rd.try_into().unwrap(), sd.try_into().unwrap());
+                        let (rd, sd) = (&mut r[T * k..T * k + KERNEL_TERMS], &mut sb[T * k..T * k + KERNEL_TERMS]);
+                        leaves.u_pass_terms(&uw, p, rd.try_into().unwrap(), sd.try_into().unwrap());
                     }
                     if g > 0.0 {
-                        leaves.u_pass(&uw.q, &uw.qf, &uw.qruns, p, &mut r[T * k + DISK_STRIPS], &mut sb[T * k + DISK_STRIPS]);
+                        leaves.u_pass(&uw.q, &uw.qf, &uw.qruns, p, &mut r[T * k + KERNEL_TERMS], &mut sb[T * k + KERNEL_TERMS]);
                     }
                 }
                 UPass { sums: uw.sums(), r, s: sb }
             });
             let vw = leaves.v_weights(aim.y as f64, half_disp.y as f64, &kern, &guar_v);
             let (sv, sq) = vw.sums();
-            let disk_mass: f64 = (0..DISK_STRIPS).map(|j| up.sums.0[j] * sv[j]).sum();
-            let in_mass = (1.0 - g) * disk_mass + g * up.sums.1 * sq;
+            let kern_mass: f64 = (0..KERNEL_TERMS).map(|j| up.sums.0[j] * sv[j]).sum();
+            let in_mass = (1.0 - g) * kern_mass + g * up.sums.1 * sq;
             let mut res = [0.0f64; 3];
             for (k, r) in res.iter_mut().enumerate() {
-                let a: f64 = (0..DISK_STRIPS)
+                let a: f64 = (0..KERNEL_TERMS)
                     .map(|j| leaves.v_pass(&vw.w[j], &vw.wf[j], &up.r[T * k + j], &up.s[T * k + j]))
                     .sum();
                 let b = if g > 0.0 {
-                    leaves.v_pass(&vw.q, &vw.qf, &up.r[T * k + DISK_STRIPS], &up.s[T * k + DISK_STRIPS])
+                    leaves.v_pass(&vw.q, &vw.qf, &up.r[T * k + KERNEL_TERMS], &up.s[T * k + KERNEL_TERMS])
                 } else { 0.0 };
                 *r = (1.0 - g) * a + g * b;
             }
@@ -1586,29 +1559,26 @@ impl ProjectileManager {
 }
 
 #[cfg(test)]
-mod disk_tests {
-    use super::DiskKernel;
+mod kernel_tests {
+    use super::ShellKernel;
 
     #[test]
-    fn disk_kernel_matches_sampler() {
+    fn kernel_matches_truncated_axis() {
         let s = 1.8;
-        let k = DiskKernel::new(s);
+        let k = ShellKernel::new(s);
         assert!((k.p_in(1.0, 1.0) - 1.0).abs() < 1e-6);
         let mut st = 0x9E3779B97F4A7C15u64;
         let mut rnd = || { st ^= st << 13; st ^= st >> 7; st ^= st << 17; (st >> 11) as f64 / (1u64 << 53) as f64 };
-        let m = 1.0 - (-0.5 * s * s).exp();
+        let mut gauss = || loop {
+            let x = (-2.0 * rnd().max(1e-300).ln()).sqrt() * (std::f64::consts::TAU * rnd()).cos() / s;
+            if x.abs() <= 1.0 { break x; }
+        };
         let n = 400_000;
-        let pts: Vec<(f64, f64)> = (0..n).map(|_| {
-            let r = (-2.0 * (1.0 - rnd() * m).ln()).sqrt() / s;
-            let a = rnd() * std::f64::consts::TAU;
-            (r * a.cos(), r * a.sin())
-        }).collect();
-        for &(x0, x1, y0, y1) in &[(-0.3, 0.3, -0.1, 0.1), (0.5, 1.0, -0.2, 0.2), (0.6, 1.2, 0.5, 1.2), (-1.0, -0.7, -0.4, 0.0)] {
-            let mc = pts.iter().filter(|p| p.0 >= x0 && p.0 < x1 && p.1 >= y0 && p.1 < y1).count() as f64 / n as f64;
-            let est: f64 = (0..super::DISK_STRIPS)
-                .map(|j| (k.x_cdf(j, x1) - k.x_cdf(j, x0)) * (k.y_cdf(j, y1) - k.y_cdf(j, y0)))
-                .sum();
-            assert!((est - mc).abs() < 0.004, "rect {:?}: kernel {est} vs sampler {mc}", (x0, x1, y0, y1));
+        let xs: Vec<f64> = (0..n).map(|_| gauss()).collect();
+        for &(a, b) in &[(-0.3, 0.3), (0.5, 1.0), (-1.0, -0.7)] {
+            let mc = xs.iter().filter(|&&x| x >= a && x < b).count() as f64 / n as f64;
+            let est = (k.x_cdf(0, b) - k.x_cdf(0, a)) / (k.x_cdf(0, 1.0) - k.x_cdf(0, -1.0));
+            assert!((est - mc).abs() < 0.004, "[{a}, {b}): kernel {est} vs sampler {mc}");
         }
     }
 }

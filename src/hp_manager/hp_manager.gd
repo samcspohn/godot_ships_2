@@ -178,10 +178,10 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		return [0, false]
 
 	# ship.update_static_mods = true
-	var dmg_mod := size_mod(ship.mass, shell_cal)
-	dmg *= dmg_mod
-	dmg /= params.p().mult
-	base_dmg *= dmg_mod
+	# var dmg_mod := size_mod(ship.mass, shell_cal)
+	# dmg *= dmg_mod
+	# dmg /= params.p().mult
+	# base_dmg *= dmg_mod
 	base_dmg /= params.p().mult
 
 	if armor_part == null:

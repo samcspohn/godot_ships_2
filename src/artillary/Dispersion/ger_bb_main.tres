@@ -6,5 +6,7 @@
 
 [resource]
 script = ExtResource("1_disp")
-v_disp = 80.0
+sigma = 1.75
+h_disp = 300.0
+v_disp = 130.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"

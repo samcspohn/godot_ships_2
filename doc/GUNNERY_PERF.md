@@ -9,6 +9,7 @@ One row per change. Box: 256 threads (2 NUMA nodes, SMT). Production target: ~4 
 | v18 | 2026-11-01 | 58.9 s (17.6M walks) | ~50 s | ~40 us/walk (~50 with EV) | 56.3 MB | bounce classes; profile: `raycast_local` 71%, EV `u_pass` 18%, `part_at` 2% |
 | v18 + raycast opt | 2026-11-04 | 39.0 s | 39.6 s (sweep 35.3) | ~22 us/walk | 56.3 MB | near-first BVH traversal, `part_at` bounds + any-hit, first hit reused across the sweep. Output byte-identical except 2/756 H45 buckets (an exact edge tie now resolved by the stated lowest-face rule). Profile: `raycast_local` 44%, `u_pass` 27%, `part_at` 17% |
 | v20 disk kernel | 2026-11-07 | H44 alone, 32 threads: 41.0 s (1-term kernel, same code: 18.9 s) | 99.6 s (sweep) | - | 84.4 MB | DispersionCalculator now truncates to the unit disk; EV kernel = 4 separable terms (disjoint x bands x cumulative y). u_pass takes masked p + non-zero column runs. Profile: `split_rows` 33%, `row_dot` 18%, `ev::score` 16% |
+| v21 box kernel | 2026-11-11 | - | 40.7 s (sweep) | - | - | Sampler back to per-axis strata with corner-free h/v pairing; product-of-marginals kernel fits it better than v20's disk (mean rect error 0.0030 vs 0.0045), 1 term. Keeps v20's masked p + column runs |
 
 Raycast counters before the optimisation (H44): plate raycasts 3.1/walk, ~100 BVH nodes and ~40 tris per part ray; `part_at` 1/walk, 8.3 part rays per call, ~89 nodes each.
 

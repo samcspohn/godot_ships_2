@@ -86,9 +86,14 @@ class_name DispersionCalculator
 # 	return dispersed * speed
 
 
-const SHELL_COUNT := 2
+const SHELL_COUNT := 4
 const CITADEL_GUARANTEE_NUM := 4
-var citadel_guarantee_counter = 0
+# Strata and the citadel check span a whole batch, so the guarantee can never stack on a natural hit
+# from a previous short salvo.
+const BATCH_SIZE := SHELL_COUNT if SHELL_COUNT > CITADEL_GUARANTEE_NUM else CITADEL_GUARANTEE_NUM
+
+enum Algorithm { POLAR, AXIS }
+var algorithm := Algorithm.POLAR
 
 var _shell_index := 0
 var _h_offsets := PackedFloat64Array()
@@ -96,15 +101,15 @@ var _v_offsets := PackedFloat64Array()
 var _sigma := 1.0
 
 # Citadel ellipse for post-processing (in normalised fraction space, set externally)
-var _citadel_h_frac := 0.4
-var _citadel_v_frac := 0.2
+var _citadel_h_frac := 0.6
+var _citadel_v_frac := 0.05
 var _citadel_guarantee_enabled := false
 
 func _init(sigma: float = 1.0) -> void:
 	_sigma = maxf(sigma, 1.0)
 	# Force a fresh salvo on the first shot so it uses the gun's real sigma
 	# (passed into calculate_dispersed_launch) instead of a placeholder.
-	_shell_index = SHELL_COUNT
+	_shell_index = BATCH_SIZE
 
 
 func set_sigma(sigma: float) -> void:
@@ -119,30 +124,98 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 	_citadel_v_frac = maxf(v_frac, 0.01)
 
 
-# 2D N(0, 1/s²) truncated to the unit disk, stratified in radial CDF and in angle so a salvo always
-# spans inner/outer and all sides. Radial CDF: (1 - exp(-s²r²/2)) / (1 - exp(-s²/2)).
+## erf approximation, max |error| < 1.5e-7  (Abramowitz & Stegun 7.1.26).
+static func _erf(x: float) -> float:
+	const P  := 0.3275911
+	const A1 := 0.254829592
+	const A2 := -0.284496736
+	const A3 := 1.421413741
+	const A4 := -1.453152027
+	const A5 := 1.061405429
+	var t := 1.0 / (1.0 + P * absf(x))
+	var poly := t * (A1 + t * (A2 + t * (A3 + t * (A4 + t * A5))))
+	return signf(x) * (1.0 - poly * exp(-x * x))
+
+
+## erfinv approximation, max |error| < 1.2e-4  (Winitzki 2008, eq. 4).
+static func _erfinv(x: float) -> float:
+	const A := 0.147
+	const TWO_OVER_PI_A := 2.0 / (PI * A)
+	var w := log(maxf(1.0 - x * x, 1e-30))
+	var inner := TWO_OVER_PI_A + w * 0.5
+	return signf(x) * sqrt(sqrt(inner * inner - w / A) - inner)
+
+
+## Generate BATCH_SIZE independent samples from N(0, 1/s²) truncated to [-1, 1].
+## Stratified across BATCH_SIZE equal CDF bins then Fisher-Yates shuffled.
+## With 4 shells, bins [0,.25) [.25,.5) [.5,.75) [.75,1) map to
+## large-negative, small-negative, small-positive, large-positive — guaranteeing
+## exactly 2 negative + 2 positive and 2 inner + 2 outer values per call.
+## erf_bound = erf(s / sqrt(2)), precomputed by the caller.
+func _generate_axis(s: float, erf_bound: float) -> PackedFloat64Array:
+	var arr := PackedFloat64Array()
+	arr.resize(BATCH_SIZE)
+	var inv_s_sqrt2 := sqrt(2.0) / s
+	for i in BATCH_SIZE:
+		var u_low  := float(i)     / BATCH_SIZE
+		var u_high := float(i + 1) / BATCH_SIZE
+		var u := u_low + randf() * (u_high - u_low)
+		# Invert the CDF of the truncated Gaussian on [-1, 1]:
+		#   F(x) = 0.5 + 0.5 * erf(x * s / sqrt(2)) / erf_bound
+		#   x    = sqrt(2)/s * erfinv(erf_bound * (2u - 1))
+		arr[i] = inv_s_sqrt2 * _erfinv(erf_bound * (2.0 * u - 1.0))
+	for i in range(BATCH_SIZE - 1, 0, -1):
+		var j := randi_range(0, i)
+		var tmp := arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+	return arr
+
+
+# Radius is a half-normal N(0, 1/s²) on [0, 1], drawn by stratified CDF so each salvo of SHELL_COUNT
+# puts one shell in each equal-probability ring (2 shells: one inside the median radius, one outside).
+# Angle is one sector per shell, spun per salvo.
+func _polar_salvo(s: float) -> void:
+	var erf_bound := _erf(s / sqrt(2.0))
+	var start := 0
+	while start < BATCH_SIZE:
+		var n := mini(SHELL_COUNT, BATCH_SIZE - start)
+		var rings: Array[int] = []
+		for k in n:
+			rings.append(k)
+		rings.shuffle()
+		var rot := randf() * TAU
+		for i in n:
+			var u := (rings[i] + randf()) / n
+			var r := minf(sqrt(2.0) / s * _erfinv(u * erf_bound), 1.0)
+			var ang := rot + (i + randf()) * TAU / n
+			_h_offsets[start + i] = r * cos(ang)
+			_v_offsets[start + i] = r * sin(ang)
+		start += n
+
+
+# Per-axis strata, then a square-to-disk map (elliptical grid): pulls in only shells large on both
+# axes, keeps every sign, and leaves the centre density near the disk-truncated Gaussian.
+func _axis_salvo(s: float) -> void:
+	var erf_bound := _erf(s / sqrt(2.0))
+	var h := _generate_axis(s, erf_bound)
+	var v := _generate_axis(s, erf_bound)
+	for i in BATCH_SIZE:
+		_h_offsets[i] = h[i] * sqrt(1.0 - 0.5 * v[i] * v[i])
+		_v_offsets[i] = v[i] * sqrt(1.0 - 0.5 * h[i] * h[i])
+
+
 func _new_salvo(sigma: float) -> void:
 	_shell_index = 0
 	var s := maxf(sigma, 0.01)
-	var mass := 1.0 - exp(-0.5 * s * s)
-	var radial_bins: Array[int] = []
-	for i in SHELL_COUNT:
-		radial_bins.append(i)
-	radial_bins.shuffle()
-	var rot := randf() * TAU
-	_h_offsets.resize(SHELL_COUNT)
-	_v_offsets.resize(SHELL_COUNT)
-	for i in SHELL_COUNT:
-		var u := (radial_bins[i] + randf()) / SHELL_COUNT
-		var r := sqrt(-2.0 * log(maxf(1.0 - u * mass, 1e-30))) / s
-		var ang := rot + (i + randf()) * TAU / SHELL_COUNT
-		_h_offsets[i] = r * cos(ang)
-		_v_offsets[i] = r * sin(ang)
-	citadel_guarantee_counter += SHELL_COUNT
-
-	if _citadel_guarantee_enabled and citadel_guarantee_counter >= CITADEL_GUARANTEE_NUM:
+	_h_offsets.resize(BATCH_SIZE)
+	_v_offsets.resize(BATCH_SIZE)
+	if algorithm == Algorithm.POLAR:
+		_polar_salvo(s)
+	else:
+		_axis_salvo(s)
+	if _citadel_guarantee_enabled:
 		_apply_citadel_guarantee()
-		citadel_guarantee_counter -= CITADEL_GUARANTEE_NUM
 
 
 # Tests whether any shell in the current salvo will land inside the citadel
@@ -152,13 +225,19 @@ func _apply_citadel_guarantee() -> void:
 	var ea := _citadel_h_frac
 	var eb := _citadel_v_frac
 	if ea <= 0.0 or eb <= 0.0:
+		var nearest := 0
+		for i in BATCH_SIZE:
+			if _h_offsets[i] ** 2 + _v_offsets[i] ** 2 < _h_offsets[nearest] ** 2 + _v_offsets[nearest] ** 2:
+				nearest = i
+		_h_offsets[nearest] = 0.0
+		_v_offsets[nearest] = 0.0
 		return
 
 	var any_inside := false
 	var closest_idx := 0
 	var closest_d := INF
 
-	for i in SHELL_COUNT:
+	for i in BATCH_SIZE:
 		var h_frac := _h_offsets[i]
 		var v_frac := _v_offsets[i]
 		var d := (h_frac * h_frac) / (ea * ea) + (v_frac * v_frac) / (eb * eb)
@@ -170,17 +249,9 @@ func _apply_citadel_guarantee() -> void:
 			closest_idx = i
 
 	if not any_inside:
-		var h_frac := _h_offsets[closest_idx]
-		var new_h: float
-		if absf(h_frac) > ea:
-			new_h = signf(h_frac) * ea * pow(randf(), 1.0)
-		else:
-			new_h = h_frac
-		var v_max := eb * sqrt(1.0 - (new_h / ea) * (new_h / ea))
-		var v_sign := 1.0 if randf() < 0.5 else -1.0
-		var new_v := v_sign * pow(randf(), 1.6) * v_max
-		_h_offsets[closest_idx] = new_h
-		_v_offsets[closest_idx] = new_v
+		var k := randf_range(0.8, 1.0) / sqrt(closest_d)
+		_h_offsets[closest_idx] *= k
+		_v_offsets[closest_idx] *= k
 
 ## Perturbs a launch vector by applying dispersion as world-space offsets to the aim point.
 ## h = lateral (perpendicular to aim in horizontal plane)
@@ -208,7 +279,7 @@ func calculate_dispersed_launch(
 	var dispersion_h_m := dispersion.x * h_spread
 	var dispersion_v_m := dispersion.y * v_spread
 
-	if _shell_index >= SHELL_COUNT:
+	if _shell_index >= BATCH_SIZE:
 		_new_salvo(disp.sigma * sigma_mult)
 
 	var h_offset := _h_offsets[_shell_index]

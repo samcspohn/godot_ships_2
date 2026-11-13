@@ -125,6 +125,7 @@ var _params_moved := false
 func reset() -> void:
 	super()
 	_kite_in = false
+	_ring_kiting = false
 	_lost = "reset"
 	_held = {}
 	_chasing = false
@@ -222,8 +223,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		_decline()
 		_lost = "chase_fail"
 		return null
+	var ring_kite := _ring_kite(ctx, here, pp, params)
 	if not _has_station:
-		return null
+		if not ring_kite:
+			return null
+		# The edge of the map can leave no station on our ring: open the range on it anyway.
+		var out := NavIntent.create(ship.global_position, 0.0)
+		_kite(ctx, out, here, Vector2(pp.x, pp.z), true)
+		return out
 	opts.shootable = _union(prio, live)
 	opts.prio_bits = _bits(prio)
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
@@ -234,9 +241,28 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	intent.target_position = ctx.behavior._get_valid_nav_point(intent.target_position)
 	_shape(intent, ctx, here, pos, opts)
 	BotTiming.add(&"fs_shape", tf2)
-	if bool(params.get("kite", false)) and pp.is_finite() and not _chasing:
-		_kite(ctx, intent, here, Vector2(pp.x, pp.z))
+	var kite: bool = bool(params.get("kite", false))
+	if (kite or ring_kite) and pp.is_finite() and not _chasing:
+		_kite(ctx, intent, here, Vector2(pp.x, pp.z), not kite)
 	return intent
+
+## Inside our walk ring of a lit priority by RING_KITE_IN_M, Fight kites out until RING_KITE_OUT_M short of it:
+## a held station is left behind as the enemy follows. Not with shooters spread wider than RING_KITE_ARC.
+const RING_KITE_IN_M := 1000.0
+const RING_KITE_OUT_M := 200.0
+const RING_KITE_ARC := deg_to_rad(90.0)
+var _ring_kiting := false
+var _prio_walk_r := 0.0
+
+func _ring_kite(ctx: SkillContext, here: Vector2, pp: Vector3, params: Dictionary) -> bool:
+	var t: Ship = ctx.behavior.priority_target()
+	if _chasing or _presumed or bool(params.get("push", false)) or t == null or not t.visible_to_enemy \
+			or not pp.is_finite() or _prio_walk_r <= 0.0 or ctx.behavior.crossfire_arc(ctx) > RING_KITE_ARC:
+		_ring_kiting = false
+		return false
+	var short: float = _prio_walk_r - here.distance_to(Vector2(pp.x, pp.z))
+	_ring_kiting = short > (RING_KITE_OUT_M if _ring_kiting else RING_KITE_IN_M)
+	return _ring_kiting
 
 ## Kiting runs a cycle, the destination always KITE_LEAD_M ahead: out, KITE_OUT_ANGLE off straight away the way we
 ## are moving, until unseen beyond our concealment and not holding for a heal (out of our range, or quiet to heal);
@@ -250,28 +276,23 @@ var _kite_in := false
 func kiting_in() -> bool:
 	return _kite_in
 
-func _kite(ctx: SkillContext, intent: NavIntent, here: Vector2, enemy: Vector2) -> void:
+func _kite(ctx: SkillContext, intent: NavIntent, here: Vector2, enemy: Vector2, out_only := false) -> void:
 	var d: float = here.distance_to(enemy)
 	var t: Ship = ctx.behavior.priority_target()
 	var floor_m: float = BotBehavior.secondary_reach(t) + KITE_FLOOR_M if t != null else 0.0
-	if not _kite_in and d > NavigationMapManager.reach_conceal_radius(ctx.ship) and not ctx.ship.is_detected() \
+	if out_only:
+		_kite_in = false
+	elif not _kite_in and d > NavigationMapManager.reach_conceal_radius(ctx.ship) and not ctx.ship.is_detected() \
 			and not ctx.behavior.heal_hold(ctx):
 		_kite_in = true
 	elif _kite_in and d <= floor_m:
 		_kite_in = false
-	var out: Vector2 = (here - enemy).normalized()
 	var dir: Vector2
 	if _kite_in:
-		dir = -out
+		dir = (enemy - here).normalized()
 		ctx.behavior.wants_stealth = true
 	else:
-		var tan := Vector2(-out.y, out.x)
-		var v := Vector2(ctx.ship.linear_velocity.x, ctx.ship.linear_velocity.z)
-		var h: float = ctx.behavior._get_ship_heading()
-		var moving: Vector2 = v if v.length() > 2.0 else Vector2(sin(h), cos(h))
-		if tan.dot(moving) < 0.0:
-			tan = -tan
-		dir = out * cos(KITE_OUT_ANGLE) + tan * sin(KITE_OUT_ANGLE)
+		dir = SkillDisengage.kite_dir(ctx, here, enemy, KITE_OUT_ANGLE, KITE_LEAD_M)
 	var dest: Vector2 = here + dir * KITE_LEAD_M
 	intent.target_position = ctx.behavior._get_valid_nav_point(Vector3(dest.x, 0.0, dest.y))
 	intent.target_heading = atan2(dir.x, dir.y)
@@ -444,6 +465,8 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		st.searches += 1
 		st.brawler += int(brawl)
 	_busy = PackedByteArray()
+	_prio_walk_r = 0.0
+	var pt: Ship = ctx.behavior.priority_target()
 	for i in belief.size():
 		var o: PackedFloat32Array = (trades[i].out as PackedFloat32Array).duplicate()
 		var n: PackedFloat32Array = (trades[i].in as PackedFloat32Array).duplicate()
@@ -475,6 +498,8 @@ func _march_opts(ctx: SkillContext, belief: Array[Dictionary], live: PackedByteA
 		var find_i: float = find[i] if i < find.size() else 0.0
 		walk_r.append(maxf(find_i - WALK_MARGIN_M, 0.0) if find_i > 0.0 else rings[i] + WALK_MARGIN_M if rings[i] > 0.0
 			else (float(g.range) - WALK_MARGIN_M if live[i] != 0 else 0.0))
+		if e == pt:
+			_prio_walk_r = walk_r[i]
 	return _walk_opts(ctx, ship, float(g.range)).merged(_torp_opts(ship, belief, live, conceal, find)).merged(_push) \
 		.merged(SkillCover.edge_sim_opts(ship, g)).merged({"det_r": det, "los_r": sensor, "spot_r": find, "shootable": live, "heavy": threat,
 		"reach_field": NavigationMapManager.get_reach_field(), "team": ship.team.team_id,

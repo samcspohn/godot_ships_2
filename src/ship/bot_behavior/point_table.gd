@@ -11,7 +11,7 @@ const SAT_SECTIONS: Array[int] = [2, 3, 4, 5]
 const PEN_CODES: Array[int] = [NativeArmorInteraction.PENETRATION, NativeArmorInteraction.PARTIAL_PEN,
 	NativeArmorInteraction.CITADEL, NativeArmorInteraction.CITADEL_OVERPEN]
 ## Bump when anything that changes stored values changes.
-const VERSION: int = 4
+const VERSION: int = 11
 ## Mean along-track aim error at impact by target class, per DamageExpectation.LEAD_BAND_M band (m, + ahead):
 ## bot aim in the 2026-11-04 point-table A/Bs, 200 12v12 matches. Shells land behind the aim point.
 const LEAD_BIAS_ALONG := {
@@ -22,7 +22,7 @@ const LEAD_BIAS_ALONG := {
 const CACHE_DIR: String = "user://point_tables"
 const N_COMP: int = 1 + 4 * 4
 const STRIDE: int = N_COMP + 1
-## Simulated shells per point per bucket, in salvos of DispersionCalculator.SHELL_COUNT.
+## Simulated shells per point per bucket, in salvos of DispersionCalculator.BATCH_SIZE.
 const MC_SHELLS: int = 1500
 ## Side-face grid per part type: [type, along, up, x as a fraction of the box's half beam].
 const FACE_GRID := [[ArmorPart.Type.CITADEL, 6, 3, 1.0], [ArmorPart.Type.CASEMATE, 6, 2, 1.0],
@@ -384,7 +384,7 @@ static func _mc_samples(mounts: Array) -> Array:
 	var calc := DispersionCalculator.new(sigma)
 	var l := Vector2.ZERO
 	for k in MC_SHELLS:
-		if calc._shell_index >= DispersionCalculator.SHELL_COUNT:
+		if calc._shell_index >= DispersionCalculator.BATCH_SIZE:
 			calc._new_salvo(sigma)
 			l = Vector2(randfn(0.0, 1.0), randfn(0.0, 1.0))
 		off.append(Vector2(calc._h_offsets[calc._shell_index], calc._v_offsets[calc._shell_index]))

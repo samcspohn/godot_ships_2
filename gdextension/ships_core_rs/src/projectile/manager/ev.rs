@@ -1,5 +1,5 @@
 use super::survey::{
-    blob_header, rd_u16, resolve_codes, AxisW, BlobHdr, DiskKernel, Leaves, DISK_STRIPS, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
+    blob_header, rd_u16, resolve_codes, AxisW, BlobHdr, ShellKernel, Leaves, KERNEL_TERMS, CELL_CODE_MASK, CELL_MISS, CELL_SECTION_MASK,
     CELL_SECTION_SHIFT, CELL_TURRET, MM_MISS,
 };
 
@@ -117,7 +117,7 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
     let weights = (0..ND)
         .map(|d| {
             let (hh, hv, s) = disp_of(d);
-            let kern = DiskKernel::new(s);
+            let kern = ShellKernel::new(s);
             g.push(guarantee_share(k.guarantee, k.ellipse, s));
             Weights {
                 u: aim_u.iter().map(|&a| leaves.u_weights(a, hh, &kern, &guar_h)).collect(),
@@ -128,35 +128,40 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
     Lattice { leaves, n_u, n_v, n_anchor, g, weights }
 }
 
-/// Share of shells DispersionCalculator moves into the citadel ellipse: `frac` of salvos, when none of
-/// its 3 shells fell inside.
+/// Shells per DispersionCalculator batch: the guarantee moves at most one, so `frac` = 1 / batch.
+pub(crate) fn guarantee_batch(frac: f64) -> i32 {
+    (1.0 / frac).round().max(1.0) as i32
+}
+
+/// Share of shells DispersionCalculator moves into the citadel ellipse: one per batch, when none of
+/// the batch fell inside.
 pub(crate) fn guarantee_share(frac: f64, ellipse: (f64, f64), sigma: f64) -> f64 {
     if frac <= 0.0 {
         return 0.0;
     }
     let (ea, eb) = (ellipse.0.max(0.01), ellipse.1.max(0.01) * 0.785);
-    frac * (1.0 - DiskKernel::new(sigma).p_in(ea, eb)).powi(3)
+    frac * (1.0 - ShellKernel::new(sigma).p_in(ea, eb)).powi(guarantee_batch(frac))
 }
 
 /// Across-row sums of one value array under one aim column's weights.
 #[derive(Default)]
 struct Pass {
-    r: [Vec<f64>; DISK_STRIPS],
-    s: [Vec<f64>; DISK_STRIPS],
+    r: [Vec<f64>; KERNEL_TERMS],
+    s: [Vec<f64>; KERNEL_TERMS],
     rq: Vec<f64>,
     sq: Vec<f64>,
 }
 
 impl Pass {
     fn run(&mut self, l: &Leaves, u: &AxisW, m: &[f64], g: f64) {
-        l.u_pass_disk(u, m, &mut self.r, &mut self.s);
+        l.u_pass_terms(u, m, &mut self.r, &mut self.s);
         if g > 0.0 {
             l.u_pass(&u.q, &u.qf, &u.qruns, m, &mut self.rq, &mut self.sq);
         }
     }
 
     fn at(&self, l: &Leaves, v: &AxisW, g: f64) -> f64 {
-        let a: f64 = (0..DISK_STRIPS).map(|j| l.v_pass(&v.w[j], &v.wf[j], &self.r[j], &self.s[j])).sum();
+        let a: f64 = (0..KERNEL_TERMS).map(|j| l.v_pass(&v.w[j], &v.wf[j], &self.r[j], &self.s[j])).sum();
         let b = if g > 0.0 { l.v_pass(&v.q, &v.qf, &self.rq, &self.sq) } else { 0.0 };
         (1.0 - g) * a + g * b
     }

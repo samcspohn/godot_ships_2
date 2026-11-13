@@ -448,7 +448,7 @@ func _update_auto_target_cache(server: GameServer, max_range: float, manual_acti
 					else:
 						if !dispersion_calculator.has(e):
 							dispersion_calculator[e] = DispersionCalculator.new()
-							dispersion_calculator[e]._citadel_guarantee_enabled = true
+							dispersion_calculator[e]._citadel_guarantee_enabled = false
 						g.dispersion_calculator = dispersion_calculator[e]
 
 					found_target = true

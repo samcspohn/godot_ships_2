@@ -1,0 +1,119 @@
+{
+ "scenario": {
+  "duration_s": 775.0,
+  "elapsed_s": 425.0,
+  "expect": "From 1794509864_0.replay at 7:05: the recorded match was won by team 1.",
+  "log_dt": 5.0,
+  "source": {
+   "at_s": 425.0,
+   "duration_s": 501.416656494141,
+   "final": {
+    "alive": [
+     0,
+     1
+    ],
+    "hp": [
+     0.0,
+     26475.0
+    ],
+    "points": [
+     406,
+     506
+    ]
+   },
+   "replay": "1794509864_0.replay",
+   "winning_team": 1
+  },
+  "sunk": [],
+  "trace": []
+ },
+ "team": {
+  "p00": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 76.4,
+     "slot": 0,
+     "used": 3
+    },
+    {
+     "last_s": 136.6,
+     "slot": 1,
+     "used": 2
+    }
+   ],
+   "heading_deg": -89.6,
+   "hp": 10258.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 0.0,
+    "pos": [
+     -4071.5,
+     -10001.4
+    ],
+    "rot": 1.577,
+    "vel": [
+     -31.56,
+     -4.12
+    ]
+   },
+   "player_id": "p00",
+   "pos": [
+    -4071.5,
+    -10001.4
+   ],
+   "reload": [
+    0.296,
+    0.286,
+    0.174,
+    0.168
+   ],
+   "ship": "res://assets/Ships/H44/H44.2.tscn",
+   "speed": 31.53,
+   "team": "1",
+   "throttle": -1
+  },
+  "p01": {
+   "aptitude": 1,
+   "consumables": [
+    {
+     "last_s": 19.0,
+     "slot": 1,
+     "used": 3
+    }
+   ],
+   "heading_deg": -91.0,
+   "hp": 53589.0,
+   "identified": true,
+   "is_bot": true,
+   "lkp": {
+    "age_s": 75.3,
+    "pos": [
+     -9092.0,
+     -17500.0
+    ],
+    "rot": 1.551,
+    "vel": [
+     -42.1,
+     -0.94
+    ]
+   },
+   "player_id": "p01",
+   "pos": [
+    -12265.4,
+    -17500.0
+   ],
+   "reload": [
+    0.242,
+    0.236,
+    0.229,
+    0.223
+   ],
+   "ship": "res://assets/Ships/Vermont/Montana_t11.tscn",
+   "speed": 42.12,
+   "team": "0",
+   "throttle": 4
+  }
+ }
+}

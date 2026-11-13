@@ -7,6 +7,7 @@ use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
 use crate::nav::cover_search::{forecast_exposed, safety, CoverArgs};
 use crate::nav::fight_search::FightArgs;
+use crate::nav::sail_table::SailTable;
 use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
 use crate::variant_cast::VariantCast;
 
@@ -36,6 +37,7 @@ pub struct VisibilityGrid {
     pub(crate) bits: Vec<u64>,
     build_ms: f64,
     terrain: Option<Arc<Terrain>>,
+    sail: Option<SailTable>,
 }
 
 #[godot_api]
@@ -55,6 +57,7 @@ impl IRefCounted for VisibilityGrid {
             bits: Vec::new(),
             build_ms: 0.0,
             terrain: None,
+            sail: None,
         }
     }
 }
@@ -190,6 +193,7 @@ impl VisibilityGrid {
         self.centres = centres;
         self.sdf_c = sdf_c;
         self.bits.clear();
+        self.sail = None;
         self.terrain = Some(Arc::new(t));
         true
     }
@@ -293,6 +297,31 @@ impl VisibilityGrid {
         self.bits = b.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
         self.build_ms = 0.0;
         true
+    }
+
+    #[func]
+    fn build_sail(&mut self, cell_size: f32) {
+        if self.is_ready() {
+            self.sail = Some(SailTable::build(self, cell_size));
+        }
+    }
+
+    #[func]
+    fn sail_to_bytes(&self) -> PackedByteArray {
+        PackedByteArray::from(self.sail.as_ref().map_or(Vec::new(), |t| t.to_bytes()).as_slice())
+    }
+
+    /// Restores a table saved by `sail_to_bytes` for this grid and cell size; false on a size mismatch.
+    #[func]
+    fn sail_from_bytes(&mut self, cell_size: f32, bytes: PackedByteArray) -> bool {
+        self.sail = if self.is_ready() { SailTable::from_bytes(self, cell_size, bytes.as_slice()) } else { None };
+        self.sail.is_some()
+    }
+
+    /// Metres by water from `a` to `b`, -1 without a table.
+    #[func]
+    fn sail_m(&self, a: Vector2, b: Vector2) -> f32 {
+        self.sail.as_ref().map_or(-1.0, |t| t.sail_m(self, a, b))
     }
 
     #[func]
