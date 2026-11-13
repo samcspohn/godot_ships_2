@@ -210,19 +210,23 @@ func _warm_gunnery() -> void:
 	var t0 := Time.get_ticks_msec()
 	var tw := Time.get_ticks_msec()
 	var parts := []
-	BotGunnery.warm(ships)
-	parts.append("gunnery %d" % (Time.get_ticks_msec() - tw))
 	for t in teams:
 		t.ships = _get_team(t.id)
 	var all_ships: Array = []
 	for t in teams:
 		all_ships.append_array(t.ships)
-	tw = Time.get_ticks_msec()
-	BotBehavior.warm_dps_curves(all_ships)
-	parts.append("dps_curves %d" % (Time.get_ticks_msec() - tw))
-	tw = Time.get_ticks_msec()
-	BotBehavior.warm_proxy_curves(self, all_ships)
-	parts.append("proxy_curves %d" % (Time.get_ticks_msec() - tw))
+	var v4 := all_ships.any(func(s): return is_instance_valid(s) and s.get_node_or_null("Modules/BotController") != null)
+	if v4:
+		BotGunnery.warm(all_ships)
+		parts.append("gunnery %d" % (Time.get_ticks_msec() - tw))
+		tw = Time.get_ticks_msec()
+		BotBehavior.warm_dps_curves(all_ships)
+		parts.append("dps_curves %d" % (Time.get_ticks_msec() - tw))
+		tw = Time.get_ticks_msec()
+		BotBehavior.warm_proxy_curves(self, all_ships)
+		parts.append("proxy_curves %d" % (Time.get_ticks_msec() - tw))
+	else:
+		parts.append("no v4 bots")
 	tw = Time.get_ticks_msec()
 	if PointTables.point_tables_on():
 		PointTables.start_runtime_tables(all_ships)
@@ -237,6 +241,10 @@ func _warm_gunnery() -> void:
 	tw = Time.get_ticks_msec()
 	_sweep_reach_fields()
 	parts.append("reach %d" % (Time.get_ticks_msec() - tw))
+	if bot5_hub != null:
+		tw = Time.get_ticks_msec()
+		var ready := bot5_hub.prepare()
+		parts.append("bot5 %d%s" % [Time.get_ticks_msec() - tw, "" if ready else " (map not ready)"])
 	print("Warmed %d ships' gunnery and reach tables in %d ms (%s)" % [ships.size(), Time.get_ticks_msec() - t0, ", ".join(parts)])
 
 func _start_bot_match() -> void:
@@ -1420,6 +1428,7 @@ func _broadcast_match_end():
 		BotTiming.print_table()
 	if bot5_hub != null:
 		print("bot5 telemetry: ", JSON.stringify(bot5_hub.telemetry()))
+		print("bot5 hub frame us: ", JSON.stringify(bot5_hub.frame_stats()))
 	if CmdArgs.has("--gd-profile"):
 		EngineDebugger.profiler_enable("scripts", false)
 	if bot_match or CmdArgs.has("--metrics"):

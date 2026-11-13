@@ -87,6 +87,11 @@ impl Gunnery {
         self.shells[ammo].as_ref()
     }
 
+    pub fn spec(&self, range: f32) -> Option<super::shot::GunSpec> {
+        let (v0, beta, _, _) = ProjectilePhysicsWithDragV2::extract_params(self.shells[0].as_ref().or(self.shells[1].as_ref())?)?;
+        Some(super::shot::GunSpec { speed: v0 as f32, drag: beta as f32, range, gun_h: self.gun_h })
+    }
+
     /// Main battery flight time in game seconds to `to`, ignoring lead.
     pub fn flight_time(&self, from: Vector3, to: Vector3, time_mult: f64) -> Option<f32> {
         let shell = self.shell(self.ammo)?;

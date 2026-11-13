@@ -33,6 +33,7 @@ var _ids := PackedInt64Array()
 var _trace := OS.has_environment("SHIPS_BOT5_TRACE")
 var _gates: Dictionary = {}
 var _data := PackedFloat32Array()
+var _frame_us := PackedInt32Array()
 
 
 func add_ship(ship: Ship, team_data: Dictionary) -> void:
@@ -43,20 +44,34 @@ func is_v5(ship: Ship) -> bool:
 	return _slot_of.has(ship)
 
 
+## Match setup (server warm step): world setup, bot registration, terrain tables, so the first frame stays cheap.
+func prepare() -> bool:
+	if not _setup():
+		return false
+	_register_pending(true)
+	return world.prepare()
+
+
+func _setup() -> bool:
+	if _setup_done:
+		return true
+	if not _Utils.authority() or server == null or not NavigationMapManager.is_map_ready():
+		return false
+	world.setup(NavigationMapManager.get_map(), NavigationMapManager.get_hpa_graph(), server.ship_registry,
+		ProjectileManager.get_raw(), get_viewport().find_world_3d().direct_space_state)
+	_setup_done = true
+	return true
+
+
 func _physics_process(delta: float) -> void:
-	if not _Utils.authority() or server == null:
+	if not _setup():
 		return
-	if not _setup_done:
-		if not NavigationMapManager.is_map_ready():
-			return
-		world.setup(NavigationMapManager.get_map(), NavigationMapManager.get_hpa_graph(), server.ship_registry,
-			ProjectileManager.get_raw(), get_viewport().find_world_3d().direct_space_state)
-		_setup_done = true
-	_register_pending()
+	var t0 := Time.get_ticks_usec()
+	if _register_pending(false) > 0:
+		world.prepare()
 	if _ships.is_empty():
 		return
 	var now: float = SimClock.now()
-	var t0 := Time.get_ticks_usec()
 	_push_ships(now)
 	if now - _pair_t >= PAIR_RETRY_S:
 		_pair_t = now
@@ -69,6 +84,7 @@ func _physics_process(delta: float) -> void:
 	world.tick(now, delta, ProjectileManager.get_shell_time_multiplier())
 	_apply(world.commands(), now)
 	BotTiming.add(&"bot5", t0)
+	_frame_us.append(Time.get_ticks_usec() - t0)
 	var f: Ship = Debug.follow_ship
 	if f != null and _slot_of.has(f):
 		var slot: int = _slot_of[f]
@@ -78,18 +94,22 @@ func _physics_process(delta: float) -> void:
 			print("bot5 trace ", _ships[slot].ship_name, " ", world.debug_bot(slot), " hub ", _gates.get(slot, {}))
 
 
-func _register_pending() -> void:
+## `settled`: the caller already waited for stat mods to land.
+func _register_pending(settled: bool) -> int:
 	var keep := []
+	var n := 0
 	for p in _pending:
 		var ship: Ship = p.ship
 		if not is_instance_valid(ship):
 			continue
 		if not ship.is_inside_tree() or ship.movement_controller == null or ship.artillery_controller == null \
-				or Engine.get_physics_frames() - int(p.frame) < 3:
+				or (not settled and Engine.get_physics_frames() - int(p.frame) < 3):
 			keep.append(p)
 			continue
 		_register(ship, p.cfg)
+		n += 1
 	_pending = keep
+	return n
 
 
 func _register(ship: Ship, cfg: Dictionary) -> void:
@@ -118,7 +138,8 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 		shell_he = gp.shell2,
 		damage_ap = gp.shell1.damage if gp.shell1 != null else 0.0,
 		damage_he = gp.shell2.damage if gp.shell2 != null else 0.0,
-		gun_h = mv.ship_draft / 2.0,
+		gun_h = float(NavigationMapManager.reach_gun(ship).get("gun_h", 5.0)),
+		gun_range = gp._range,
 	}.merged(_torp_cfg(ship)).merged(_spot_cfg(ship)))
 	_ships.append(ship)
 	_slot_of[ship] = slot
@@ -445,4 +466,20 @@ func shots_of(ship: Ship) -> PackedInt32Array:
 
 
 func telemetry() -> Dictionary:
-	return world.telemetry()
+	var t := world.telemetry()
+	t["hub_frame_us"] = frame_stats()
+	return t
+
+
+func frame_stats() -> Dictionary:
+	var n := _frame_us.size()
+	if n == 0:
+		return {}
+	var v := _frame_us.duplicate()
+	v.sort()
+	var sum := 0
+	for x in v:
+		sum += x
+	var at := func(q: float) -> int: return v[mini(int(q * n), n - 1)]
+	return {n = n, mean = float(sum) / n, p50 = at.call(0.5), p90 = at.call(0.9), p99 = at.call(0.99),
+		p999 = at.call(0.999), max = v[n - 1]}

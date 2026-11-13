@@ -128,7 +128,7 @@ static func _summary(b: Dictionary, now: float) -> String:
 	if tid != 0:
 		var t = instance_from_id(tid)
 		tgt = "%s %.1f km" % [(t as Ship).ship_name if t is Ship else "?", float(b.get("target_dist", 0.0)) / 1000.0]
-	lines.append("%s | %s" % [b.get("posture", "-"), tgt])
+	lines.append("%s%s | %s" % [b.get("posture", "-"), "" if b.get("station_shot", true) else " (no shot)", tgt])
 	if b.has("aim"):
 		lines.append("%s ev %.0f | %s" % [["AP", "HE"][int(b.ammo)], float(b.ev), b.get("gate", "")])
 	else:

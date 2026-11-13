@@ -4,6 +4,7 @@ pub mod belief;
 pub mod gunnery;
 pub mod hive;
 pub mod params;
+pub mod shot;
 pub mod snapshot;
 pub mod telemetry;
 pub mod torpedo;
@@ -24,6 +25,7 @@ use belief::Belief;
 use gunnery::{Clear, Gunnery, PairTables, TargetLive};
 use hive::{Assignment, Committed, Member, Plan, Posture};
 use params::{Aptitude, Kinematics, Playstyle};
+use shot::{Gun, ShotMap};
 use snapshot::{HullClass, ShipState, Snapshot};
 use telemetry::Telemetry;
 use torpedo::{TorpAim, TorpSpec, Tracks};
@@ -92,6 +94,9 @@ struct Bot {
     assign: Assignment,
     pushed: Option<(u32, Vector2)>,
     gun: Gunnery,
+    gun_range: f32,
+    /// Terrain clearance table for station search; built by prepare().
+    shot_gun: Option<Gun>,
     inputs: BotInputs,
     cmd: Command,
     hp_at_pass: f32,
@@ -135,6 +140,7 @@ pub struct World {
     tel: Telemetry,
     allies: Vec<ShipState>,
     tracks: Tracks,
+    shots: ShotMap,
     frame: i64,
     time_mult: f64,
     time_us: [u64; 3],
@@ -199,6 +205,8 @@ impl World {
             assign: Assignment::default(),
             pushed: None,
             gun,
+            gun_range: g("gun_range"),
+            shot_gun: None,
             inputs: BotInputs::default(),
             cmd: Command::default(),
             hp_at_pass: 1.0,
@@ -218,6 +226,17 @@ impl World {
             spot_point: None,
         });
         (self.bots.len() - 1) as i32
+    }
+
+    /// Terrain copy and per-bot clearance tables, at match setup rather than on the first hive pass.
+    fn prepare(&mut self) -> bool {
+        if !self.shots.ready(&self.map) {
+            return false;
+        }
+        for b in self.bots.iter_mut().filter(|b| b.shot_gun.is_none()) {
+            b.shot_gun = b.gun.spec(b.gun_range).and_then(|g| self.shots.gun(g));
+        }
+        true
     }
 
     fn tick(&mut self, now: f64, dt: f32, time_mult: f64) {
@@ -314,13 +333,26 @@ impl World {
                 }
                 r
             };
-            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev);
+            let shots = &self.shots;
+            let nav = bot.nav.bind();
+            let clearance = nav.get_ship_clearance();
+            let map = self.map.as_ref().map(|m| m.bind());
+            let mut shot = |st: Vector2, aim: Vector2| -> bool {
+                let (Some(g), Some(m)) = (&bot.shot_gun, &map) else { return false };
+                m.is_navigable_impl(st.x, st.y, clearance) && shots.clear(g, st, aim)
+            };
+            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev, &mut shot);
+            drop(map);
+            drop(nav);
             let hp = me.hp_frac;
             for _ in 0..no_table {
                 self.tel.count("target_no_table");
             }
             if let Some(r) = reason {
                 self.tel.release(r);
+                if plan.is_some_and(|p| p.posture == Posture::Engage && !p.shot) {
+                    self.tel.count("station_no_shot");
+                }
             }
             let bot = &mut self.bots[i];
             if let Some(r) = reason {
@@ -331,7 +363,9 @@ impl World {
             if let Some(mut p) = plan {
                 if reason.is_some() {
                     bot.serial += 1;
-                    p.station = self.valid_station(i, me.p2(), p.station);
+                    if !p.shot {
+                        p.station = self.valid_station(i, me.p2(), p.station);
+                    }
                 }
                 p.serial = self.bots[i].serial;
                 self.bots[i].plan = Some(p);
@@ -603,6 +637,12 @@ impl BotWorld {
         self.w.store = pm.map(|p| p.bind().point_store.clone());
     }
 
+    /// False until the navigation map is built.
+    #[func]
+    fn prepare(&mut self) -> bool {
+        self.w.prepare()
+    }
+
     #[func]
     fn add_bot(&mut self, cfg: VarDictionary) -> i32 {
         self.w.add_bot(&cfg)
@@ -848,6 +888,7 @@ impl BotWorld {
             d.set("band_hi", band.1 * me.gun_range);
             if let Some(p) = b.plan {
                 d.set("hold_radius", p.hold_radius);
+                d.set("station_shot", p.shot);
             }
             if let Some(t) = b.assign.target.and_then(|id| self.w.snap.get(id)) {
                 d.set("target_dist", me.pos.distance_to(t.pos));

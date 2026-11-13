@@ -124,7 +124,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 script = ExtResource("9_uwp4f")
 acceleration_time = 40.0
 deceleration_time = 40.0
-turning_circle_radius = 700.0
+turning_circle_radius = 600.0
 turn_speed_loss = 0.45
 rudder_response_time = 14.0
 

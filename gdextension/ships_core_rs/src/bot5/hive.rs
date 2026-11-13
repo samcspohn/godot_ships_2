@@ -19,6 +19,8 @@ const TORP_RUN_HP: f32 = 0.5;
 const TORP_RUN_RANGE: f32 = 0.7;
 const TORP_RUN_REACH: f32 = 0.8;
 const TORP_RUN_LEAD: f32 = 0.7;
+/// Bearing offsets (rad) from the preferred station tried in order until one can shoot the anchor.
+const SHOT_SWINGS: [f32; 15] = [0.0, 0.2, -0.2, 0.4, -0.4, 0.7, -0.7, 1.0, -1.0, 1.4, -1.4, 1.9, -1.9, 2.5, -2.5];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
@@ -48,6 +50,8 @@ pub struct Plan {
     pub set_at: f64,
     pub hold_until: f64,
     pub serial: u32,
+    /// Station checked navigable with a clear shot at the anchor.
+    pub shot: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -82,8 +86,10 @@ pub struct Committed {
 
 /// One bot's decision against the team's view and what earlier bots committed to.
 /// `ev(target)`: point-table value per shot now, None without a table.
+/// `shot(station, aim)`: station is navigable and our shells clear terrain to `aim`.
 pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Committed], now: f64,
-        ev: &mut dyn FnMut(&ShipState) -> Option<f32>) -> (Option<Plan>, Assignment, Option<&'static str>) {
+        ev: &mut dyn FnMut(&ShipState) -> Option<f32>, shot: &mut dyn FnMut(Vector2, Vector2) -> bool)
+        -> (Option<Plan>, Assignment, Option<&'static str>) {
     let me = m.me;
     let my = me.p2();
     let delay = m.apt.view_delay_s();
@@ -114,16 +120,17 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         (p, _, _) => p,
     };
 
-    let anchor = assign.target.and_then(|id| view.iter().find(|(e, _)| e.id == id).map(|&(_, p)| p))
-        .or_else(|| view.iter().map(|&(_, p)| p).min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my))))
-        .or(belief.enemy_spawn)
-        .unwrap_or(my);
+    let contact = assign.target.and_then(|id| view.iter().find(|(e, _)| e.id == id).map(|&(_, p)| p))
+        .or_else(|| view.iter().map(|&(_, p)| p).min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my))));
+    let anchor = contact.or(belief.enemy_spawn).unwrap_or(my);
+    let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
+        p.shot && contact.is_some() && !shot(p.station, anchor);
 
     if let Some(p) = m.plan {
         let blocked = m.blocked_s >= BLOCKED_RELEASE_S && assign.target.is_some();
         let arrived = p.posture == Posture::Engage && p.station.distance_to(my) < p.hold_radius;
         let keep = p.posture == posture && now < p.hold_until && !arrived && !blocked
-            && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M;
+            && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot);
         if keep {
             let mut p = p;
             p.heading = broadside(my, anchor, me.heading());
@@ -137,6 +144,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         Some(_) if blocked => "blocked",
         Some(p) if p.anchor.distance_to(anchor) >= ANCHOR_MOVE_M => "anchor_moved",
         Some(p) if p.station.distance_to(my) < p.hold_radius => "arrived",
+        Some(p) if now < p.hold_until => "no_shot",
         Some(_) => "expired",
     };
 
@@ -148,9 +156,13 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let fwd = Vector2::new(me.fwd().x, me.fwd().z);
             let swing = if blocked { BLOCKED_SWING } else if d >= lo && d <= hi { ORBIT_STEP } else { 0.0 };
             let side = if (rotate(away, swing) - away).dot(fwd) >= 0.0 { 1.0 } else { -1.0 };
-            let station = anchor + rotate(away, swing * side) * if swing > 0.0 { r } else { (lo + hi) * 0.5 };
-            Plan { posture, station, anchor, heading: broadside(my, anchor, me.heading()), heading_weight: 0.0,
-                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0 }
+            let r = if swing > 0.0 { r } else { (lo + hi) * 0.5 };
+            let at = |off: f32, r: f32| anchor + rotate(away, swing * side + off * side) * r;
+            let found = contact.and_then(|_| SHOT_SWINGS.iter()
+                .flat_map(|&o| [r, (lo + hi) * 0.5, lo, hi].map(|r| at(o, r)))
+                .find(|&s| shot(s, anchor)));
+            Plan { posture, station: found.unwrap_or(at(0.0, r)), anchor, heading: broadside(my, anchor, me.heading()), heading_weight: 0.0,
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: found.is_some() }
         }
         Posture::TorpRun => {
             let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
@@ -159,7 +171,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
             let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
             Plan { posture, station: tp + dir * (TORP_RUN_RANGE * range), anchor: tp, heading: broadside(my, tp, me.heading()),
-                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0 }
+                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false }
         }
         Posture::Retreat => {
             let threat = centroid(view.iter().map(|&(_, p)| p)).unwrap_or(anchor);
@@ -169,7 +181,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 dir = dir_or(dir + dir_or(a - my, Vector2::ZERO) * 0.5, dir);
             }
             Plan { posture, station: my + dir * (0.6 * me.gun_range), anchor, heading: 0.0, heading_weight: 0.0,
-                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0 }
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false }
         }
     };
     (Some(plan), assign, Some(reason))
