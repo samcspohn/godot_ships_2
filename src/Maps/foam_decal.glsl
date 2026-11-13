@@ -17,7 +17,7 @@ struct Decal {
     float tile_a;   // pattern tile = churn_scale * tile_a + tile_b * current radius
     float tile_b;
     float blast;    // 1 = blotch noise only, no churn pattern
-    float _pad1;
+    float bub_frac; // bubble life as a fraction of life
     float opacity;  // alpha gain in the ocean shader, 1..3
     float fade_in;  // seconds
     float speed;    // m/s; > 0 overrides grow with a constant-speed front
@@ -76,7 +76,7 @@ struct Decal {
     float tile_a;
     float tile_b;
     float blast;    // 1 = blotch noise only, no churn pattern
-    float _pad1;
+    float bub_frac;
     float opacity;  // alpha gain in the ocean shader, 1..3
     float fade_in;  // seconds
     float speed;
@@ -127,7 +127,8 @@ void main() {
     float vis = dot(d.hull, d.hull) > 1e-3 ? 1.0 - hull_shadow(v_local, d.hull - d.pos.xyxy) : 1.0;
     float c = clamp(d.strength * profile * pow(1.0 - t, d.fade_pow) * vis, 0.0, 1.0);
     if (d.fade_in > 0.0) c *= smoothstep(0.0, d.fade_in, age);
-    float bub = d.bubbles * sqrt(profile * (1.0 - t)) * vis;
+    float tb = clamp(age / (d.life * max(d.bub_frac, 1e-3)), 0.0, 1.0);
+    float bub = d.bubbles * sqrt(profile * (1.0 - tb)) * (1.0 - tb) * vis;
 
     // Own rotation and offset per decal so overlapping events layer distinct clumps.
     float cs = cos(d.rot), sn = sin(d.rot);

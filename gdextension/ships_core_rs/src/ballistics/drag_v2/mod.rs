@@ -119,7 +119,7 @@ impl ProjectilePhysicsWithDragV2 {
     ) -> VarDictionary {
         Self::sim_can_shoot_over_terrain_impl(
             start_pos, launch_vector, flight_time, &shell_params,
-            nav_map, space_state, exclude_rids, precision_world,
+            nav_map, space_state, exclude_rids, precision_world, true,
         )
     }
 }

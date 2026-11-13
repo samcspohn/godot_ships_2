@@ -15,7 +15,7 @@ pub(crate) mod ev;
 mod fire;
 mod lifecycle;
 mod survey;
-mod point_store;
+pub(crate) mod point_store;
 mod point_worker;
 pub(crate) mod stance_cells;
 pub(crate) mod util;

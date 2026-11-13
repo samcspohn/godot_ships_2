@@ -173,6 +173,27 @@ func _ready():
 
 var _warm_pending: Array[Ship] = []
 
+var bot5_hub: Bot5Hub = null
+
+## 5 for v5 bots. Per lineup entry "bot_version", else SHIPS_BOT5_TEAMS / --bot5-teams ("1", "0,1", "all").
+func _bot_version(team_data: Dictionary) -> int:
+	if team_data.has("bot_version"):
+		return int(team_data["bot_version"])
+	var teams := CmdArgs.value("--bot5-teams", OS.get_environment("SHIPS_BOT5_TEAMS"))
+	if teams == "":
+		return 4
+	if teams == "all" or str(team_data.get("team", "")) in teams.split(","):
+		return 5
+	return 4
+
+func _bot5() -> Bot5Hub:
+	if bot5_hub == null or not is_instance_valid(bot5_hub):
+		bot5_hub = Bot5Hub.new()
+		bot5_hub.name = "Bot5Hub"
+		bot5_hub.server = self
+		add_child(bot5_hub)
+	return bot5_hub
+
 ## Queues `ship` for the start-of-life loads (gunnery tables, damage grids, ray
 ## tables, gun-table registration) so none of them lands on the first sighting.
 func _queue_warm(ship: Ship) -> void:
@@ -467,7 +488,9 @@ func spawn_player(id, player_name):
 
 
 	# If it's a bot, add bot AI controller instead of player controller
-	if is_bot:
+	if is_bot and _bot_version(team_data) == 5:
+		_bot5().add_ship(player, team_data)
+	elif is_bot:
 		var bot_controller = preload("res://src/ship/bot_controller_v4.tscn").instantiate()
 		bot_controller.name = "BotController"
 		match player.ship_class:
@@ -571,7 +594,7 @@ func spawn_player(id, player_name):
 		var pid = players[p_name][2]
 		# notify new client of current players
 		if not is_bot:
-			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV4)
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.team.is_bot)
 			sync_skills.rpc_id(id, p.name, p.skills.ids())
 		#notify current players of new player
 		if not p.team.is_bot:
@@ -1395,6 +1418,8 @@ func _broadcast_match_end():
 
 	if BotTiming.on:
 		BotTiming.print_table()
+	if bot5_hub != null:
+		print("bot5 telemetry: ", JSON.stringify(bot5_hub.telemetry()))
 	if CmdArgs.has("--gd-profile"):
 		EngineDebugger.profiler_enable("scripts", false)
 	if bot_match or CmdArgs.has("--metrics"):
@@ -1432,6 +1457,9 @@ func _build_leaderboard() -> Array[Dictionary]:
 				shots_by_ammo = bot_controller.behavior.shots_by_ammo
 				if bot_controller.behavior.aptitude != null:
 					aptitude_name = bot_controller.behavior.aptitude.level_name()
+			elif bot5_hub != null and bot5_hub.is_v5(ship):
+				shots_by_ammo = bot5_hub.shots_of(ship)
+				aptitude_name = "v5"
 		var entry := {
 			"player_name": p_name,
 			"ship_name": ship.ship_name,
@@ -1528,6 +1556,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"vetoes": GunneryCalibration.veto_summary(),
 		"aims": GunneryCalibration.aim_summary(),
 		"point_tables": BotGunnery.point_table_summary(),
+		"bot5": bot5_hub.telemetry() if bot5_hub != null else {},
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())

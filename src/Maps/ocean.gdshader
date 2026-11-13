@@ -109,6 +109,7 @@ uniform float wake_world  = 512.0;
 uniform int   wake_origin = 36;
 uniform float wake_time   = 0.0;
 uniform float wake_life   = 60.0;
+uniform float bubble_life_frac : hint_range(0.05, 1.0) = 0.35; // bubble tint life vs foam life (wake map + decals)
 
 // --- foam decal cascades (see foam_decals.gd): r = reveal margin * 0.5 + 0.5, g = bubbles, b = (opacity gain - 1) / 2 ---
 uniform sampler2DArray foam_decals : repeat_disable, filter_linear;
@@ -379,7 +380,8 @@ vec2 sample_wake(vec2 wxz) {
 		// negative strength = splash foam, which lives 0.2 x wake_life (see wave.glsl)
 		float life = clamp(1.0 - (wake_time - v.x) / (wake_life * (v.y < 0.0 ? 0.2 : 1.0)), 0.0, 1.0);
 		float w = (o.x == 1 ? t.x : 1.0 - t.x) * (o.y == 1 ? t.y : 1.0 - t.y);
-		acc += abs(v.y) * vec2(life * life * life, sqrt(life)) * w;
+		float bl = clamp(1.0 - (1.0 - life) / bubble_life_frac, 0.0, 1.0);
+		acc += abs(v.y) * vec2(life * life * life, bl * sqrt(bl)) * w;
 	}
 	return acc;
 }

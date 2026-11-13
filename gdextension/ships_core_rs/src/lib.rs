@@ -1,6 +1,7 @@
 use godot::prelude::*;
 
 pub mod ballistics;
+pub mod bot5;
 pub mod combat;
 pub mod nav;
 pub(crate) mod names;

@@ -12,6 +12,7 @@ const ZOOM_FOV := 20.0          # narrower than this centres every cascade on th
 const AHEAD := 0.35             # cascade centre ahead of the camera, in extents
 const SHADER := preload("res://src/Maps/foam_decal.glsl")
 
+var bubble_frac := 1.0
 var origins: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
 var wrap: Texture2DArrayRD
 
@@ -50,6 +51,7 @@ func add(pos: Vector2, r0: float, r1: float, grow: float, life: float, birth: fl
 	_mirror[f + 14] = hull.z;    _mirror[f + 15] = hull.w
 	_mirror[f + 16] = tile_a;    _mirror[f + 17] = tile_b
 	_mirror[f + 18] = 1.0 if blast else 0.0
+	_mirror[f + 19] = bubble_frac
 	_mirror[f + 20] = opacity
 	_mirror[f + 21] = fade_in;   _mirror[f + 22] = speed
 	if _dirty_n == 0: _dirty_lo = slot

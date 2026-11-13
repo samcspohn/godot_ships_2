@@ -89,7 +89,7 @@ impl EdgeSim {
         let hit = match (sol.get(0).and_then(|v| v.try_to::<Vector3>().ok()), sol.get(1).and_then(|v| v.try_to::<f64>().ok())) {
             (Some(launch), Some(t)) => {
                 let r = P::sim_can_shoot_over_terrain_impl(from, launch, t, &self.shell, Some(self.nav.clone()),
-                    Some(self.space.clone()), VarArray::new(), None);
+                    Some(self.space.clone()), VarArray::new(), None, true);
                 !r.get("terrain_blocked").is_some_and(|v| v.to::<bool>())
             }
             _ => false,

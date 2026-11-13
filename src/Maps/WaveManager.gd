@@ -503,6 +503,7 @@ func _emit_spray(s: Node3D, p2: Vector2, q2: Vector2, fwd: Vector2, prev_fwd: Ve
 
 func _update_decals() -> void:
 	_decals.place(get_viewport().get_camera_3d())
+	_decals.bubble_frac = _mat_param("bubble_life_frac")
 	var casc := PackedVector4Array()
 	for i in 3:
 		casc.append(Vector4(_decals.origins[i].x, _decals.origins[i].y, _decals.extent(i), FoamDecals.TEXELS[i]))

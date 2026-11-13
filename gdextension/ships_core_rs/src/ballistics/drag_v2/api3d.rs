@@ -440,6 +440,7 @@ impl P {
         mut space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
         exclude_rids: VarArray,
         mut precision_world: Option<Gd<Node>>,
+        check_ships: bool,
     ) -> VarDictionary {
         let mut result = VarDictionary::new();
         result.set("terrain_blocked", false);
@@ -532,7 +533,7 @@ impl P {
             oray.set_hit_from_inside(true);
             oray.set_collision_mask(1 << 4); // OBB_COLLISION_LAYER
             oray.set_exclude(&obb_excludes);
-            obb_ray = Some(oray);
+            obb_ray = check_ships.then_some(oray);
 
             // Terrain is resolved against the real island colliders (layer 1), the
             // same way live shells are in NativeArmorInteraction::process_travel.
