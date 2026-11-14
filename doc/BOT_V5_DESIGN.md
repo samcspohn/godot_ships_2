@@ -220,3 +220,10 @@ Each team hands every matrix a demand per hive pass (`GunMatrix::demand`): the b
 Columns are sparse (built only around targets, 1.6 KB each). Demand is rescanned only when it changes or is unfinished. Then the old background fill (rows nearest the sites) resumes.
 
 Next: cover gate, checkpoints, Spot posture.
+
+## Frame spreading (2026-11-14)
+
+- A team pass is resumable: flanks, field, curves and the aptitude order are fixed at its start; bots then resolve in that order until 2 of them re-plan this frame, and the rest resume next frame with the same committed list (`hive_pass_resumed`). Bots keeping their plan do not count. Count budget, not time, so runs stay deterministic.
+- One team's hive work per frame: an unfinished pass first, else the most overdue team. Teams start half an interval apart.
+- At most 4 jumped-station navigator pushes per frame.
+- The hub fills point-table pair and threat keys for 2 bots per frame and skips bots that have them all.

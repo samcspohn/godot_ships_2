@@ -15,3 +15,4 @@ Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed acr
 | 2026-11-14 | 41fa5176+ | matrices built from target cells outward (rows + columns) | 1 | 975 | 773 | 1839 | 3776 | 6002 | 14204 | 14459 | 1200 |
 | 2026-11-14 | 41fa5176+ | matrices from target cells, matrix cache loaded | 1 | 1257 | 1067 | 2131 | 3910 | 5956 | 14845 | 9260 | 767 |
 | 2026-11-14 | 41fa5176+ | spike fixes: pair fill spread, one hive pass per frame, 4 station jumps per frame | 1 | 1147 | 992 | 1952 | 3554 | 4691 | 5733 | 14459 | 1200 |
+| 2026-11-14 | 6f707461+ | staggered re-plans: 2 per frame, pass resumes in order | 1 | 1073 | 906 | 1879 | 3294 | 4582 | 5196 | 14459 | 1200 |

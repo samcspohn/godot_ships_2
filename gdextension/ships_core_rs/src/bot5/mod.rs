@@ -47,6 +47,8 @@ const NAV_STATE_EVERY: i64 = 2;
 const NAV_PUSH_EVERY: i64 = 12;
 /// New stations pushed to navigators per frame; a hive pass can move many bots at once.
 const JUMP_PUSHES_PER_FRAME: u32 = 4;
+/// Bots that re-plan per frame; a team pass resumes in its aptitude order on the next frame.
+const REPLANS_PER_FRAME: u32 = 2;
 const AIM_EVERY: i64 = 3;
 const STATION_JUMP_M: f32 = 1000.0;
 const BOT_INPUT_STRIDE: usize = 18;
@@ -134,11 +136,19 @@ struct Bot {
     threats: HashMap<i64, [Option<String>; 2]>,
 }
 
+struct Pass {
+    order: Vec<usize>,
+    next: usize,
+    committed: Vec<Committed>,
+}
+
 #[derive(Default)]
 struct TeamHive {
     belief: Belief,
     flanks: Option<Flanks>,
     field: TeamField,
+    /// A pass still resolving, spread over frames.
+    pass: Option<Pass>,
     next_pass: f64,
     last_pass: f64,
     event: bool,
@@ -327,6 +337,10 @@ impl World {
     }
 
     fn hive(&mut self, now: f64) {
+        if let Some(team) = self.teams.iter().find(|(_, h)| h.pass.is_some()).map(|(&t, _)| t) {
+            self.run_pass(team, now);
+            return;
+        }
         let mut teams: Vec<i32> = self.teams.keys().copied().collect();
         // One pass per frame, most overdue first: two teams' passes in one frame stack their cost.
         teams.sort_by(|a, b| self.teams[a].next_pass.total_cmp(&self.teams[b].next_pass));
@@ -436,7 +450,6 @@ impl World {
             .filter(|&i| self.bots[i].team == team && self.snap.get(self.bots[i].ship_id).is_some_and(|s| s.alive))
             .collect();
         order.sort_by_key(|&i| (self.bots[i].apt.level, self.bots[i].ship_id));
-        let mut committed: Vec<Committed> = Vec::with_capacity(order.len());
         let store = self.store.clone();
         let tc = std::time::Instant::now();
         if let Some(s) = &store {
@@ -454,11 +467,23 @@ impl World {
             }
         }
         self.scan_us[2] += tc.elapsed().as_micros() as u64;
+        let n = order.len();
+        self.teams.get_mut(&team).unwrap().pass = Some(Pass { order, next: 0, committed: Vec::with_capacity(n) });
+        self.run_pass(team, now);
+    }
+
+    /// Resolves the pass's bots in order until REPLANS_PER_FRAME of them re-planned; the rest wait for the next frame.
+    fn run_pass(&mut self, team: i32, now: f64) {
+        let Some(mut p) = self.teams.get_mut(&team).and_then(|h| h.pass.take()) else { return };
+        let store = self.store.clone();
         let mut scan_t = [0u64; 3];
         let time_mult = self.time_mult;
-        for i in order {
+        let mut replans = 0u32;
+        while p.next < p.order.len() && replans < REPLANS_PER_FRAME {
+            let i = p.order[p.next];
+            p.next += 1;
             let snap = &self.snap;
-            let me = snap.get(self.bots[i].ship_id).unwrap();
+            let Some(me) = snap.get(self.bots[i].ship_id).filter(|s| s.alive) else { continue };
             let belief = &self.teams[&team].belief;
             let bot = &self.bots[i];
             let flank = bot.role.zip(self.teams[&team].flanks.as_ref()).map(|(r, f)| {
@@ -549,7 +574,7 @@ impl World {
                 }
                 f
             };
-            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
+            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &p.committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
             drop(scan);
             drop(vis);
             for w in scan_tel {
@@ -584,7 +609,13 @@ impl World {
                 p.serial = self.bots[i].serial;
                 self.bots[i].plan = Some(p);
             }
-            committed.push(Committed { target: assign.target });
+            p.committed.push(Committed { target: assign.target });
+            replans += reason.is_some() as u32;
+        }
+        if p.next < p.order.len() {
+            self.tel.count("hive_pass_resumed");
+            self.teams.get_mut(&team).unwrap().pass = Some(p);
+            return;
         }
         self.spotters(team, now);
     }
