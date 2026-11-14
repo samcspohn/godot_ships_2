@@ -1,7 +1,7 @@
 # Bot v5 hub performance
 
 `Bot5Hub._physics_process` wall time per physics frame (µs), 12v12 all-v5 (`lineup_12v12_t10`), `--fixed-fps 16`.
-Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed across rows; one match at a time on an idle machine.
+Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed across rows; one match at a time on an idle machine. Loads gun matrices from the disk cache (`--gun-matrix-cache`) from 2026-11-14 on. The "station scan" and "matrices built from target cells" rows built them at runtime, so bots fought sooner on wall time against unbuilt matrices; not comparable.
 
 | date | rev | change | seed | mean | p50 | p90 | p99 | p99.9 | max | frames | match s |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -12,3 +12,6 @@ Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed acr
 | 2026-11-13 | c305c03c+ | flank merge/split | 1 | 1102 | 964 | 1961 | 3184 | 4390 | 8756 | 8664 | 717 |
 | 2026-11-13 | c305c03c+ | team field: seen/shot bitsets from LOS + gun-matrix rows | 1 | 805 | 650 | 1537 | 2935 | 4570 | 10029 | 14459 | 1200 |
 | 2026-11-14 | c305c03c+ | station scan: cell scan + point-table curves (runtime gun matrices) | 1 | 1171 | 1027 | 2028 | 3529 | 4973 | 14331 | 14459 | 1200 |
+| 2026-11-14 | 41fa5176+ | matrices built from target cells outward (rows + columns) | 1 | 975 | 773 | 1839 | 3776 | 6002 | 14204 | 14459 | 1200 |
+| 2026-11-14 | 41fa5176+ | matrices from target cells, matrix cache loaded | 1 | 1257 | 1067 | 2131 | 3910 | 5956 | 14845 | 9260 | 767 |
+| 2026-11-14 | 41fa5176+ | spike fixes: pair fill spread, one hive pass per frame, 4 station jumps per frame | 1 | 1147 | 992 | 1952 | 3554 | 4691 | 5733 | 14459 | 1200 |

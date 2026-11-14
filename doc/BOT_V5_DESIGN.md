@@ -208,6 +208,15 @@ Shared base for cover, spotting, checkpoints and station search (`bot5/field.rs`
 - Top 6 checked in order by the exact terrain ray; an expired plan keeps its station within 10% of the best.
 - Curves: each point table flattened once (damage 1, no fire or saturation) into per-shot value by range and aspect, cached by table key, so pairs sharing a table share a curve; re-read every 5 s until complete. Damage per minute = value x shell damage x barrels x 60 / reload, better shell.
 - Enemy-vs-us tables come from the same runtime queue (`start_runtime_tables` already queues every pair both ways); the hub hands their keys over with `set_threat`.
-- Counters: `station_scan`, `station_scan_empty`, `station_no_value`, `threat_no_table`.
+- Counters: `station_scan`, `station_scan_empty`, `station_no_shot` (had a target, top 6 failed the exact ray), `station_no_value`, `station_no_column`, `threat_no_table`, `exact_ray_fail` / `exact_ray_fail_centre_ok` (ray clear to the target's cell centre but not its true position).
+- Cost per scan: cells on every other grid cell, then the full grid around the best 8; transit (sail table) only while a cell can still beat the kept six; curves resampled to 100 m steps, rebuilt from table slots at most 4 per pass and only after a table grows 10%.
+
+### Gun matrices around targets
+
+Each team hands every matrix a demand per hive pass (`GunMatrix::demand`): the believed enemy cells. The worker builds, nearest first out to 900 m from each:
+- rows of the enemy's own gun kind at those cells (where its shells land: exposure),
+- columns of our gun kinds (which cells can land on that cell: our shot, read as one contiguous bitset per scan).
+
+Columns are sparse (built only around targets, 1.6 KB each). Demand is rescanned only when it changes or is unfinished. Then the old background fill (rows nearest the sites) resumes.
 
 Next: cover gate, checkpoints, Spot posture.

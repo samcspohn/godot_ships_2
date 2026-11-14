@@ -1,5 +1,6 @@
 use godot::prelude::*;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering::{Acquire, Relaxed, Release}};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -14,6 +15,8 @@ const BATCH_ROWS: usize = 32;
 /// The row order follows its ships' latest positions at most this often.
 const REORDER_EVERY: Duration = Duration::from_secs(2);
 const IDLE_SLEEP: Duration = Duration::from_millis(50);
+/// Around each demanded target cell, rows and columns are built out to this radius, nearest first: the target moves.
+const RADIATE_M: f32 = 900.0;
 
 /// The VisibilityGrid's water cells and their line of sight, owned by the worker.
 pub(crate) struct Cells {
@@ -29,8 +32,10 @@ impl Cells {
 }
 
 /// One gun kind's answer, cell to cell: bit (i, j) set when a shell fired from
-/// water cell i lands on cell j. Rows fill in the background, nearest the ships
-/// carrying the gun first; a row is read only once its `ready` flag is set.
+/// water cell i lands on cell j. Demanded target cells come first, radiating out:
+/// their rows (where a shooter there lands) and columns (where a shooter can land on
+/// them from). Then rows fill in the background, nearest the ships carrying the gun.
+/// A row is read only once its `ready` flag is set.
 pub(crate) struct GunMatrix {
     pub key: i64,
     pub cap: f32,
@@ -47,6 +52,19 @@ pub(crate) struct GunMatrix {
     order: Mutex<(Vec<u32>, Option<std::time::Instant>)>,
     /// FILE_* progress with the disk cache.
     pub file: AtomicU8,
+    /// Built columns: bit i set when a shell from cell i lands on the column's cell.
+    cols: RwLock<HashMap<u32, Arc<[u64]>>>,
+    /// Per team: target cells wanting rows, and wanting columns.
+    demand: Mutex<[(Vec<u32>, Vec<u32>); 2]>,
+    /// Bumped per demand change; `demand_done` holds the last one found all built.
+    demand_gen: AtomicUsize,
+    demand_done: AtomicUsize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Job {
+    Row(u32),
+    Col(u32),
 }
 
 pub(crate) const FILE_UNTRIED: u8 = 0;
@@ -83,6 +101,89 @@ impl GunMatrix {
             sites: Mutex::new([Vec::new(), Vec::new()]),
             order: Mutex::new((Vec::new(), None)),
             file: AtomicU8::new(FILE_UNTRIED),
+            cols: RwLock::new(HashMap::new()),
+            demand: Mutex::new([(Vec::new(), Vec::new()), (Vec::new(), Vec::new())]),
+            demand_gen: AtomicUsize::new(0),
+            demand_done: AtomicUsize::new(0),
+        }
+    }
+
+    /// Cells `team` wants answered first: rows at `rows` (that shooter's fire), columns at `cols` (fire onto them).
+    pub fn demand(&self, team: usize, rows: Vec<u32>, cols: Vec<u32>) {
+        let mut d = self.demand.lock().unwrap();
+        let slot = &mut d[team.min(1)];
+        if slot.0 != rows || slot.1 != cols {
+            *slot = (rows, cols);
+            self.demand_gen.fetch_add(1, Release);
+        }
+    }
+
+    pub fn col(&self, j: usize) -> Option<Arc<[u64]>> {
+        self.cols.read().unwrap().get(&(j as u32)).cloned()
+    }
+
+    fn has_col(&self, j: usize) -> bool {
+        self.cols.read().unwrap().contains_key(&(j as u32))
+    }
+
+    /// Unbuilt demanded rows and columns within RADIATE_M of their target cells, nearest first.
+    fn demand_jobs(&self, cells: &Cells) -> Vec<Job> {
+        let (d, gen) = {
+            let l = self.demand.lock().unwrap();
+            (l.clone(), self.demand_gen.load(Acquire))
+        };
+        if gen == self.demand_done.load(Acquire) {
+            return Vec::new();
+        }
+        let mut out: Vec<(f32, Job)> = Vec::new();
+        for (rows, cols) in &d {
+            for (centres, row) in [(rows, true), (cols, false)] {
+                for &c in centres {
+                    let o = cells.centres[c as usize];
+                    for (k, p) in cells.centres.iter().enumerate() {
+                        let dist = p.distance_to(o);
+                        if dist > RADIATE_M {
+                            continue;
+                        }
+                        let open = if row { !self.row_ready(k) } else { !self.has_col(k) };
+                        if open {
+                            out.push((dist, if row { Job::Row(k as u32) } else { Job::Col(k as u32) }));
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if out.is_empty() {
+            self.demand_done.store(gen, Release);
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.into_iter().map(|j| j.1).filter(|j| seen.insert(*j)).take(BATCH_ROWS).collect()
+    }
+
+    fn hit(&self, i: usize, j: usize, terrain: &Terrain, cells: &Cells) -> bool {
+        let (o, c) = (cells.centres[i], cells.centres[j]);
+        let d = c - o;
+        let dist = d.length();
+        dist < 1.0 || (dist <= self.cap && (cells.seen(i, j)
+            || segment_clear(terrain, self.table(), o, d.x / dist, d.y / dist, dist, self.shell.gun_h)))
+    }
+
+    fn build_col(&self, j: usize, terrain: &Terrain, cells: &Cells) {
+        let mut col = vec![0u64; self.words];
+        for i in 0..cells.centres.len() {
+            if self.hit(i, j, terrain, cells) {
+                col[i / 64] |= 1 << (i % 64);
+            }
+        }
+        self.cols.write().unwrap().insert(j as u32, col.into());
+    }
+
+    fn run(&self, job: Job, terrain: &Terrain, cells: &Cells) {
+        match job {
+            Job::Row(i) if !self.row_ready(i as usize) => self.build_row(i as usize, terrain, cells),
+            Job::Col(j) if !self.has_col(j as usize) => self.build_col(j as usize, terrain, cells),
+            _ => {}
         }
     }
 
@@ -165,14 +266,9 @@ impl GunMatrix {
     }
 
     fn build_row(&self, i: usize, terrain: &Terrain, cells: &Cells) {
-        let o = cells.centres[i];
         let mut row = vec![0u64; self.words];
-        for (j, &c) in cells.centres.iter().enumerate() {
-            let d = c - o;
-            let dist = d.length();
-            let hit = dist < 1.0 || (dist <= self.cap && (cells.seen(i, j)
-                || segment_clear(terrain, self.table(), o, d.x / dist, d.y / dist, dist, self.shell.gun_h)));
-            if hit {
+        for j in 0..cells.centres.len() {
+            if self.hit(i, j, terrain, cells) {
                 row[j / 64] |= 1 << (j % 64);
             }
         }
@@ -269,14 +365,21 @@ impl MatrixWorker {
                 }
                 // A table is built once the cache has had its say, or straight away without one.
                 let open: Vec<Arc<GunMatrix>> = all.into_iter()
-                    .filter(|g| !g.complete() && (cfg.is_none() || g.file.load(Acquire) != FILE_UNTRIED))
+                    .filter(|g| cfg.is_none() || g.file.load(Acquire) != FILE_UNTRIED)
                     .collect();
+                turn += 1;
+                let wanted = (0..open.len()).map(|o| &open[(turn + o) % open.len()])
+                    .map(|g| (g, g.demand_jobs(&cells))).find(|(_, j)| !j.is_empty());
+                if let Some((g, jobs)) = wanted {
+                    pool.install(|| jobs.par_iter().for_each(|&j| g.run(j, &terrain, &cells)));
+                    continue;
+                }
+                let open: Vec<&Arc<GunMatrix>> = open.iter().filter(|g| !g.complete()).collect();
                 if open.is_empty() {
                     std::thread::sleep(IDLE_SLEEP);
                     continue;
                 }
-                let g = &open[turn % open.len()];
-                turn += 1;
+                let g = open[turn % open.len()];
                 let rows = g.next_rows(&cells);
                 pool.install(|| rows.par_iter().for_each(|&i| g.build_row(i, &terrain, &cells)));
             }

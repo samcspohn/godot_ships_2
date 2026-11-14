@@ -9,6 +9,8 @@ const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
 const AIM_TOL_M := 5.0
 const PAIR_RETRY_S := 2.0
+## Bots whose pair and threat keys are filled per frame: the first fill is every enemy for every bot.
+const PAIR_SLOTS_PER_FRAME := 2
 const LIVE_EVERY_S := 0.5
 const STATIC_EVERY_S := 2.0
 
@@ -34,6 +36,8 @@ var _trace := OS.has_environment("SHIPS_BOT5_TRACE")
 var _gates: Dictionary = {}
 var _data := PackedFloat32Array()
 var _frame_us := PackedInt32Array()
+## Slots holding every enemy's pair and threat keys; cleared when ships register.
+var _pairs_done: Dictionary = {}
 
 
 func add_ship(ship: Ship, team_data: Dictionary) -> void:
@@ -53,6 +57,7 @@ func prepare() -> bool:
 	if not _setup():
 		return false
 	_register_pending(true)
+	_pairs_done.clear()
 	return world.prepare()
 
 
@@ -73,14 +78,14 @@ func _physics_process(delta: float) -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	if _register_pending(false) > 0:
+		_pairs_done.clear()
 		world.prepare()
 	if _ships.is_empty():
 		return
 	var now: float = SimClock.now()
 	_push_ships(now)
-	if now - _pair_t >= PAIR_RETRY_S:
-		_pair_t = now
-		_push_pairs()
+	if _pairs_done.size() < _ships.size() and now >= _pair_t:
+		_push_pairs(now)
 	if now - _live_t >= LIVE_EVERY_S:
 		_live_t = now
 		_push_live()
@@ -283,11 +288,21 @@ func _push_ships(now: float) -> void:
 
 
 ## Point-table keys and loading (PointTables), the v4 solver never involved.
-func _push_pairs() -> void:
+func _push_pairs(now: float) -> void:
+	var budget := PAIR_SLOTS_PER_FRAME
+	var all_tried := true
 	for slot in _ships.size():
 		var me := _ships[slot]
-		if not is_instance_valid(me) or not me.is_alive():
+		if _pairs_done.has(slot):
 			continue
+		if not is_instance_valid(me) or not me.is_alive():
+			_pairs_done[slot] = true
+			continue
+		if budget == 0:
+			all_tried = false
+			break
+		budget -= 1
+		var missing := false
 		var gp: GunParams = me.artillery_controller.get_params()
 		for t: Ship in server.get_all_ships():
 			if t.team == null or t.team.team_id == me.team.team_id or not t.is_alive():
@@ -297,6 +312,7 @@ func _push_pairs() -> void:
 			var ap := PointTables.table_key(me, t, 0) if gp.shell1 != null else ""
 			var he := PointTables.table_key(me, t, 1) if gp.shell2 != null else ""
 			if (gp.shell1 != null and ap == "") or (gp.shell2 != null and he == ""):
+				missing = true
 				continue
 			var raw: float = GunneryModel.raw_fire_chance(gp.shell2, t) if gp.shell2 != null else 0.0
 			world.set_pair(slot, t.get_instance_id(), ap, he, raw)
@@ -309,8 +325,13 @@ func _push_pairs() -> void:
 			var tap := PointTables.table_key(t, me, 0) if tp.shell1 != null else ""
 			var the := PointTables.table_key(t, me, 1) if tp.shell2 != null else ""
 			if (tp.shell1 != null and tap == "") or (tp.shell2 != null and the == ""):
+				missing = true
 				continue
 			world.set_threat(slot, t.get_instance_id(), tap, the)
+		if not missing:
+			_pairs_done[slot] = true
+	if all_tried:
+		_pair_t = now + PAIR_RETRY_S
 
 
 func _push_live() -> void:

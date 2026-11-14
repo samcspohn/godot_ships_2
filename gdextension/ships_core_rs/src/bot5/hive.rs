@@ -133,12 +133,12 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         (p, _, _) => p,
     };
 
-    let nearest = |it: &mut dyn Iterator<Item = Vector2>| it.min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my)));
-    let aimed = assign.target.and_then(|id| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (e.id, p)));
-    let contact = aimed.map(|a| a.1)
-        .or_else(|| nearest(&mut view.iter().filter(|(e, p)| ours(e, *p)).map(|&(_, p)| p)))
-        .or_else(|| m.flank.as_ref().and_then(|f| f.centre))
-        .or_else(|| nearest(&mut view.iter().map(|&(_, p)| p)));
+    let nearest = |it: &mut dyn Iterator<Item = (Option<i64>, Vector2)>| it.min_by(|a, b| a.1.distance_to(my).total_cmp(&b.1.distance_to(my)));
+    let picked = assign.target.and_then(|id| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (Some(e.id), p)))
+        .or_else(|| nearest(&mut view.iter().filter(|(e, p)| ours(e, *p)).map(|&(e, p)| (Some(e.id), p))))
+        .or_else(|| m.flank.as_ref().and_then(|f| f.centre).map(|c| (None, c)))
+        .or_else(|| nearest(&mut view.iter().map(|&(e, p)| (Some(e.id), p))));
+    let contact = picked.map(|c| c.1);
     let anchor = contact.or(belief.enemy_spawn).unwrap_or(my);
     let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
         p.shot && contact.is_some() && !shot(p.station, anchor);
@@ -170,7 +170,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let prev = m.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station);
             let req = Req {
                 anchor,
-                target: aimed.filter(|a| a.1 == anchor).map(|a| a.0),
+                target: picked.and_then(|c| c.0),
                 lo,
                 hi,
                 keep: prev.filter(|_| matches!(reason, "expired" | "anchor_moved")),

@@ -45,6 +45,8 @@ const EVENT_MIN_GAP_S: f64 = 0.25;
 const HP_EVENT_DROP: f32 = 0.15;
 const NAV_STATE_EVERY: i64 = 2;
 const NAV_PUSH_EVERY: i64 = 12;
+/// New stations pushed to navigators per frame; a hive pass can move many bots at once.
+const JUMP_PUSHES_PER_FRAME: u32 = 4;
 const AIM_EVERY: i64 = 3;
 const STATION_JUMP_M: f32 = 1000.0;
 const BOT_INPUT_STRIDE: usize = 18;
@@ -166,6 +168,7 @@ pub struct World {
     frame: i64,
     time_mult: f64,
     time_us: [u64; 4],
+    jump_pushes: u32,
     /// Station scan: [cells and scoring, exact rays, curve refresh], µs.
     scan_us: [u64; 4],
 }
@@ -282,6 +285,7 @@ impl World {
         self.tracks.update(now, &self.snap.ships);
         self.hive(now);
         let t1 = std::time::Instant::now();
+        self.jump_pushes = 0;
         for i in 0..self.bots.len() {
             self.drive(i, dt);
         }
@@ -323,9 +327,15 @@ impl World {
     }
 
     fn hive(&mut self, now: f64) {
-        let teams: Vec<i32> = self.teams.keys().copied().collect();
+        let mut teams: Vec<i32> = self.teams.keys().copied().collect();
+        // One pass per frame, most overdue first: two teams' passes in one frame stack their cost.
+        teams.sort_by(|a, b| self.teams[a].next_pass.total_cmp(&self.teams[b].next_pass));
         for team in teams {
             let h = self.teams.get_mut(&team).unwrap();
+            if h.last_pass == 0.0 && h.next_pass == 0.0 {
+                // Teams half an interval apart, so their passes never share a frame on the clock.
+                h.next_pass = now + HIVE_INTERVAL_S * 0.5 * team.rem_euclid(2) as f64;
+            }
             let due = now >= h.next_pass || (h.event && now - h.last_pass >= EVENT_MIN_GAP_S);
             if !due {
                 continue;
@@ -338,6 +348,7 @@ impl World {
             h.next_pass = now + HIVE_INTERVAL_S;
             self.tel.count("hive_pass");
             self.solve_team(team, now);
+            break;
         }
     }
 
@@ -385,15 +396,30 @@ impl World {
         };
         let h = self.teams.get_mut(&team).unwrap();
         h.field.build(lay, &vis, &h.belief, snap, now, &mut matrix);
-        let mut sites: HashMap<*const GunMatrix, (Arc<GunMatrix>, Vec<Vector2>)> = HashMap::new();
-        let own = snap.allies_of(team).filter(|s| s.alive).map(|s| (s.id, s.p2()));
-        for (id, p) in own.chain(h.field.sources.iter().map(|s| (s.id, s.at))) {
-            if let Some(m) = matrix(id) {
-                sites.entry(Arc::as_ptr(&m)).or_insert_with(|| (m, Vec::new())).1.push(p);
+        // Enemy cells: their own gun's rows (fire on us) and our guns' columns (our fire on them).
+        type Want = (Arc<GunMatrix>, Vec<u32>, Vec<u32>, Vec<Vector2>);
+        let mut want: HashMap<*const GunMatrix, Want> = HashMap::new();
+        fn entry(want: &mut HashMap<*const GunMatrix, Want>, m: Arc<GunMatrix>) -> &mut Want {
+            want.entry(Arc::as_ptr(&m)).or_insert_with(|| (m, Vec::new(), Vec::new(), Vec::new()))
+        }
+        let own: Vec<Arc<GunMatrix>> = snap.allies_of(team).filter(|s| s.alive).filter_map(|s| matrix(s.id)).collect();
+        for s in &h.field.sources {
+            if let Some(m) = matrix(s.id) {
+                let w = entry(&mut want, m);
+                w.1.push(s.cell as u32);
+                w.3.push(s.at);
+            }
+            for m in &own {
+                entry(&mut want, m.clone()).2.push(s.cell as u32);
             }
         }
-        for (m, at) in sites.into_values() {
-            m.set_sites(team.clamp(0, 1) as usize, at);
+        let slot = team.clamp(0, 1) as usize;
+        for (m, mut rows, mut cols, at) in want.into_values() {
+            rows.dedup();
+            cols.sort_unstable();
+            cols.dedup();
+            m.demand(slot, rows, cols);
+            m.set_sites(slot, at);
         }
         for _ in 0..h.field.missing_rows {
             self.tel.count("field_row_missing");
@@ -490,27 +516,37 @@ impl World {
                     scan_tel.push("station_no_value");
                 }
                 let tcell = vis.cell_of(req.anchor);
-                let own_m = matrices.get(&me.id);
-                let own = |k: usize| -> Option<bool> {
-                    let r = own_m?.row(k)?;
-                    let c = tcell?;
-                    Some(r[c / 64].load(std::sync::atomic::Ordering::Relaxed) >> (c % 64) & 1 != 0)
-                };
+                let col = tcell.and_then(|c| matrices.get(&me.id)?.col(c));
+                if req.target.is_some() && col.is_none() {
+                    scan_tel.push("station_no_column");
+                }
+                let own = |k: usize| -> Option<bool> { col.as_ref().map(|c| field::has(c, k)) };
                 let seen = field.seen(lay, vis, me.conceal.max(me.gun_range));
                 let sc = Scan { lay, vis, seen: &seen, threats, target, own: &own, my: me.p2(), speed: me.max_speed,
                     clearance, risk: m.style.risk * (2.0 - me.hp_frac) };
                 let t0 = std::time::Instant::now();
                 scan_t[2] += (t0 - ts).as_micros() as u64;
                 let mut exact_us = 0u64;
+                let centre = tcell.map(|c| vis.centres[c]);
                 let f = sc.run(req, &mut |p| {
                     let t = std::time::Instant::now();
                     let r = shot(p, req.anchor);
+                    if !r {
+                        if let (Some(g), Some(mp)) = (&bot.shot_gun, &map) {
+                            scan_tel.push(if !mp.is_navigable_impl(p.x, p.y, clearance) { "exact_nav_fail" }
+                                else if centre.is_some_and(|c| shots.clear(g, p, c)) { "exact_ray_fail_centre_ok" }
+                                else { "exact_ray_fail" });
+                        }
+                    }
                     exact_us += t.elapsed().as_micros() as u64;
                     r
                 });
                 scan_t[0] += t0.elapsed().as_micros() as u64 - exact_us;
                 scan_t[1] += exact_us;
                 scan_tel.push(if f.is_some() { "station_scan" } else { "station_scan_empty" });
+                if req.target.is_some() && f.is_some_and(|f| !f.shot) {
+                    scan_tel.push("station_no_shot");
+                }
                 f
             };
             let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
@@ -531,9 +567,6 @@ impl World {
             }
             if let Some(r) = reason {
                 self.tel.release(r);
-                if plan.is_some_and(|p| p.posture == Posture::Engage && !p.shot) {
-                    self.tel.count("station_no_shot");
-                }
             }
             let bot = &mut self.bots[i];
             if let Some(r) = reason {
@@ -715,7 +748,9 @@ impl World {
             nav.set_health_fraction_impl(me.hp_frac);
         }
         if let Some(p) = b.plan {
-            let jumped = b.pushed.is_none_or(|(s, at)| s != p.serial && at.distance_to(p.station) >= STATION_JUMP_M);
+            let jumped = b.pushed.is_none_or(|(s, at)| s != p.serial && at.distance_to(p.station) >= STATION_JUMP_M)
+                && self.jump_pushes < JUMP_PUSHES_PER_FRAME;
+            self.jump_pushes += jumped as u32;
             if jumped || frame % NAV_PUSH_EVERY == slot % NAV_PUSH_EVERY {
                 nav.navigate_to_impl(Vector3::new(p.station.x, 0.0, p.station.y), p.heading, p.hold_radius, 0.2618,
                     p.heading_weight, false, false);
