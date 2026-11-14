@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 23;
+pub const STRIDE: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -57,6 +57,17 @@ pub struct ShipState {
     pub air_radius: f32,
     pub torp_detect_mult: f32,
     pub torp_detect_floor: f32,
+    /// Surface detection radius, unbloomed. Firing blooms it to gun_range.
+    pub conceal: f32,
+    /// Radar/hydro reach, running or carried (discounted); 0 for none.
+    pub force_spot: f32,
+    pub shell_speed: f32,
+    pub shell_drag: f32,
+    pub gun_h: f32,
+    pub reload: f32,
+    /// Shells per main-battery salvo.
+    pub barrels: f32,
+    pub damage: [f32; 2],
 }
 
 impl ShipState {
@@ -83,6 +94,14 @@ impl ShipState {
             air_radius: r[20],
             torp_detect_mult: r[21],
             torp_detect_floor: r[22],
+            conceal: r[23],
+            force_spot: r[24],
+            shell_speed: r[25],
+            shell_drag: r[26],
+            gun_h: r[27],
+            reload: r[28],
+            barrels: r[29],
+            damage: [r[30], r[31]],
         }
     }
 

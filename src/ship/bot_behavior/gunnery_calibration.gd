@@ -300,6 +300,8 @@ static func _book_turnout(o: Dictionary) -> void:
 
 ## Shooter instance id -> the main-battery shell it last fired, for a hit's full-pool payout.
 static var _shell_of: Dictionary = {}
+## Off with no v4 bots: pricing a salvo builds v4's damage model on the gun's fire path.
+static var model := true
 ## Of a shell's damage, what each NativeArmorInteraction result pays into full pools.
 const PAYOUT := [GunneryModel.DMG_PENETRATION, GunneryModel.DMG_PARTIAL_PEN, 0.0, GunneryModel.DMG_OVERPENETRATION, 0.0,
 	GunneryModel.DMG_CITADEL, GunneryModel.DMG_CITADEL_OVERPEN]
@@ -328,6 +330,8 @@ static func on_fire(shooter: Ship, aim: Vector3, shells: int, shell: ShellParams
 	var range_m: float = shooter.global_position.distance_to(target.global_position)
 	_close_aims(SimClock.now())
 	_book_aim(shooter, target, aim, range_m, shell)
+	if not model:
+		return
 	BotGunnery.damage_model(shooter)
 	var e: Dictionary = BotGunnery.damage_model(target).get_expected(shooter.get_instance_id(), target.get_instance_id(),
 		range_m, BotGunnery.aspect_from(target, shooter.global_position))

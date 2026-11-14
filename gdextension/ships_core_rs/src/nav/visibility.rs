@@ -134,6 +134,11 @@ impl VisibilityGrid {
         best.map(|(_, k)| k)
     }
 
+    /// Metres by water, None without a sail table.
+    pub(crate) fn sail_route(&self, a: Vector2, b: Vector2) -> Option<f32> {
+        self.sail.as_ref().map(|t| t.sail_m(self, a, b)).filter(|&d| d >= 0.0)
+    }
+
     #[inline]
     pub(crate) fn visible_idx(&self, i: usize, j: usize) -> bool {
         bit(&self.bits[i * self.stride..(i + 1) * self.stride], j)

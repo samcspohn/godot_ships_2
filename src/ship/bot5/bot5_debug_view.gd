@@ -16,6 +16,9 @@ const C_TORP_RUN := Color(0.2, 0.8, 1.0)
 const C_TORP := Color(0.2, 1.0, 0.8)
 const C_TORP_HELD := Color(0.2, 1.0, 0.8, 0.3)
 const C_SPOT := Color(1.0, 1.0, 0.4)
+const C_PRESUMED := Color(1.0, 0.6, 0.6, 0.5)
+const C_FLANK := [Color(1.0, 0.5, 0.2), Color(0.4, 1.0, 0.4), Color(0.4, 0.6, 1.0)]
+const C_SEAM := Color(1.0, 1.0, 1.0)
 
 
 static func draw(b: Dictionary, team: Dictionary, now: float) -> void:
@@ -118,11 +121,24 @@ static func _draw_team(team: Dictionary, b: Dictionary) -> void:
 			Debug.draw_line((e.pos as Vector3) + LIFT * 2.0, (t as Node3D).global_position + LIFT * 2.0, col)
 	if team.has("enemy_spawn"):
 		Debug.draw_circle((team.enemy_spawn as Vector3) + Vector3(0.0, 5.0, 0.0), 400.0, Color(C_TRUE, 0.4), 32)
+	for p: Vector3 in team.get("presumed", PackedVector3Array()):
+		Debug.draw_circle(p + Vector3(0.0, 5.0, 0.0), 600.0, C_PRESUMED, 24)
+	var flanks: Array = team.get("flanks", [])
+	for g in flanks.size():
+		var f: Dictionary = flanks[g]
+		var c: Vector3 = f.centre
+		var col: Color = C_FLANK[g % C_FLANK.size()] if f.live else Color(0.5, 0.5, 0.5)
+		Debug.draw_circle(c + Vector3(0.0, 8.0, 0.0), 1500.0, col, 48)
+		Debug.draw_label(c + Vector3(0.0, 200.0, 0.0), "flank %d  enemy %.1f own %.1f  p %.2f" % [g, f.enemy, f.own, f.pressure], col, 16)
+	for r: Dictionary in team.get("roles", []):
+		var fi := int(r.flank)
+		var col: Color = C_SEAM if fi < 0 else C_FLANK[fi % C_FLANK.size()]
+		Debug.draw_circle((r.pos as Vector3) + Vector3(0.0, 6.0, 0.0), 300.0, col, 24)
 
 
 static func _summary(b: Dictionary, now: float) -> String:
 	var apt: String = BotAptitude.Level.keys()[clampi(int(b.aptitude), 0, BotAptitude.Level.size() - 1)]
-	var lines := ["v5 %s %s  hp %d%%" % [b.playstyle, apt.to_lower(), roundi(100.0 * float(b.get("hp", 0.0)))]]
+	var lines := ["v5 %s %s  hp %d%%  %s" % [b.playstyle, apt.to_lower(), roundi(100.0 * float(b.get("hp", 0.0))), b.get("role", "")]]
 	var tgt := "no target"
 	var tid := int(b.get("target", 0))
 	if tid != 0:

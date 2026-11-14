@@ -216,6 +216,7 @@ func _warm_gunnery() -> void:
 	for t in teams:
 		all_ships.append_array(t.ships)
 	var v4 := all_ships.any(func(s): return is_instance_valid(s) and s.get_node_or_null("Modules/BotController") != null)
+	GunneryCalibration.model = v4
 	if v4:
 		BotGunnery.warm(all_ships)
 		parts.append("gunnery %d" % (Time.get_ticks_msec() - tw))
@@ -2079,7 +2080,10 @@ func _sync_gun_matrices(field: ReachField) -> void:
 ## positions, presumed contacts), for the reach field's on-demand queries.
 func _sweep_reach_fields() -> void:
 	var field: ReachField = NavigationMapManager.get_reach_field()
-	if field == null or not field.is_built() or not _any_v4_bot():
+	if field == null or not field.is_built():
+		return
+	if not _any_v4_bot():
+		_sync_gun_matrices(field)
 		return
 	var team_ships := [teams[0].ships, teams[1].ships]
 	if not _reach_prebuilt:

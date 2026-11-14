@@ -922,7 +922,7 @@ impl ReachField {
     }
 
     /// The table for `s`'s gun kind, registered with the worker on first sight.
-    fn ensure_matrix(&self, s: Shell) -> Option<Arc<GunMatrix>> {
+    pub(crate) fn ensure_matrix(&self, s: Shell) -> Option<Arc<GunMatrix>> {
         if !s.has_guns() {
             return None;
         }

@@ -284,7 +284,9 @@ mod tests {
     fn ship(x: f32, z: f32, rot: f32, vel: Vector3) -> ShipState {
         ShipState { id: 2, team: 0, alive: true, pos: Vector3::new(x, 0.0, z), vel, rot, yaw_rate: 0.0, hp_frac: 1.0,
             hp_max: 1.0, seen: true, max_speed: 15.0, reverse_ratio: 0.5, length: 200.0, beam: 30.0, class: HullClass::Ca,
-            gun_range: 15000.0, top: 15.0, turn_radius: 700.0, air_radius: 2500.0, torp_detect_mult: 1.0, torp_detect_floor: -1.0 }
+            gun_range: 15000.0, top: 15.0, turn_radius: 700.0, air_radius: 2500.0, torp_detect_mult: 1.0, torp_detect_floor: -1.0,
+            conceal: 10000.0, force_spot: 0.0, shell_speed: 800.0, shell_drag: 1e-4, gun_h: 10.0,
+            reload: 10.0, barrels: 9.0, damage: [5000.0, 2000.0] }
     }
 
     fn range(launch: Vector3, tof: f64) -> f32 {

@@ -3,7 +3,7 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 23
+const STRIDE := 32
 const CMD_STRIDE := 19
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
@@ -44,6 +44,10 @@ func is_v5(ship: Ship) -> bool:
 	return _slot_of.has(ship)
 
 
+func field_bytes(ship: Ship, dark: bool) -> PackedByteArray:
+	return world.field_bytes(_slot_of[ship], dark) if _slot_of.has(ship) else PackedByteArray()
+
+
 ## Match setup (server warm step): world setup, bot registration, terrain tables, so the first frame stays cheap.
 func prepare() -> bool:
 	if not _setup():
@@ -58,7 +62,8 @@ func _setup() -> bool:
 	if not _Utils.authority() or server == null or not NavigationMapManager.is_map_ready():
 		return false
 	world.setup(NavigationMapManager.get_map(), NavigationMapManager.get_hpa_graph(), server.ship_registry,
-		ProjectileManager.get_raw(), get_viewport().find_world_3d().direct_space_state)
+		ProjectileManager.get_raw(), get_viewport().find_world_3d().direct_space_state,
+		NavigationMapManager.get_visibility(), NavigationMapManager.get_reach_field())
 	_setup_done = true
 	return true
 
@@ -92,6 +97,9 @@ func _physics_process(delta: float) -> void:
 	if _trace and Engine.get_physics_frames() % 160 == 0:
 		for slot in _ships.size():
 			print("bot5 trace ", _ships[slot].ship_name, " ", world.debug_bot(slot), " hub ", _gates.get(slot, {}))
+		if not _ships.is_empty():
+			var t := world.debug_team(0, now)
+			print("bot5 flanks t=%d " % int(now), JSON.stringify(t.get("flanks", [])), " roles ", t.get("roles", []).map(func(r): return r.role))
 
 
 ## `settled`: the caller already waited for stat mods to land.
@@ -198,11 +206,24 @@ func _ship_static(ship: Ship) -> Array:
 	var ac = ship.artillery_controller
 	var rev: float = mv._p().reverse_speed_ratio if mv else 0.5
 	var cp: ConcealmentParams = ship.concealment.params.p() as ConcealmentParams if ship.concealment and ship.concealment.params else null
+	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	return [mv.max_speed if mv else 0.0, mv.ship_length if mv else 200.0, mv.ship_beam if mv else 20.0,
 		float(ship.ship_class), ac.get_params()._range if ac else 0.0, ship.health_controller.max_hp, rev,
 		(mv.ship_height - mv.ship_draft) if mv else 10.0, mv._p().turning_circle_radius if mv else 500.0,
 		cp.air_radius if cp else 2500.0, cp.torpedo_detection_multiplier if cp else 1.0,
-		cp.torpedo_detection_range_override if cp else -1.0]
+		cp.torpedo_detection_range_override if cp else -1.0,
+		cp.radius if cp else 0.0, server._latent_force_spot_reach(ship) * server.LATENT_FORCE_SPOT_FACTOR,
+		g.get("speed", 0.0), g.get("drag", 0.0), g.get("gun_h", 0.0), cp,
+		ac.get_params().reload_time if ac else 0.0, float(GunneryModel.barrels(ac.guns)) if ac else 0.0,
+		_shell_damage(ac, 0), _shell_damage(ac, 1)]
+
+
+static func _shell_damage(ac, ammo: int) -> float:
+	if ac == null:
+		return 0.0
+	var gp: GunParams = ac.get_params()
+	var sh: ShellParams = gp.shell1 if ammo == 0 else gp.shell2
+	return sh.damage if sh != null else 0.0
 
 
 func _push_ships(now: float) -> void:
@@ -245,6 +266,16 @@ func _push_ships(now: float) -> void:
 		_data[o + 20] = st[9]
 		_data[o + 21] = st[10]
 		_data[o + 22] = st[11]
+		_data[o + 23] = st[12]
+		var cp: ConcealmentParams = st[17]
+		_data[o + 24] = maxf(st[13], maxf(cp.spotting_range_override, cp.radar_spotting_range_override)) if cp else st[13]
+		_data[o + 25] = st[14]
+		_data[o + 26] = st[15]
+		_data[o + 27] = st[16]
+		_data[o + 28] = st[18]
+		_data[o + 29] = st[19]
+		_data[o + 30] = st[20]
+		_data[o + 31] = st[21]
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)
@@ -269,6 +300,17 @@ func _push_pairs() -> void:
 				continue
 			var raw: float = GunneryModel.raw_fire_chance(gp.shell2, t) if gp.shell2 != null else 0.0
 			world.set_pair(slot, t.get_instance_id(), ap, he, raw)
+		for t: Ship in server.get_all_ships():
+			if t.team == null or t.team.team_id == me.team.team_id or not t.is_alive() or t.artillery_controller == null:
+				continue
+			if world.has_threat(slot, t.get_instance_id()):
+				continue
+			var tp: GunParams = t.artillery_controller.get_params()
+			var tap := PointTables.table_key(t, me, 0) if tp.shell1 != null else ""
+			var the := PointTables.table_key(t, me, 1) if tp.shell2 != null else ""
+			if (tp.shell1 != null and tap == "") or (tp.shell2 != null and the == ""):
+				continue
+			world.set_threat(slot, t.get_instance_id(), tap, the)
 
 
 func _push_live() -> void:

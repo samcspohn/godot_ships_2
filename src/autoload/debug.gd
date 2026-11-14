@@ -1464,9 +1464,11 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 #   DETECT         the stealth router's per-cell exposure for that ship's concealment
 #   SHADOW         what the priority (else nearest contact) sees within our bloom
 #                  range: pale in sight, blue island shadow
+#   FIELD5         v5 team field at firing bloom: yellow seen not shot, cyan shot not seen, red both
+#   FIELD5_DARK    the same at our concealment
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, COVER, DETECT, SHADOW }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, COVER, DETECT, SHADOW, FIELD5, FIELD5_DARK }
 
 const REACH_REFRESH_SECONDS: float = 0.5
 const REACH_DRAW_Y: float = 2.5
@@ -1497,8 +1499,10 @@ void fragment() {
 			: c == 4 ? vec3(0.2, 0.35, 1.0) : c == 5 ? vec3(0.1, 1.0, 0.3) : vec3(1.0, 0.95, 0.2);
 	} else if (mode == 5) {
 		col = mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c) / 255.0);
-	} else {
+	} else if (mode == 6) {
 		col = c == 1 ? vec3(1.0, 1.0, 0.65) : vec3(0.15, 0.2, 0.7);
+	} else {
+		col = c == 1 ? vec3(1.0, 0.9, 0.2) : c == 2 ? vec3(0.2, 0.8, 1.0) : vec3(1.0, 0.15, 0.1);
 	}
 	ALBEDO = col;
 	ALPHA = 0.35;
@@ -1611,6 +1615,13 @@ func _reach_server_tick() -> void:
 			info = vis_info
 			note = "eye at %s, range %.0f m" % [str(Vector2(eye.x, eye.z).round()), sight]
 			_reach_srv_draws = {"eye": eye, "sight": sight}
+		ReachMode.FIELD5, ReachMode.FIELD5_DARK:
+			var hub: Bot5Hub = get_node_or_null("/root/Server/Bot5Hub") as Bot5Hub
+			if hub == null or vis == null or not hub.is_v5(ship):
+				return
+			bytes = hub.field_bytes(ship, _reach_srv_mode == ReachMode.FIELD5_DARK)
+			info = vis_info
+			note = "v5 field, %s" % ("concealment" if _reach_srv_mode == ReachMode.FIELD5_DARK else "firing bloom")
 		ReachMode.REACH:
 			if g.is_empty():
 				return

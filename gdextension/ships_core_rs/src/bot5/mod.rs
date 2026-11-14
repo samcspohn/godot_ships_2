@@ -1,32 +1,42 @@
 //! Bot controller v5: team hive + per-bot controllers. See doc/BOT_V5_DESIGN.md.
 
 pub mod belief;
+pub mod field;
+pub mod flank;
 pub mod gunnery;
 pub mod hive;
 pub mod params;
 pub mod shot;
 pub mod snapshot;
+pub mod station;
 pub mod telemetry;
 pub mod torpedo;
 
 use godot::classes::{PhysicsDirectSpaceState3D, Resource};
 use godot::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::nav::gun_matrix::GunMatrix;
 use crate::nav::hpa::HpaGraph;
 use crate::nav::map::NavigationMap;
 use crate::nav::navigator::ShipNavigator;
+use crate::nav::reach::{ReachField, Shell};
 use crate::nav::ships::ShipRegistry;
+use crate::nav::visibility::VisibilityGrid;
 use crate::projectile::manager::point_store::Store;
 use crate::projectile::manager::ProjectileManager;
 use crate::variant_cast::VariantCast;
 
 use belief::Belief;
+use field::{Layout, TeamField};
+use flank::{Flanks, Role, Seat};
 use gunnery::{Clear, Gunnery, PairTables, TargetLive};
-use hive::{Assignment, Committed, Member, Plan, Posture};
+use hive::{Assignment, Committed, FlankView, Member, Plan, Posture};
 use params::{Aptitude, Kinematics, Playstyle};
 use shot::{Gun, ShotMap};
 use snapshot::{HullClass, ShipState, Snapshot};
+use station::{Curves, Fire, Scan, Target, Threat};
 use telemetry::Telemetry;
 use torpedo::{TorpAim, TorpSpec, Tracks};
 
@@ -49,6 +59,7 @@ const SPOT_DETECT_USE: f32 = 0.8;
 const SPOT_ANCHOR_M: f32 = 1500.0;
 const SPOT_ALLY_VALUE: f32 = 0.5;
 const SPOT_KEEP: f32 = 1.0;
+const LANE_CLEARANCE_M: f32 = 300.0;
 
 #[derive(Clone, Copy, Default)]
 struct BotInputs {
@@ -115,11 +126,17 @@ struct Bot {
     spot_reach: f32,
     spot_target: Option<i64>,
     spot_point: Option<Vector2>,
+    role: Option<Role>,
+    role_since: f64,
+    /// Point-table keys of each enemy's AP/HE against our hull.
+    threats: HashMap<i64, [Option<String>; 2]>,
 }
 
 #[derive(Default)]
 struct TeamHive {
     belief: Belief,
+    flanks: Option<Flanks>,
+    field: TeamField,
     next_pass: f64,
     last_pass: f64,
     event: bool,
@@ -132,6 +149,11 @@ pub struct World {
     hpa: Option<Gd<HpaGraph>>,
     space: Option<Gd<PhysicsDirectSpaceState3D>>,
     registry: Option<Gd<ShipRegistry>>,
+    vis: Option<Gd<VisibilityGrid>>,
+    reach: Option<Gd<ReachField>>,
+    layout: Option<Layout>,
+    matrices: HashMap<i64, Arc<GunMatrix>>,
+    curves: Curves,
     store: Option<Store>,
     snap: Snapshot,
     bots: Vec<Bot>,
@@ -143,7 +165,9 @@ pub struct World {
     shots: ShotMap,
     frame: i64,
     time_mult: f64,
-    time_us: [u64; 3],
+    time_us: [u64; 4],
+    /// Station scan: [cells and scoring, exact rays, curve refresh], µs.
+    scan_us: [u64; 4],
 }
 
 impl World {
@@ -224,6 +248,9 @@ impl World {
             spot_reach: g("spot_reach"),
             spot_target: None,
             spot_point: None,
+            role: None,
+            role_since: 0.0,
+            threats: HashMap::new(),
         });
         (self.bots.len() - 1) as i32
     }
@@ -232,6 +259,14 @@ impl World {
     fn prepare(&mut self) -> bool {
         if !self.shots.ready(&self.map) {
             return false;
+        }
+        if self.layout.is_none() {
+            let Some(v) = &self.vis else { return false };
+            let v = v.bind();
+            if !v.is_ready() {
+                return false;
+            }
+            self.layout = Some(Layout::new(&v));
         }
         for b in self.bots.iter_mut().filter(|b| b.shot_gun.is_none()) {
             b.shot_gun = b.gun.spec(b.gun_range).and_then(|g| self.shots.gun(g));
@@ -265,8 +300,10 @@ impl World {
     }
 
     fn update_beliefs(&mut self, now: f64) {
+        let map = self.map.as_ref().map(|m| m.bind());
+        let water = |p: Vector2| map.as_ref().is_none_or(|m| m.is_navigable_impl(p.x, p.y, LANE_CLEARANCE_M));
         for (&team, h) in self.teams.iter_mut() {
-            if h.belief.update(now, &self.snap, team) > 0 {
+            if h.belief.update(now, &self.snap, team, &water) > 0 {
                 h.event = true;
             }
             let alive = self.snap.allies_of(team).count();
@@ -304,22 +341,106 @@ impl World {
         }
     }
 
+    fn update_flanks(&mut self, team: i32, now: f64) {
+        let h = self.teams.get_mut(&team).unwrap();
+        if h.flanks.is_none() {
+            if let (Some(o), Some(e)) = (h.belief.own_spawn, h.belief.enemy_spawn) {
+                h.flanks = Some(Flanks::new(o, e, h.belief.presumed.len() + h.belief.contacts.len()));
+            }
+        }
+        let Some(f) = h.flanks.as_mut() else { return };
+        f.update(&h.belief, now);
+        let mut seats: Vec<Seat> = self.bots.iter().enumerate()
+            .filter(|(_, b)| b.team == team)
+            .filter_map(|(i, b)| self.snap.get(b.ship_id).filter(|s| s.alive).map(|s| Seat {
+                idx: i, pos: s.p2(), hp: s.hp_frac, apt: b.apt.level, style: b.style, role: b.role, since: b.role_since,
+            }))
+            .collect();
+        for w in f.assign(&mut seats, now) {
+            self.tel.count(w);
+        }
+        let p: Vec<f32> = f.groups.iter().filter(|g| g.live()).map(|g| g.pressure()).collect();
+        if p.len() > 1 && p.iter().copied().fold(0.0, f32::max) > flank::IMBALANCED * p.iter().copied().fold(f32::INFINITY, f32::min) {
+            self.tel.count("flank_imbalanced_pass");
+        }
+        for s in seats {
+            self.bots[s.idx].role = s.role;
+            self.bots[s.idx].role_since = s.since;
+        }
+    }
+
+    fn update_field(&mut self, team: i32, now: f64) {
+        let (Some(lay), Some(vis)) = (&self.layout, &self.vis) else { return };
+        let vis = vis.bind();
+        let reach = self.reach.as_ref().map(|r| r.bind());
+        let (snap, matrices) = (&self.snap, &mut self.matrices);
+        let mut matrix = |id: i64| -> Option<Arc<GunMatrix>> {
+            if let Some(m) = matrices.get(&id) {
+                return Some(m.clone());
+            }
+            let s = snap.get(id)?;
+            let m = reach.as_ref()?.ensure_matrix(Shell { speed: s.shell_speed, drag: s.shell_drag, range: s.gun_range, gun_h: s.gun_h })?;
+            matrices.insert(id, m.clone());
+            Some(m)
+        };
+        let h = self.teams.get_mut(&team).unwrap();
+        h.field.build(lay, &vis, &h.belief, snap, now, &mut matrix);
+        let mut sites: HashMap<*const GunMatrix, (Arc<GunMatrix>, Vec<Vector2>)> = HashMap::new();
+        let own = snap.allies_of(team).filter(|s| s.alive).map(|s| (s.id, s.p2()));
+        for (id, p) in own.chain(h.field.sources.iter().map(|s| (s.id, s.at))) {
+            if let Some(m) = matrix(id) {
+                sites.entry(Arc::as_ptr(&m)).or_insert_with(|| (m, Vec::new())).1.push(p);
+            }
+        }
+        for (m, at) in sites.into_values() {
+            m.set_sites(team.clamp(0, 1) as usize, at);
+        }
+        for _ in 0..h.field.missing_rows {
+            self.tel.count("field_row_missing");
+        }
+    }
+
     /// Ascending aptitude: weaker bots commit first; stronger ones plan around them.
     fn solve_team(&mut self, team: i32, now: f64) {
+        self.update_flanks(team, now);
+        let t0 = std::time::Instant::now();
+        self.update_field(team, now);
+        self.time_us[3] += t0.elapsed().as_micros() as u64;
         let mut order: Vec<usize> = (0..self.bots.len())
             .filter(|&i| self.bots[i].team == team && self.snap.get(self.bots[i].ship_id).is_some_and(|s| s.alive))
             .collect();
         order.sort_by_key(|&i| (self.bots[i].apt.level, self.bots[i].ship_id));
         let mut committed: Vec<Committed> = Vec::with_capacity(order.len());
         let store = self.store.clone();
+        let tc = std::time::Instant::now();
+        if let Some(s) = &store {
+            let mut budget = station::REBUILDS_PER_PASS;
+            'keys: for &i in &order {
+                let b = &self.bots[i];
+                for k in b.gun.pairs.values().flat_map(|p| p.keys.iter()).chain(b.threats.values().flat_map(|t| t.iter())).flatten() {
+                    if self.curves.refresh(s, k, now) {
+                        budget -= 1;
+                        if budget == 0 {
+                            break 'keys;
+                        }
+                    }
+                }
+            }
+        }
+        self.scan_us[2] += tc.elapsed().as_micros() as u64;
+        let mut scan_t = [0u64; 3];
         let time_mult = self.time_mult;
         for i in order {
             let snap = &self.snap;
             let me = snap.get(self.bots[i].ship_id).unwrap();
             let belief = &self.teams[&team].belief;
             let bot = &self.bots[i];
+            let flank = bot.role.zip(self.teams[&team].flanks.as_ref()).map(|(r, f)| {
+                let (ids, centre) = f.view(r, me.p2());
+                FlankView { ids, centre, seam: if let Role::Seam(j) = r { f.seam(j) } else { None } }
+            });
             let m = Member { me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
-                torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)) };
+                torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank };
             let live = &self.live;
             let gun = &bot.gun;
             let mut no_table = 0u32;
@@ -337,11 +458,71 @@ impl World {
             let nav = bot.nav.bind();
             let clearance = nav.get_ship_clearance();
             let map = self.map.as_ref().map(|m| m.bind());
-            let mut shot = |st: Vector2, aim: Vector2| -> bool {
+            let shot = |st: Vector2, aim: Vector2| -> bool {
                 let (Some(g), Some(m)) = (&bot.shot_gun, &map) else { return false };
                 m.is_navigable_impl(st.x, st.y, clearance) && shots.clear(g, st, aim)
             };
-            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev, &mut shot);
+            let field = &self.teams[&team].field;
+            let (curves, matrices) = (&self.curves, &self.matrices);
+            let vis = self.vis.as_ref().map(|v| v.bind());
+            let mut scan_tel: Vec<&'static str> = Vec::new();
+            let mut scan = |req: &station::Req| -> Option<station::Found> {
+                let ts = std::time::Instant::now();
+                let (Some(lay), Some(vis)) = (&self.layout, &vis) else { return None };
+                let fire = |id: i64, keys: Option<&[Option<String>; 2]>| -> Option<Fire> {
+                    let ship = snap.get(id)?;
+                    let k = keys?;
+                    let c = [0, 1].map(|a| k[a].as_deref().and_then(|k| curves.get(k)));
+                    c.iter().any(|c| c.is_some()).then(|| Fire::new(c, ship))
+                };
+                let mut seen_ids = std::collections::HashSet::new();
+                let mut threats = Vec::new();
+                for s in field.sources.iter().filter(|s| seen_ids.insert(s.id)) {
+                    let Some(f) = fire(s.id, bot.threats.get(&s.id)) else {
+                        scan_tel.push("threat_no_table");
+                        continue;
+                    };
+                    let row = matrices.get(&s.id).and_then(|m| m.row(s.cell));
+                    threats.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f });
+                }
+                let target = req.target.and_then(|id| fire(id, bot.gun.pairs.get(&id).map(|p| &p.keys)).map(|f| Target { ship: f.ship, at: req.anchor, fire: f }));
+                if req.target.is_some() && target.is_none() {
+                    scan_tel.push("station_no_value");
+                }
+                let tcell = vis.cell_of(req.anchor);
+                let own_m = matrices.get(&me.id);
+                let own = |k: usize| -> Option<bool> {
+                    let r = own_m?.row(k)?;
+                    let c = tcell?;
+                    Some(r[c / 64].load(std::sync::atomic::Ordering::Relaxed) >> (c % 64) & 1 != 0)
+                };
+                let seen = field.seen(lay, vis, me.conceal.max(me.gun_range));
+                let sc = Scan { lay, vis, seen: &seen, threats, target, own: &own, my: me.p2(), speed: me.max_speed,
+                    clearance, risk: m.style.risk * (2.0 - me.hp_frac) };
+                let t0 = std::time::Instant::now();
+                scan_t[2] += (t0 - ts).as_micros() as u64;
+                let mut exact_us = 0u64;
+                let f = sc.run(req, &mut |p| {
+                    let t = std::time::Instant::now();
+                    let r = shot(p, req.anchor);
+                    exact_us += t.elapsed().as_micros() as u64;
+                    r
+                });
+                scan_t[0] += t0.elapsed().as_micros() as u64 - exact_us;
+                scan_t[1] += exact_us;
+                scan_tel.push(if f.is_some() { "station_scan" } else { "station_scan_empty" });
+                f
+            };
+            let (plan, assign, reason) = hive::resolve(&m, snap, belief, &committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
+            drop(scan);
+            drop(vis);
+            for w in scan_tel {
+                self.tel.count(w);
+            }
+            self.scan_us[0] += scan_t[0];
+            self.scan_us[1] += scan_t[1];
+            self.scan_us[3] += scan_t[2];
+            scan_t = [0; 3];
             drop(map);
             drop(nav);
             let hp = me.hp_frac;
@@ -629,7 +810,10 @@ pub struct BotWorld {
 impl BotWorld {
     #[func]
     fn setup(&mut self, map: Option<Gd<NavigationMap>>, hpa: Option<Gd<HpaGraph>>, registry: Option<Gd<ShipRegistry>>,
-            pm: Option<Gd<ProjectileManager>>, space: Option<Gd<PhysicsDirectSpaceState3D>>) {
+            pm: Option<Gd<ProjectileManager>>, space: Option<Gd<PhysicsDirectSpaceState3D>>,
+            vis: Option<Gd<VisibilityGrid>>, reach: Option<Gd<ReachField>>) {
+        self.w.vis = vis;
+        self.w.reach = reach;
         self.w.map = map;
         self.w.space = space;
         self.w.hpa = hpa;
@@ -659,6 +843,19 @@ impl BotWorld {
     }
 
     /// Point-table keys of `slot`'s AP/HE shells against `target_id`'s hull; "" = no table for that shell.
+    /// Point-table keys of enemy `enemy_id`'s AP/HE against `slot`'s hull; "" = no table for that shell.
+    #[func]
+    fn set_threat(&mut self, slot: i32, enemy_id: i64, key_ap: GString, key_he: GString) {
+        let Some(b) = self.w.bots.get_mut(slot as usize) else { return };
+        let k = |s: GString| { let s = s.to_string(); (!s.is_empty()).then_some(s) };
+        b.threats.insert(enemy_id, [k(key_ap), k(key_he)]);
+    }
+
+    #[func]
+    fn has_threat(&self, slot: i32, enemy_id: i64) -> bool {
+        self.w.bots.get(slot as usize).is_some_and(|b| b.threats.contains_key(&enemy_id))
+    }
+
     #[func]
     fn set_pair(&mut self, slot: i32, target_id: i64, key_ap: GString, key_he: GString, raw_fire_he: f32) {
         let Some(b) = self.w.bots.get_mut(slot as usize) else { return };
@@ -774,6 +971,11 @@ impl BotWorld {
         t.set("hive_us", self.w.time_us[0] as i64);
         t.set("drive_us", self.w.time_us[1] as i64);
         t.set("guns_us", self.w.time_us[2] as i64);
+        t.set("field_us", self.w.time_us[3] as i64);
+        t.set("scan_cells_us", self.w.scan_us[0] as i64);
+        t.set("scan_exact_us", self.w.scan_us[1] as i64);
+        t.set("curves_us", self.w.scan_us[2] as i64);
+        t.set("scan_setup_us", self.w.scan_us[3] as i64);
         t.set("frames", self.w.frame);
         d.set("timing", &t);
         d
@@ -816,8 +1018,46 @@ impl BotWorld {
         if let Some(sp) = h.belief.enemy_spawn {
             d.set("enemy_spawn", v3(sp));
         }
+        let pres: Vec<Vector3> = h.belief.presumed.iter().map(|r| v3(r.pos)).collect();
+        d.set("presumed", &PackedVector3Array::from(pres.as_slice()));
+        let mut flanks = VarArray::new();
+        for g in h.flanks.iter().flat_map(|f| f.groups.iter()) {
+            let mut e = VarDictionary::new();
+            e.set("centre", v3(g.centre));
+            e.set("enemy", g.enemy);
+            e.set("own", g.own);
+            e.set("pressure", g.pressure());
+            e.set("live", g.live());
+            flanks.push(&e.to_variant());
+        }
+        d.set("flanks", &flanks);
+        let mut roles = VarArray::new();
+        for o in self.w.bots.iter().filter(|o| o.team == b.team) {
+            let (Some(r), Some(me)) = (o.role, self.w.snap.get(o.ship_id).filter(|s| s.alive)) else { continue };
+            let mut e = VarDictionary::new();
+            e.set("pos", me.pos);
+            e.set("role", r.label());
+            e.set("flank", match r { Role::Flank(f) => f as i64, Role::Seam(j) => -1 - j as i64 });
+            roles.push(&e.to_variant());
+        }
+        d.set("roles", &roles);
         d.set("view_delay", delay);
         d
+    }
+
+    /// Debug overlay, one byte per VisibilityGrid cell (row-major, land 0): 1 seen not shot, 2 shot not seen, 3 both.
+    /// `dark`: seen at the slot's concealment, else at its firing bloom (gun range).
+    #[func]
+    fn field_bytes(&self, slot: i32, dark: bool) -> PackedByteArray {
+        let (Some(b), Some(lay), Some(vis)) = (self.w.bots.get(slot as usize), &self.w.layout, &self.w.vis) else { return PackedByteArray::new() };
+        let (Some(h), Some(me)) = (self.w.teams.get(&b.team), self.w.snap.get(b.ship_id)) else { return PackedByteArray::new() };
+        let vis = vis.bind();
+        let seen = h.field.seen(lay, &vis, if dark { me.conceal } else { me.conceal.max(me.gun_range) });
+        let out: Vec<u8> = vis.index.iter().map(|&k| if k < 0 { 0 } else {
+            let k = k as usize;
+            field::has(&seen, k) as u8 | (field::has(&h.field.shot, k) as u8) << 1
+        }).collect();
+        PackedByteArray::from(out.as_slice())
     }
 
     #[func]
@@ -829,6 +1069,9 @@ impl BotWorld {
         d.set("aptitude", b.apt.level);
         d.set("clear", b.gun.last_clear().map_or("none", |c| c.name()));
         d.set("target", b.assign.target.unwrap_or(0));
+        if let Some(r) = b.role {
+            d.set("role", r.label());
+        }
         if let Some(p) = b.plan {
             d.set("posture", p.posture.name());
             d.set("station", Vector3::new(p.station.x, 0.0, p.station.y));

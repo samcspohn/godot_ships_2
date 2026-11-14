@@ -1,8 +1,12 @@
 use godot::prelude::*;
 
+use std::collections::HashSet;
+
 use super::belief::Belief;
+use super::flank::SeamGeom;
 use super::params::{Aptitude, Style};
 use super::snapshot::{ShipState, Snapshot};
+use super::station::{Found, Req};
 
 const HOLD_S: f64 = 20.0;
 const ANCHOR_MOVE_M: f32 = 1200.0;
@@ -12,15 +16,13 @@ const RETREAT_RECOVER_HP: f32 = 0.15;
 const RETREAT_CLEAR_S: f64 = 20.0;
 const FOCUS_BONUS: f32 = 0.3;
 const HOLD_RADIUS_M: f32 = 400.0;
-const ORBIT_STEP: f32 = 0.45;
-const BLOCKED_SWING: f32 = 0.6;
 const BLOCKED_RELEASE_S: f32 = 3.0;
 const TORP_RUN_HP: f32 = 0.5;
 const TORP_RUN_RANGE: f32 = 0.7;
 const TORP_RUN_REACH: f32 = 0.8;
 const TORP_RUN_LEAD: f32 = 0.7;
-/// Bearing offsets (rad) from the preferred station tried in order until one can shoot the anchor.
-const SHOT_SWINGS: [f32; 15] = [0.0, 0.2, -0.2, 0.4, -0.4, 0.7, -0.7, 1.0, -1.0, 1.4, -1.4, 1.9, -1.9, 2.5, -2.5];
+/// Shooting outside our flank is worth this share: taken when nothing of ours is in reach.
+const OFF_FLANK_W: f32 = 0.4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
@@ -67,6 +69,13 @@ impl Default for Assignment {
     }
 }
 
+/// The enemies this bot answers for: belief contacts of its flank(s), and the nearest such group's centre.
+pub struct FlankView {
+    pub ids: HashSet<i64>,
+    pub centre: Option<Vector2>,
+    pub seam: Option<SeamGeom>,
+}
+
 /// What the hive knows about one bot when it resolves it.
 pub struct Member<'a> {
     pub me: &'a ShipState,
@@ -78,6 +87,7 @@ pub struct Member<'a> {
     pub blocked_s: f32,
     /// Torpedo range and whether any launcher is loaded.
     pub torp: Option<(f32, bool)>,
+    pub flank: Option<FlankView>,
 }
 
 pub struct Committed {
@@ -88,7 +98,8 @@ pub struct Committed {
 /// `ev(target)`: point-table value per shot now, None without a table.
 /// `shot(station, aim)`: station is navigable and our shells clear terrain to `aim`.
 pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Committed], now: f64,
-        ev: &mut dyn FnMut(&ShipState) -> Option<f32>, shot: &mut dyn FnMut(Vector2, Vector2) -> bool)
+        ev: &mut dyn FnMut(&ShipState) -> Option<f32>, shot: &mut dyn FnMut(Vector2, Vector2) -> bool,
+        scan: &mut dyn FnMut(&Req) -> Option<Found>)
         -> (Option<Plan>, Assignment, Option<&'static str>) {
     let me = m.me;
     let my = me.p2();
@@ -111,7 +122,9 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         _ => Posture::Engage,
     };
 
-    assign.target = pick_target(m, snap, committed, now, &mut assign, ev);
+    let ours = |e: &ShipState, p: Vector2| m.flank.as_ref().is_none_or(|f| f.ids.contains(&e.id))
+        || p.distance_to(my) < e.gun_range * 1.05;
+    assign.target = pick_target(m, snap, committed, now, &mut assign, ev, &|e| ours(e, e.p2()));
     let (lo, hi) = (m.style.band.0 * me.gun_range, m.style.band.1 * me.gun_range);
     let run_target = assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen);
     let posture = match (posture, m.torp, run_target) {
@@ -120,8 +133,12 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         (p, _, _) => p,
     };
 
-    let contact = assign.target.and_then(|id| view.iter().find(|(e, _)| e.id == id).map(|&(_, p)| p))
-        .or_else(|| view.iter().map(|&(_, p)| p).min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my))));
+    let nearest = |it: &mut dyn Iterator<Item = Vector2>| it.min_by(|a, b| a.distance_to(my).total_cmp(&b.distance_to(my)));
+    let aimed = assign.target.and_then(|id| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (e.id, p)));
+    let contact = aimed.map(|a| a.1)
+        .or_else(|| nearest(&mut view.iter().filter(|(e, p)| ours(e, *p)).map(|&(_, p)| p)))
+        .or_else(|| m.flank.as_ref().and_then(|f| f.centre))
+        .or_else(|| nearest(&mut view.iter().map(|&(_, p)| p)));
     let anchor = contact.or(belief.enemy_spawn).unwrap_or(my);
     let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
         p.shot && contact.is_some() && !shot(p.station, anchor);
@@ -150,19 +167,21 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
 
     let plan = match posture {
         Posture::Engage => {
-            let d = my.distance_to(anchor);
-            let away = dir_or(my - anchor, -dir_or(anchor - my, Vector2::new(0.0, 1.0)));
-            let r = d.clamp(lo, hi);
-            let fwd = Vector2::new(me.fwd().x, me.fwd().z);
-            let swing = if blocked { BLOCKED_SWING } else if d >= lo && d <= hi { ORBIT_STEP } else { 0.0 };
-            let side = if (rotate(away, swing) - away).dot(fwd) >= 0.0 { 1.0 } else { -1.0 };
-            let r = if swing > 0.0 { r } else { (lo + hi) * 0.5 };
-            let at = |off: f32, r: f32| anchor + rotate(away, swing * side + off * side) * r;
-            let found = contact.and_then(|_| SHOT_SWINGS.iter()
-                .flat_map(|&o| [r, (lo + hi) * 0.5, lo, hi].map(|r| at(o, r)))
-                .find(|&s| shot(s, anchor)));
-            Plan { posture, station: found.unwrap_or(at(0.0, r)), anchor, heading: broadside(my, anchor, me.heading()), heading_weight: 0.0,
-                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: found.is_some() }
+            let prev = m.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station);
+            let req = Req {
+                anchor,
+                target: aimed.filter(|a| a.1 == anchor).map(|a| a.0),
+                lo,
+                hi,
+                keep: prev.filter(|_| matches!(reason, "expired" | "anchor_moved")),
+                avoid: prev.filter(|_| matches!(reason, "arrived" | "blocked")),
+                seam: m.flank.as_ref().and_then(|f| f.seam),
+            };
+            let found = scan(&req);
+            let fallback = || anchor + dir_or(my - anchor, Vector2::new(0.0, 1.0)) * ((lo + hi) * 0.5);
+            Plan { posture, station: found.map_or_else(fallback, |f| f.station), anchor, heading: broadside(my, anchor, me.heading()),
+                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0,
+                shot: found.is_some_and(|f| f.shot) }
         }
         Posture::TorpRun => {
             let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
@@ -188,7 +207,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
 }
 
 fn pick_target(m: &Member, snap: &Snapshot, committed: &[Committed], now: f64, assign: &mut Assignment,
-        ev: &mut dyn FnMut(&ShipState) -> Option<f32>) -> Option<i64> {
+        ev: &mut dyn FnMut(&ShipState) -> Option<f32>, ours: &dyn Fn(&ShipState) -> bool) -> Option<i64> {
     let me = m.me;
     let team_w = m.apt.team_weight();
     let mut score = |e: &ShipState| -> Option<f32> {
@@ -198,7 +217,8 @@ fn pick_target(m: &Member, snap: &Snapshot, committed: &[Committed], now: f64, a
         let v = ev(e)?;
         let hp = (e.hp_frac * e.hp_max).max(1.0);
         let focus = committed.iter().filter(|c| c.target == Some(e.id)).count() as f32;
-        Some(v / hp * (1.0 + team_w * FOCUS_BONUS * focus))
+        let off = if ours(e) { 1.0 } else { OFF_FLANK_W };
+        Some(off * v / hp * (1.0 + team_w * FOCUS_BONUS * focus))
     };
     let cur = assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive);
     let cur_score = cur.and_then(&mut score);
@@ -238,11 +258,6 @@ pub fn wrap(a: f32) -> f32 {
         a += t;
     }
     a - std::f32::consts::PI
-}
-
-fn rotate(v: Vector2, a: f32) -> Vector2 {
-    let (sn, cs) = a.sin_cos();
-    Vector2::new(v.x * cs - v.y * sn, v.x * sn + v.y * cs)
 }
 
 fn dir_or(v: Vector2, fallback: Vector2) -> Vector2 {

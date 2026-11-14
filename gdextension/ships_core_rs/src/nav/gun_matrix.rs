@@ -110,6 +110,11 @@ impl GunMatrix {
         self.table.get_or_init(|| new_table(self.shell.speed, self.shell.drag, self.shell.gun_h, 0.0, self.shell.range))
     }
 
+    /// Row `i`'s words once built.
+    pub fn row(&self, i: usize) -> Option<&[AtomicU64]> {
+        self.row_ready(i).then(|| &self.bits()[i * self.words..(i + 1) * self.words])
+    }
+
     fn bit(&self, i: usize, j: usize) -> bool {
         self.bits()[i * self.words + j / 64].load(Relaxed) >> (j % 64) & 1 != 0
     }

@@ -165,3 +165,49 @@ Spotter planes:
 - Counters: `spot_task`, `spot_launch`.
 
 Smoke (3v3 seed 1, v5 team 1): v5 Shimakaze fired 15 torps (0 hits) vs v4 55 (3 hits). The v5 Yamato spotter launched once. TorpRun is untested in a match (Shimakaze's torps outrange its band; Bigensk/MLK would trigger it).
+
+## Flanks (2026-11-13)
+
+`bot5/flank.rs`. Replaces v4's priority-as-flank-keeper. The hive only decides which enemy group each bot answers for; stations stay per-bot.
+
+- Belief (`belief.rs`): presumed contacts. One per enemy spawn slot, marching down the spawn-to-mid lane at EnemyPresumption's advance speed, stopping 6 km short of the middle or at land. The first sighting of an enemy retires the nearest. Water within 8 km of our ships pushes them out and stops their march.
+- Groups: 1D k-means across the front (axis = own spawn → enemy spawn) over every live identified contact at its last known position (any age) plus presumed contacts. Starting k = 3 for 9+ enemies, 2 for 3+, else 1. Centres persist between passes, so flank ids are stable. A flank dies only when its ships sink.
+- Merge and split, at most one per pass, 4 groups max:
+  - neighbours whose centres are within 4 km across the front for 10 s merge; a dead group merges at once;
+  - a group whose members leave a gap over 7 km across the front for 10 s, with at least one full-HP ship each side, splits at the gap.
+  - Roles are renumbered: merging j and j+1 turns Seam(j) into Flank(j). A split flank's bots are dealt to the halves in lateral order by enemy share.
+- Roles: `Flank(g)` or `Seam(j)` (between g=j and j+1). Seams exist when own count > 2x groups: one non-brawler nearest each gap. A live gap without one later takes the non-brawler nearest it from a neighbouring flank that keeps another ship (`seam_fill`). The rest are assigned in lateral order to quotas proportional to enemy strength (HP share; presumed = 1).
+- Use: target score ×0.4 off-flank unless the enemy has us in range. Anchor = target if ours, else nearest flank contact in view, else nearest live covered group centre. Seam bots approach from a point at the seam lateral, halfway from their depth to the anchor's: crossfire from the side.
+- Changes: collapse (flank dead → nearest live; seam with one side dead → the other) for all aptitudes. Pressure = enemy / own. Rebalance: the most pressed flank ≥ 1.5 and ≥ 2x the calmest; a level 2+ bot from the calmest moves, if that leaves its flank calmer than the target. A live flank nobody holds pulls from level 1+. One move per 30 s per team, 60 s role hold.
+- Counters: `flank_assign`, `flank_merge`, `flank_split`, `seam_fill`, `flank_join`, `flank_collapse`, `seam_collapse`, `flank_rebalance`, `flank_abandoned`, `flank_imbalanced_pass` (max/min pressure > 2). Debug view: presumed circles, flank rings with pressure, role rings, role in summary. `SHIPS_BOT5_TRACE=1` prints flank state.
+
+## Team field (2026-11-13)
+
+Shared base for cover, spotting, checkpoints and station search (`bot5/field.rs`). Built every hive pass from belief; nothing cached or rebuilt per enemy.
+
+- Cells: VisibilityGrid water cells (300 m), numbered row-major, so a disc is one index run per grid row (`Layout::spans`) and every test is a 64-cell word op.
+- Sources: each contact within FORGET_S at its believed position, plus its position 20 s ahead along its course while seen.
+- `shot` (team): OR over sources of the source's gun-matrix row (from its cell) clipped to its gun range. An unbuilt row counts its whole range disc as shot (`field_row_missing`).
+- `seen(radius)` (per bot): OR over sources of the LOS row clipped to `radius`, plus the radar/hydro disc without LOS. Radius is concealment when staying dark (spotting, torpedo DDs), gun range when firing (firing blooms to gun range).
+- Danger = seen & shot (one spotter lays every gun on us). Hidden = !seen. Shielded = seen & !shot.
+- `lights(k)`: sources a ship in cell k sees inside their concealment (per-cell bit reads, for scoring).
+- Our shot from cell k at target t is bit (k, cell t) of our gun matrix: strided, read only for cells that pass the bitset filters.
+- Snapshot carries concealment, radar/hydro reach (running, else carried x0.9), and the reach_gun shell per ship. Matrices are registered and their build order sited by v5 itself (`ensure_matrix`, `set_sites`); the disk cache is now always read (written with `--gun-matrix-cache`).
+- Smoke is not in the field: exact rays on the final picks only.
+- Debug: Ctrl+R overlay modes FIELD5 (firing bloom) and FIELD5_DARK (concealment), one byte per cell every 0.5 s: yellow seen not shot, cyan shot not seen, red both.
+- Gun matrices are generated at runtime; `--gun-matrix-cache` (testing only) reads and writes the disk cache.
+
+## Engage station scan (2026-11-13)
+
+`bot5/station.rs` replaces SHOT_SWINGS. Bearing is free: no preferred side, the cell's own numbers decide.
+
+- Candidates: water cells in the band ring around the anchor, deep enough for the hull; seam bots only within 2.5 km of their seam line; after arrival or a blocked release, at least 1.5 km from the old station.
+- Value: our damage per minute on the target from the cell (range, the target's aspect when seen, else aspect mean). Cells our gun matrix says cannot reach the target are dropped; an unbuilt row is left to the exact check.
+- Exposure: when the cell is seen at firing bloom, sum over believed enemies whose gun-matrix row hits it of their damage per minute on our hull at that range (aspect mean).
+- Score: value - risk x exposure - best value x transit / 90 s. Risk is per playstyle (tank 0.6 .. island hugger 2.0) times (2 - hp).
+- Top 6 checked in order by the exact terrain ray; an expired plan keeps its station within 10% of the best.
+- Curves: each point table flattened once (damage 1, no fire or saturation) into per-shot value by range and aspect, cached by table key, so pairs sharing a table share a curve; re-read every 5 s until complete. Damage per minute = value x shell damage x barrels x 60 / reload, better shell.
+- Enemy-vs-us tables come from the same runtime queue (`start_runtime_tables` already queues every pair both ways); the hub hands their keys over with `set_threat`.
+- Counters: `station_scan`, `station_scan_empty`, `station_no_value`, `threat_no_table`.
+
+Next: cover gate, checkpoints, Spot posture.
