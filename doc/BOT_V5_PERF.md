@@ -25,3 +25,6 @@ Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed acr
 | 2026-11-14 | b41170b3+ | feature station scan, 1 re-plan per frame | 1 | 852 | 662 | 1774 | 3467 | 4908 | 5982 | 14459 | 1200 |
 | 2026-11-14 | b41170b3+ | feature scan, 2 re-plans, phase timers | 1 | 1318 | 1144 | 2239 | 3979 | 5662 | 7415 | 8516 | 705 |
 | 2026-11-14 | b41170b3+ | rerun: input push spike check | 1 | 943 | 754 | 1854 | 3748 | 5041 | 6422 | 14459 | 1200 |
+| 2026-11-14 | a8c56624+ | stance, 4 Hz, veto rollouts | 1 | 1050 | 815 | 2185 | 4195 | 6019 | 7533 | 14459 | 1200 |
+| 2026-11-15 | a8c56624+ | rings, window, hops, 2 flanks, focus shot, fire fix | 1 | 1514 | 1232 | 2777 | 4648 | 5944 | 396594 | 14459 | 1200 |
+| 2026-11-15 | a8c56624+ | rerun: walls on change, sec cached | 1 | 1275 | 1066 | 2132 | 3986 | 5205 | 366149 | 14459 | 1200 |

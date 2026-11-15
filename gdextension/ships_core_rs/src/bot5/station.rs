@@ -8,7 +8,6 @@ use crate::projectile::manager::point_store::{PtTable, Store};
 
 use super::features::Features;
 use super::field::{has, Layout};
-use super::flank::SeamGeom;
 use super::hive::wrap;
 use super::snapshot::{rot_y, ShipState};
 
@@ -25,18 +24,28 @@ const LEE_HALF: f32 = std::f32::consts::FRAC_PI_3;
 /// Fallback water around a station that is also covered makes it defensible.
 const DEF_R: f32 = 900.0;
 const DEF_W: f32 = 0.25;
-/// A goal farther than this by sail is approached through a checkpoint: a fightable station on the way.
-const CHECK_MAX_S: f32 = 90.0;
-/// A checkpoint is at least this much nearer the goal than we are.
-const CHECK_PROGRESS_M: f32 = 1000.0;
-/// Near candidates scored in full as checkpoints, beside the top REFINE.
-const CHECK_REFINE: usize = 8;
+/// v4's window: every station lies within this of us; a hop gains at least HOP_MIN_M on the anchor.
+pub const WINDOW_M: f32 = 6000.0;
+const HOP_MIN_M: f32 = 500.0;
+/// Out of an enemy's secondaries by this much unless we out-trade it by TRADE_MARGIN at half their range.
+const RING_MARGIN_M: f32 = 500.0;
+const TRADE_MARGIN: f32 = 1.25;
+/// Value gained for standing off from the nearest flank-mate's bearing round the anchor, full at SPREAD_FULL.
+const SPREAD_W: f32 = 0.5;
+const SPREAD_FULL: f32 = std::f32::consts::FRAC_PI_3;
 /// Candidates scored in full (both moments, dark, defensibility) after a now-only pass over all.
 const REFINE: usize = 24;
 const KEEP_MARGIN: f32 = 0.1;
 const MOVE_ON_M: f32 = 1500.0;
-const VERIFY: usize = 6;
-const SEAM_HALF_M: f32 = 2500.0;
+/// Candidates exact-checked for a shot, best first, before the scan gives up on fighting from here.
+const VERIFY: usize = 32;
+/// Guns that reach a station from bearings spread wider than this crossfire it (v4's brawl limit).
+const CROSSFIRE: f32 = std::f32::consts::FRAC_PI_2;
+/// No contact yet: HP share per minute a station is worth for being hidden from the anchor, and for flanking it.
+const OPEN_COVER_W: f32 = 0.05;
+const OPEN_FLANK_W: f32 = 0.05;
+/// Off our team's line to the anchor by this much is a full flank.
+const OPEN_FLANK_RAD: f32 = std::f32::consts::FRAC_PI_4;
 /// Curves are resampled on this range step, so a lookup is an index.
 const LUT_M: f32 = 100.0;
 /// Curve rebuilds per hive pass while the point-table worker is still filling tables.
@@ -154,37 +163,49 @@ impl Curves {
     }
 }
 
-/// Damage per minute from a shooter's AP/HE curves: the better shell at each range.
+/// Damage per minute from a shooter's AP/HE curves (the better shell at each range) plus its secondaries in their reach.
 pub struct Fire<'a> {
     curves: [Option<&'a Curve>; 2],
+    gun: &'a ShipState,
+    /// Whose pose sets the aspect: the target, or the shooter itself for fire on us.
     pub ship: &'a ShipState,
-    /// Per LUT_M step, aspect mean, already in damage per minute.
+    /// Per LUT_M step, aspect mean, mains only, already in damage per minute.
     mean: Vec<f32>,
+    /// Calibration books mains only.
+    pub sec_on: bool,
 }
 
 impl<'a> Fire<'a> {
-    pub fn new(curves: [Option<&'a Curve>; 2], ship: &'a ShipState) -> Self {
+    pub fn new(curves: [Option<&'a Curve>; 2], gun: &'a ShipState, ship: &'a ShipState) -> Self {
         let n = curves.iter().flatten().map(|c| c.lut_mean.len()).max().unwrap_or(1);
-        let mut f = Fire { curves, ship, mean: Vec::new() };
+        let mut f = Fire { curves, gun, ship, mean: Vec::new(), sec_on: true };
         let pm = f.per_min();
         f.mean = (0..n).map(|i| {
             let r = i as f32 * LUT_M;
-            (0..2).filter_map(|a| f.curves[a].map(|c| c.mean_at(r) * ship.damage[a])).fold(0.0, f32::max) * pm
+            (0..2).filter_map(|a| f.curves[a].map(|c| c.mean_at(r) * gun.damage[a])).fold(0.0, f32::max) * pm
         }).collect();
         f
     }
 
+    pub fn mains(self) -> Self {
+        Fire { sec_on: false, ..self }
+    }
+
     fn per_min(&self) -> f32 {
-        if self.ship.reload <= 0.0 { 0.0 } else { self.ship.barrels * 60.0 / self.ship.reload }
+        if self.gun.reload <= 0.0 { 0.0 } else { self.gun.barrels * 60.0 / self.gun.reload }
+    }
+
+    pub fn sec_at(&self, d: f32) -> f32 {
+        if self.sec_on && d <= self.gun.sec_range { self.gun.sec_dpm } else { 0.0 }
     }
 
     pub fn mean_at(&self, d: f32) -> f32 {
-        self.mean[((d / LUT_M).round().max(0.0) as usize).min(self.mean.len() - 1)]
+        self.mean[((d / LUT_M).round().max(0.0) as usize).min(self.mean.len() - 1)] + self.sec_at(d)
     }
 
-    fn at(&self, d: f32, aspect: f32) -> f32 {
-        let v = (0..2).filter_map(|a| self.curves[a].map(|c| c.at(d, aspect) * self.ship.damage[a])).fold(0.0, f32::max);
-        v * self.per_min()
+    pub fn at(&self, d: f32, aspect: f32) -> f32 {
+        let v = (0..2).filter_map(|a| self.curves[a].map(|c| c.at(d, aspect) * self.gun.damage[a])).fold(0.0, f32::max);
+        v * self.per_min() + self.sec_at(d)
     }
 }
 
@@ -193,6 +214,22 @@ pub struct Threat<'a> {
     pub range: f32,
     pub row: Option<&'a [AtomicU64]>,
     pub fire: Fire<'a>,
+    /// Share of its fire we draw, from where we are now.
+    pub aim: f32,
+    /// No station inside this; 0 for none.
+    pub ring: f32,
+}
+
+/// Secondary range plus RING_MARGIN_M, unless `ours` out-trades the threat by TRADE_MARGIN at half that range.
+pub fn ring_of(t: &Threat, ours: Option<&Fire>, k_in: f32, k_out: f32, my_hp: f32) -> f32 {
+    let e = t.fire.ship;
+    if e.sec_range <= 0.0 || e.sec_dpm <= 0.0 {
+        return 0.0;
+    }
+    let d = 0.5 * e.sec_range;
+    let theirs = t.fire.mean_at(d) * k_in / my_hp;
+    let ours = ours.map_or(0.0, |f| f.mean_at(d) * k_out / (e.hp_frac * e.hp_max).max(1.0));
+    if ours >= TRADE_MARGIN * theirs { 0.0 } else { e.sec_range + RING_MARGIN_M }
 }
 
 pub struct Target<'a> {
@@ -217,15 +254,19 @@ fn value_from(fire: &Fire, at: Vector2, p: Vector2) -> f32 {
     fire.at(d, rel.x.abs().atan2(-rel.z).to_degrees())
 }
 
-/// Per minute in cell k: every threat whose shells land there, while some enemy sees the cell.
+/// Per minute in cell k: every threat whose shells land there, while some enemy sees the cell; `aimed` weighs each by its aim on us.
 pub fn exposure_at(threats: &[Threat], seen: bool, k: usize, p: Vector2) -> f32 {
+    exposure_w(threats, seen, k, p, false)
+}
+
+pub fn exposure_w(threats: &[Threat], seen: bool, k: usize, p: Vector2, aimed: bool) -> f32 {
     if !seen {
         return 0.0;
     }
     threats.iter().filter_map(|t| {
         let d = t.at.distance_to(p);
         let hit = d <= t.range && t.row.is_none_or(|r| r[k / 64].load(Relaxed) >> (k % 64) & 1 != 0);
-        hit.then(|| t.fire.mean_at(d))
+        hit.then(|| t.fire.mean_at(d) * if aimed { t.aim } else { 1.0 })
     }).sum()
 }
 
@@ -238,9 +279,12 @@ pub struct Req {
     pub keep: Option<Vector2>,
     /// Arrived or blocked: the next station lies at least MOVE_ON_M from here.
     pub avoid: Option<Vector2>,
-    pub seam: Option<SeamGeom>,
     /// Score only this station, no search.
     pub only: Option<Vector2>,
+    /// Cover first: a station may carry at most this exposure (HP share per minute), at its worse moment.
+    pub cover: Option<f32>,
+    /// Disengage: least exposure within reach of `anchor` (us), no offence.
+    pub escape: bool,
 }
 
 /// A believed enemy position at one moment.
@@ -282,6 +326,12 @@ pub struct Scan<'a> {
     pub k_in: f32,
     /// May hold fire to spot unseen: destroyers, and cruisers that hide well inside their gun range.
     pub dark_ok: bool,
+    /// Where the rest of our team is.
+    pub allies: Option<Vector2>,
+    /// Flank-mates' stations.
+    pub mates: Vec<Vector2>,
+    /// Own spawn and the unit vector toward the enemy's: no station past the nearest enemy that reaches it.
+    pub front: Option<(Vector2, Vector2)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -296,8 +346,8 @@ pub struct Found {
     /// Nothing passed net >= 0: the best of the rest.
     pub negative: bool,
     pub candidates: usize,
-    /// On the way to a far station: (station, shot checked, net, dark).
-    pub checkpoint: Option<(Vector2, bool, f32, bool)>,
+    /// No fighting station: a hidden step toward the anchor.
+    pub hop: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -380,14 +430,28 @@ impl Scan<'_> {
             // Nothing believed in reach: approach the anchor's band, out of the field's sight and fire.
             let d = p.distance_to(req.anchor);
             let x = if has(&self.seen[0][0], k) && has(self.shot, k) { 1.0 } else { 0.0 };
-            return (d >= req.lo && d <= req.hi).then_some(Eval { value: 0.0, spot: 0.0, exposure: x, net: -x, dark: false });
+            let hidden = self.vis.cell_of(req.anchor).is_some_and(|a| !self.vis.visible_idx(a, k)) as u8 as f32;
+            let flank = self.allies.map_or(0.0, |c| {
+                let (u, v) = (p - req.anchor, c - req.anchor);
+                (u.angle_to(v).abs() / OPEN_FLANK_RAD).min(1.0)
+            });
+            let net = OPEN_COVER_W * hidden + OPEN_FLANK_W * flank - x;
+            return (d >= req.lo && d <= req.hi).then_some(Eval { value: 0.0, spot: 0.0, exposure: x, net, dark: false });
         }
+        if req.escape {
+            let dark = self.dark_ok;
+            let x = (0..1 + full as usize).map(|m| exposure_at(&self.threats[m], has(&self.seen[m][dark as usize], k), k, p))
+                .fold(0.0, f32::max) * self.k_in / self.my_hp;
+            return Some(Eval { value: 0.0, spot: 0.0, exposure: x, net: -self.risk * x, dark });
+        }
+        let spread = self.spread(p, req.anchor);
         let mut best: Option<Eval> = None;
         for dark in [false, true] {
             if dark && !self.dark_ok {
                 continue;
             }
             let mut e = Eval { value: 0.0, spot: 0.0, exposure: 0.0, net: f32::INFINITY, dark };
+            let mut worst_x = 0.0f32;
             for m in 0..1 + full as usize {
                 let (value, spot, n_range, n_band, primary) = self.offence(k, p, m, req, dark);
                 if m == 0 && !(if dark { spot > 0.0 } else { primary && n_range >= need && n_band >= 1 }) {
@@ -398,7 +462,13 @@ impl Scan<'_> {
                 if m == 0 {
                     (e.value, e.spot, e.exposure) = (value, spot, x);
                 }
-                e.net = e.net.min(value + spot - self.risk * x);
+                if req.cover.is_some() {
+                    worst_x = worst_x.max(exposure_w(&self.threats[m], has(&self.seen[m][dark as usize], k), k, p, true) * self.k_in / self.my_hp);
+                }
+                e.net = e.net.min(value * spread + spot - self.risk * x);
+            }
+            if req.cover.is_some_and(|c| worst_x > c) || (0..1 + full as usize).any(|m| self.crossfire(m, k, p, dark) > CROSSFIRE) {
+                continue;
             }
             if e.net.is_finite() {
                 if full {
@@ -410,6 +480,33 @@ impl Scan<'_> {
             }
         }
         best
+    }
+
+    fn spread(&self, p: Vector2, anchor: Vector2) -> f32 {
+        let b = |q: Vector2| (q.x - anchor.x).atan2(q.y - anchor.y);
+        let sep = self.mates.iter().map(|&m| wrap(b(p) - b(m)).abs()).fold(f32::INFINITY, f32::min);
+        if sep.is_finite() { 1.0 + SPREAD_W * (sep / SPREAD_FULL).min(1.0) } else { 1.0 }
+    }
+
+    fn ringed(&self, p: Vector2) -> bool {
+        self.threats.iter().flatten().any(|t| t.ring > 0.0 && t.at.distance_to(p) < t.ring)
+    }
+
+    fn past_front(&self, p: Vector2) -> bool {
+        let Some((o, f)) = self.front else { return false };
+        let depth = self.threats[0].iter().filter(|t| t.at.distance_to(p) <= t.range).map(|t| (t.at - o).dot(f)).fold(f32::INFINITY, f32::min);
+        (p - o).dot(f) > depth
+    }
+
+    /// Narrowest arc holding the bearings of every threat whose shells land on cell k while it is seen; 0 for one or none.
+    fn crossfire(&self, m: usize, k: usize, p: Vector2, dark: bool) -> f32 {
+        if !has(&self.seen[m][dark as usize], k) {
+            return 0.0;
+        }
+        let mut b: Vec<f32> = self.threats[m].iter().filter(|t| {
+            t.at.distance_to(p) <= t.range && t.row.is_none_or(|r| r[k / 64].load(Relaxed) >> (k % 64) & 1 != 0)
+        }).map(|t| (t.at.x - p.x).atan2(t.at.y - p.y)).collect();
+        arc_of(&mut b)
     }
 
     /// Share of the water within DEF_R that no enemy sees, or no enemy's shells reach.
@@ -429,10 +526,14 @@ impl Scan<'_> {
             let d = p.distance_to(f.at[0].at);
             d >= req.lo && d <= req.hi || self.dark_ok && f.spot > 0.0 && d <= f.fire.ship.conceal
         };
-        let placed = if self.foes.is_empty() { (req.lo..=req.hi).contains(&p.distance_to(req.anchor)) } else { self.foes.iter().any(near) };
+        let placed = if req.escape || self.foes.is_empty() { (req.lo..=req.hi).contains(&p.distance_to(req.anchor)) }
+            else { self.foes.iter().any(near) };
+        let fighting = !req.escape && !self.foes.is_empty();
         placed && self.vis.sdf_c[k] >= self.clearance
             && !req.avoid.is_some_and(|q| q.distance_to(p) < MOVE_ON_M)
-            && !req.seam.is_some_and(|s| s.lateral(p).abs() > SEAM_HALF_M)
+            && (self.foes.is_empty() || p.distance_to(self.my) <= WINDOW_M)
+            && !(fighting && (self.ringed(p) || self.past_front(p)))
+
     }
 
     /// Lee berths of islands in reach of the anchor, gaps in reach, our own cell and the kept station; kind 0 berth, 1 gap, 2 other.
@@ -476,13 +577,9 @@ impl Scan<'_> {
         }
         let keep = req.keep.and_then(|q| self.vis.cell_of(q));
         quick.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
-        let mut near: Vec<(usize, f32)> = quick.iter().enumerate().skip(REFINE)
-            .filter(|(_, c)| c.transit_s <= CHECK_MAX_S && c.e.net >= 0.0).map(|(i, c)| (i, c.e.net)).collect();
-        near.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
-        near.truncate(CHECK_REFINE);
-        let mut out: Vec<Cand> = Vec::with_capacity(REFINE + CHECK_REFINE + 1);
+        let mut out: Vec<Cand> = Vec::with_capacity(REFINE + 1);
         for (i, c) in quick.iter().enumerate() {
-            if i >= REFINE && Some(c.k) != keep && !near.iter().any(|n| n.0 == i) {
+            if i >= REFINE && Some(c.k) != keep {
                 continue;
             }
             let Some(e) = self.eval(c.k, req, need, true) else { continue };
@@ -498,7 +595,7 @@ impl Scan<'_> {
         let t0 = std::time::Instant::now();
         let v = self.vis;
         let found = |c: &Cand, shot: bool, negative: bool, n: usize| Found { station: c.p, shot, value: c.e.value, exposure: c.e.exposure,
-            net: c.e.net, dark: c.e.dark, negative, candidates: n, checkpoint: None };
+            net: c.e.net, dark: c.e.dark, negative, candidates: n, hop: false };
         if let Some(q) = req.only {
             let k = v.cell_of(q)?;
             let e = self.eval(k, req, MIN_IN_RANGE.min(self.foes.len()), true).or_else(|| self.eval(k, req, 1, true))?;
@@ -531,8 +628,7 @@ impl Scan<'_> {
         let needs_shot = |c: &Cand| !c.e.dark && req.target.is_some();
         let keep_p = req.keep.and_then(|q| v.cell_of(q)).map(|k| v.centres[k]);
         let chosen: Option<(usize, bool)> = match cands.iter().take(VERIFY).position(|c| !needs_shot(c) || exact(c.p)) {
-            _ if cands.is_empty() => None,
-            None => Some((0, false)),
+            None => None,
             Some(i) => {
                 let floor = cands[i].score - KEEP_MARGIN * cands[i].score.abs();
                 let kept = keep_p.and_then(|q| cands.iter().position(|c| c.p == q))
@@ -559,21 +655,77 @@ impl Scan<'_> {
             d.us = t0.elapsed().as_micros() as u64;
             *out = d;
         }
-        let mut f = chosen.map(|(i, shot)| found(&cands[i], shot, negative, n))?;
-        let goal = chosen.map(|(i, _)| cands[i])?;
-        if goal.transit_s > CHECK_MAX_S {
-            let to_goal = self.my.distance_to(goal.p) - CHECK_PROGRESS_M;
-            let mut on_way: Vec<&Cand> = cands.iter().filter(|c| c.transit_s <= CHECK_MAX_S && c.e.net >= 0.0 && c.p.distance_to(goal.p) <= to_goal).collect();
-            on_way.sort_unstable_by(|a, b| b.e.net.total_cmp(&a.e.net));
-            f.checkpoint = on_way.into_iter().take(VERIFY).find(|c| !needs_shot(c) || exact(c.p)).map(|c| (c.p, needs_shot(c), c.e.net, c.e.dark));
+        let hop = || (!req.escape && !self.foes.is_empty()).then(|| self.hop(req)).flatten().map(|p| Found { station: p, shot: false,
+            value: 0.0, exposure: 0.0, net: 0.0, dark: true, negative: false, candidates: n, hop: true });
+        match chosen {
+            Some((i, shot)) if !negative => Some(found(&cands[i], shot, negative, n)),
+            Some((i, shot)) => hop().or_else(|| Some(found(&cands[i], shot, negative, n))),
+            None => hop(),
         }
-        Some(f)
     }
+
+    /// The water within WINDOW_M no enemy sees us in, now or ahead, out of every ring and short of the front,
+    /// gaining most on the anchor (at least HOP_MIN_M).
+    fn hop(&self, req: &Req) -> Option<Vector2> {
+        let v = self.vis;
+        let from = self.my.distance_to(req.anchor);
+        let near = |k: usize| v.centres[k].distance_to(self.my) <= WINDOW_M;
+        let berths = self.feats.islands.iter().filter(|is| is.centre.distance_to(self.my) <= WINDOW_M + is.radius)
+            .flat_map(|is| is.berths.iter().map(|b| b.1 as usize));
+        let cells = berths.chain(self.feats.gaps.iter().chain(&self.feats.lattice).map(|&k| k as usize)).filter(|&k| near(k));
+        cells.filter(|&k| {
+            let p = v.centres[k];
+            v.sdf_c[k] >= self.clearance && !has(&self.seen[0][1], k) && !has(&self.seen[1][1], k)
+                && !req.avoid.is_some_and(|q| q.distance_to(p) < MOVE_ON_M) && !self.ringed(p) && !self.past_front(p)
+        }).map(|k| (v.centres[k], from - v.centres[k].distance_to(req.anchor)))
+            .filter(|c| c.1 >= HOP_MIN_M)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|c| c.0)
+    }
+}
+
+/// Narrowest arc holding every bearing in `b`.
+pub fn arc_of(b: &mut [f32]) -> f32 {
+    if b.len() < 2 {
+        return 0.0;
+    }
+    b.sort_unstable_by(f32::total_cmp);
+    let mut gap = b[0] + std::f32::consts::TAU - b[b.len() - 1];
+    for w in b.windows(2) {
+        gap = gap.max(w[1] - w[0]);
+    }
+    std::f32::consts::TAU - gap
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arc_spans_the_tightest_side() {
+        use std::f32::consts::PI;
+        assert_eq!(arc_of(&mut [1.0]), 0.0);
+        assert!((arc_of(&mut [0.1, -0.1]) - 0.2).abs() < 1e-5);
+        assert!((arc_of(&mut [PI - 0.1, -PI + 0.1]) - 0.2).abs() < 1e-5);
+        assert!((arc_of(&mut [0.0, PI / 2.0, PI]) - PI).abs() < 1e-5);
+    }
+
+    fn ship(sec_range: f32, sec_dpm: f32) -> ShipState {
+        let mut r = [0.0f32; super::super::snapshot::STRIDE];
+        (r[1], r[9], r[16], r[32], r[33]) = (1.0, 1.0, 1000.0, sec_range, sec_dpm);
+        let mut s = super::super::snapshot::Snapshot::default();
+        s.load(&[1], &r);
+        s.ships[0]
+    }
+
+    #[test]
+    fn ring_holds_off_secondaries_unless_out_traded() {
+        let (them, weak, strong) = (ship(5000.0, 600.0), ship(0.0, 0.0), ship(5000.0, 6000.0));
+        let t = Threat { at: Vector2::ZERO, range: 15000.0, row: None, fire: Fire::new([None, None], &them, &them), aim: 1.0, ring: 0.0 };
+        assert_eq!(ring_of(&t, Some(&Fire::new([None, None], &weak, &them)), 1.0, 1.0, 1000.0), 5000.0 + RING_MARGIN_M);
+        assert_eq!(ring_of(&t, Some(&Fire::new([None, None], &strong, &them)), 1.0, 1.0, 1000.0), 0.0);
+        assert_eq!(Fire::new([None, None], &them, &them).mean_at(6000.0), 0.0);
+    }
 
     #[test]
     fn curve_blends_range_and_aspect() {

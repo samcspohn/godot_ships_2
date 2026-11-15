@@ -4,7 +4,7 @@ ARGS ?=
 JOBS ?= $(shell nproc)
 HULLS ?= $(wildcard assets/Ships/*/*.tscn assets/Ships/*.tscn)
 
-.PHONY: native bake sim smoke ab watch learn
+.PHONY: native bake sim smoke ab watch watch-vs learn
 
 native:
 	$(MAKE) -C gdextension/ships_core_rs e
@@ -103,10 +103,19 @@ SEED ?= 1
 PORT ?= 30500
 # Replay with bot debug overlays lands in user://replays; WATCH_REPLAY=0 to skip.
 WATCH_REPLAY ?= 1
+# Server environment, e.g. WATCH_ENV="SHIPS_BOT5_TEAMS=0".
+WATCH_ENV ?=
+WATCH_ARGS ?=
 watch:
 	@mkdir -p build
-	@$(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) $(if $(filter 0,$(WATCH_REPLAY)),--no-replay) \
+	@$(WATCH_ENV) $(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) $(if $(filter 0,$(WATCH_REPLAY)),--no-replay) $(WATCH_ARGS) \
 		> build/watch_server.log 2>&1 & srv=$$!; \
 	trap 'kill $$srv 2>/dev/null' EXIT INT TERM; \
 	until ss -ltn | grep -q ":$(PORT) "; do kill -0 $$srv 2>/dev/null || { echo "watch: server exited, see build/watch_server.log"; exit 1; }; sleep 0.5; done; \
 	$(GODOT) --path . --time-scale $(WATCH_SPEED) --spectate 127.0.0.1:$(PORT)
+
+# v4 vs v5 as the bot5_vs tests run it (matrix cache): V5_TEAM bots run v5, the other team v4.
+# make watch-vs V5_TEAM=1 SEED=3 WATCH_SPEED=2
+V5_TEAM ?= 0
+watch-vs:
+	$(MAKE) watch WATCH_ENV="SHIPS_BOT5_TEAMS=$(V5_TEAM)" WATCH_ARGS="--gun-matrix-cache"

@@ -245,7 +245,7 @@ mod tests {
             beam: 30.0, class: HullClass::Ca, gun_range: 15000.0, top: 15.0, turn_radius: 700.0, air_radius: 2500.0,
             torp_detect_mult: 1.0, torp_detect_floor: -1.0,
             conceal: 10000.0, force_spot: 0.0, shell_speed: 800.0, shell_drag: 1e-4, gun_h: 10.0,
-            reload: 10.0, barrels: 9.0, damage: [5000.0, 2000.0] }
+            reload: 10.0, barrels: 9.0, damage: [5000.0, 2000.0], sec_range: 0.0, sec_dpm: 0.0 }
     }
 
     #[test]

@@ -42,11 +42,11 @@ impl Playstyle {
 
     pub fn style(self) -> Style {
         match self {
-            Playstyle::Gunboat => Style { band: (0.75, 0.92), retreat_hp: 0.35, aggression: 0.2, risk: 1.5 },
-            Playstyle::Tank => Style { band: (0.45, 0.65), retreat_hp: 0.2, aggression: 0.7, risk: 0.6 },
-            Playstyle::Dps => Style { band: (0.6, 0.8), retreat_hp: 0.3, aggression: 0.5, risk: 1.0 },
-            Playstyle::IslandHugger => Style { band: (0.6, 0.85), retreat_hp: 0.3, aggression: 0.4, risk: 2.0 },
-            Playstyle::Brawler => Style { band: (0.25, 0.45), retreat_hp: 0.15, aggression: 0.9, risk: 0.4 },
+            Playstyle::Gunboat => Style { band: (0.75, 0.92), aggression: 0.2, risk: 1.5 },
+            Playstyle::Tank => Style { band: (0.45, 0.65), aggression: 0.7, risk: 0.6 },
+            Playstyle::Dps => Style { band: (0.6, 0.8), aggression: 0.5, risk: 1.0 },
+            Playstyle::IslandHugger => Style { band: (0.6, 0.85), aggression: 0.4, risk: 2.0 },
+            Playstyle::Brawler => Style { band: (0.25, 0.45), aggression: 0.9, risk: 0.4 },
         }
     }
 }
@@ -55,7 +55,6 @@ impl Playstyle {
 #[derive(Clone, Copy, Debug)]
 pub struct Style {
     pub band: (f32, f32),
-    pub retreat_hp: f32,
     pub aggression: f32,
     /// Weight of damage taken per minute against damage dealt per minute, at full hp.
     pub risk: f32,

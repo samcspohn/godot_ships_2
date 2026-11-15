@@ -37,11 +37,13 @@ static func draw(b: Dictionary, team: Dictionary, now: float) -> void:
 static func _draw_plan(b: Dictionary, me: Vector3) -> void:
 	if not b.has("station"):
 		return
-	var col: Color = {"retreat": C_RETREAT, "torp_run": C_TORP_RUN}.get(b.get("posture", ""), C_ENGAGE)
+	var col: Color = {"disengage": C_RETREAT, "torp_run": C_TORP_RUN}.get(b.get("posture", ""), C_ENGAGE)
 	var st: Vector3 = b.station
 	Debug.draw_line(me + LIFT, st + LIFT, col)
 	Debug.draw_im_sphere(st + LIFT, 20.0, col)
 	Debug.draw_circle(st + Vector3(0.0, 8.0, 0.0), float(b.get("hold_radius", 0.0)), Color(col, 0.6), 32)
+	for w: Vector3 in b.get("walls", PackedVector3Array()):
+		Debug.draw_circle(Vector3(w.x, 7.0, w.z), w.y, Color(1.0, 0.4, 0.1, 0.5), 48)
 	var anchor: Vector3 = b.anchor
 	Debug.draw_im_sphere(anchor + LIFT, 25.0, C_BAND)
 	if b.has("band_lo"):

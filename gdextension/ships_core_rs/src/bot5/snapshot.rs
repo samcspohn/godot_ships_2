@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 32;
+pub const STRIDE: usize = 34;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -68,6 +68,9 @@ pub struct ShipState {
     /// Shells per main-battery salvo.
     pub barrels: f32,
     pub damage: [f32; 2],
+    pub sec_range: f32,
+    /// Secondary damage per minute inside sec_range, on a hull like its own.
+    pub sec_dpm: f32,
 }
 
 impl ShipState {
@@ -102,6 +105,8 @@ impl ShipState {
             reload: r[28],
             barrels: r[29],
             damage: [r[30], r[31]],
+            sec_range: r[32],
+            sec_dpm: r[33],
         }
     }
 

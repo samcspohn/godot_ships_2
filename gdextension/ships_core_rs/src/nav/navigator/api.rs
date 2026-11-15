@@ -5,6 +5,14 @@ use crate::nav::threat::ThreatRegistry;
 use crate::nav::types::{clamp_f, throttle_to_speed_fraction, DynamicObstacle};
 
 impl ShipNavigator {
+    /// set_threat_circles from Rust.
+    pub(crate) fn set_threat_circles_impl(&mut self, circles: &[(Vector2, f32)]) {
+        let c: Vec<crate::nav::types::ThreatCircle> = circles.iter().filter(|c| c.1 > 0.0).enumerate()
+            .map(|(i, &(o, r))| crate::nav::types::ThreatCircle::new(i as i32, o, r)).collect();
+        *self.threats.borrow_mut() = c.clone();
+        self.manual_threats = Some(c);
+    }
+
     pub(crate) fn set_ship_params_impl(
         &mut self,
         turning_circle_radius: f32,
@@ -76,6 +84,14 @@ impl ShipNavigator {
 
         // navigate_to() is the synchronous planning trigger.
         self.run_plan_sync();
+    }
+
+    /// navigate_to's heading and gear without a re-plan.
+    pub(crate) fn set_helm_impl(&mut self, heading: f32, heading_weight: f32, prefer_reverse: bool, forbid_reverse: bool) {
+        self.target.heading = heading;
+        self.target.heading_weight = clamp_f(heading_weight, 0.0, 1.0);
+        self.target.prefer_reverse = prefer_reverse;
+        self.target.forbid_reverse = forbid_reverse && !prefer_reverse;
     }
 
     pub(crate) fn stop_impl(&mut self) {

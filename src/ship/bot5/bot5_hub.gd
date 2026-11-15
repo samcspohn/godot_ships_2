@@ -3,7 +3,7 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 32
+const STRIDE := 34
 const CMD_STRIDE := 19
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
@@ -42,7 +42,7 @@ var _frame_us := PackedInt32Array()
 var _gd_ph := PackedInt32Array()
 const GD_PHASES := ["register", "ships", "pairs", "live", "inputs", "tick", "apply"]
 const RS_PHASES := ["beliefs", "tracks", "flanks", "field", "curves", "spot_needs", "resolve", "scans", "spotters",
-	"drive", "guns", "torps", "consumables", "tel", "valid_station"]
+	"drive", "guns", "torps", "consumables", "tel", "valid_station", "stance"]
 ## Slots holding every enemy's pair and threat keys; cleared when ships register.
 var _pairs_done: Dictionary = {}
 
@@ -114,6 +114,7 @@ func _physics_process(delta: float) -> void:
 		_live_t = now
 		_push_live()
 		_push_damage(now)
+		world.set_time_left(server.get_match_time_remaining())
 	ph[3] = Time.get_ticks_usec() - tp
 	tp = Time.get_ticks_usec()
 	for slot in _ships.size():
@@ -187,6 +188,8 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 		damage_he = gp.shell2.damage if gp.shell2 != null else 0.0,
 		gun_h = float(NavigationMapManager.reach_gun(ship).get("gun_h", 5.0)),
 		gun_range = gp._range,
+		guns = ship.artillery_controller.guns,
+		hull = ship,
 	}.merged(_torp_cfg(ship)).merged(_spot_cfg(ship)))
 	_ships.append(ship)
 	_slot_of[ship] = slot
@@ -254,7 +257,23 @@ func _ship_static(ship: Ship) -> Array:
 		cp.radius if cp else 0.0, server._latent_force_spot_reach(ship) * server.LATENT_FORCE_SPOT_FACTOR,
 		g.get("speed", 0.0), g.get("drag", 0.0), g.get("gun_h", 0.0), cp,
 		ac.get_params().reload_time if ac else 0.0, float(GunneryModel.barrels(ac.guns)) if ac else 0.0,
-		_shell_damage(ac, 0), _shell_damage(ac, 1)]
+		_shell_damage(ac, 0), _shell_damage(ac, 1)] + _sec_static(ship)
+
+
+## [range, damage per minute at half range on its own hull]; the GDScript solve, so once per scene.
+static var _sec_cache: Dictionary = {}
+
+static func _sec_static(ship: Ship) -> Array:
+	var sec = ship.secondary_controller
+	if not is_instance_valid(sec) or sec.sub_controllers.is_empty():
+		return [0.0, 0.0]
+	if _sec_cache.has(ship.scene_file_path):
+		return _sec_cache[ship.scene_file_path]
+	var r: float = sec.get_max_range()
+	var dps: float = BotBehavior._secondary_dps(ship, ship, r * 0.5, BotBehavior.guns_bear_aspect(ship))
+	var v := [r, dps * 60.0 if is_finite(dps) else 0.0]
+	_sec_cache[ship.scene_file_path] = v
+	return v
 
 
 static func _shell_damage(ac, ammo: int) -> float:
@@ -315,6 +334,8 @@ func _push_ships(now: float) -> void:
 		_data[o + 29] = st[19]
 		_data[o + 30] = st[20]
 		_data[o + 31] = st[21]
+		_data[o + 32] = st[22]
+		_data[o + 33] = st[23]
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)

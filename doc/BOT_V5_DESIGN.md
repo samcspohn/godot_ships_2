@@ -279,3 +279,59 @@ Target: worst scan under ~300 us.
 | + checkpoints | 1 | 0.60 |
 
 v5 BBs take ~3x the damage of v4 BBs (Yamato 150k vs 60k, Montana 131k vs 54k): v5 has no stance (heading broadside to the anchor, no angling, no dodge).
+
+## Stance (2026-11-14)
+
+`bot5/stance.rs`, 4 Hz per bot, staggered (phase `stance`).
+
+- Rates per hull heading (72 bins, 5°), HP share per minute:
+  - in: each threat whose shells land on our cell, while our cell is seen, `Fire.at(range, our aspect to it)` × risk × k_in / our hp;
+  - out: our value on the target × share of mounts bearing at that heading (masks sampled from the turret arcs at registration).
+- Heading: best within ±45° of the bearing to the next waypoint (astern: of its reciprocal); at the station, any heading at 1/4 throttle.
+  Priced over 30 s, the swing included at the hull's turn rate and rudder lag. A held heading stays unless beaten by 10%.
+- Gear veto, only when the route lies behind the bow and stance is active: turn unless the turn would sink us.
+  The turn is sailed on the navigator's hull model (`Hull::step`, 0.5 s steps, until the bow is within 10° of the best heading ahead, at most 300 s)
+  from the hull's real speed and power; incoming at each step's heading, risk taken out, summed as a share of HP now. ≥ 1: back toward the station.
+  Re-checked at most every 1 s; gear held at least 8 s. The hull swings while it backs and brakes, so a backing ship is not priced as stopped.
+- Stance active: the navigator gets heading weight 1, `prefer_reverse` astern, `forbid_reverse` ahead. Inactive (nothing in or out): the navigator's own gear.
+- Counters: `stance_ahead/turn/astern/hold`, `stance_veto_turn/astern`. Trace: `SHIPS_BOT5_STANCE_TRACE`.
+- Pending: dodge (shells in the air), destroyed mounts, torpedo exposure by aspect.
+- First result (12v12 t10, seeds 1-4, both sides): v5 0/8, damage ratio 0.58 (0.60 before). v5 BBs still take ~2.5× v4's incoming per second and fire 30-40% fewer salvos; Montana takes 36k from torpedoes (v4: 0). Stance 56 µs mean per frame, ~260 µs worst; drive +50 µs.
+
+## Threat, cover first, disengage (2026-11-14)
+
+v4's ladder, native, per bot each hive pass (`World::danger`, `hive::Danger`).
+
+- Threat = 1 − exp(−H · Σ share), H = −ln(0.6) · 0.2 · match time left (time to die at 20% of the match left scores 0.4).
+  share per enemy, HP now per second: its curve at our aspect to it, k_in, only while its shells land on our cell and we are seen
+  (firing bloom, or concealment on a dark plan); the larger of now and FORECAST_S ahead; times the share of its aim we draw
+  against lit allies in its range, weighted 1/d².
+- Time to win: sail into range of our target at the band middle, then sink it alone (our curve, k_out).
+- Cover first unless we alone light our target: threat ≥ 0.35 and not outliving time to win by 1.25 (aggression-scaled), or any
+  enemy in range that takes our HP share faster than we take its. The scan then admits only stations whose worse-moment
+  exposure stays under the 0.35 threat rate (covered water has none); none passing → disengage (`no_cover`).
+- Disengage replaces Retreat (no HP trigger): starts seen at threat ≥ 0.4 unless outliving time to win, 15 s cooldown
+  unless ≥ 0.6; held ≥ 20 s while seen; ends at threat ≤ 0.35 or outliving time to win by 1.25. Station: escape scan from
+  us, lee berths, gaps, lattice in gun range, scored on exposure and the sail there only; dark for hulls that may go dark.
+- Counters: `cover_first`, `threat_high`; releases `posture`, `no_cover`.
+
+## Stations that shoot (2026-11-14)
+
+- A fighting station must pass the exact shell check to its target; the scan checks its best 32 in order. None passing:
+  no fighting station (under fire: disengage to cover, the only use of cover that cannot shoot).
+- Guns: while the assigned target cannot be shot, the nearest seen enemy in range with a clear shot, held 4 s.
+- Flank: the scan's foes are the flank's enemies, the target, and anything already reaching us; threats stay all enemies.
+- Crossfire: stations hit from bearings spread over 90° (now or ahead) fail the gate, the hold check included.
+- Result (12v12 t10, seeds 1-4, both sides): v5 0/8, damage 0.64 (best so far). Guns blocked at the station: under 1% of
+  terrain blocks; the rest are in transit or disengaging.
+
+## Threat rings, window, hops, two flanks (2026-11-15)
+
+- Fire fix: offence `Fire` took reload, barrels and shell damage from the target, not us. `Fire::new(curves, gun, pose)`. Calibration refit (`bot5_learn.py` on the 8 matches after the fix).
+- Secondaries: snapshot rows 32/33 carry secondary range and dpm (v4's `_secondary_dps` at half range on its own hull, once per scene). `Fire` adds them inside their range (exposure, threat, out-trade, stance, our value); calibration books mains only.
+- Threat ring per enemy (`station::ring_of`): secondary range + 500 m unless we out-trade it by 1.25 at half that range. No fighting station or hop inside any ring, now or ahead. Rings go to the navigator as route walls (pulled 200 m short of the station), re-sent only when one moves 500 m.
+- v4 window: every station within 6 km of us (not the no-contact opening). No station deeper (own→enemy spawn axis) than the shallowest enemy whose guns reach it.
+- Hops replace far-goal checkpoints: with no non-negative fighting station passing the exact shot, the cell within 6 km unseen now and ahead (concealment), out of rings and short of the front, gaining most (≥ 500 m) on the anchor; held dark. Else the negative station, else disengage when threatened, else a window-clipped approach.
+- Flanks: two by default (one for under 3 enemies); seam roles removed. Flank-mates spread: station value × (1 + 0.5 · min(sep / 60°, 1)), sep the least angle at the anchor to a flank-mate's station.
+- Focus: a target our shells cannot clear terrain to from here keeps 0.2 of its score; the focus bonus counts only allies who had a clear shot on it.
+- 8 matches v4 vs v5 (12v12 t10, seeds 1-4, both sides), refit calibration: 0/8, damage ratio 0.59 (0.64 before refit, 0.64 previous build). v5 BBs still take ~2-3x v4's damage.

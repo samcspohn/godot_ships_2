@@ -14,8 +14,6 @@ const ROLE_HOLD_S: f64 = 60.0;
 /// Aptitude level from which a bot leaves a live flank for a short-handed one, and for one nobody holds.
 const REBALANCE_APT: i32 = 2;
 const ABANDONED_APT: i32 = 1;
-/// How far a seam ship's approach point sits from its own depth toward the anchor's.
-const SEAM_DEPTH: f32 = 0.5;
 pub const IMBALANCED: f32 = 2.0;
 /// Neighbouring flanks closer than this across the front merge; a gap this wide inside one splits it.
 const MERGE_M: f32 = 4000.0;
@@ -28,23 +26,17 @@ const MAX_GROUPS: usize = 4;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Flank(usize),
-    /// Between flanks j and j+1: fights either, from the side, for crossfire.
-    Seam(usize),
 }
 
 impl Role {
     pub fn covers(self, g: usize) -> bool {
-        match self {
-            Role::Flank(f) => f == g,
-            Role::Seam(j) => g == j || g == j + 1,
-        }
+        let Role::Flank(f) = self;
+        f == g
     }
 
     pub fn label(self) -> String {
-        match self {
-            Role::Flank(f) => format!("flank {f}"),
-            Role::Seam(j) => format!("seam {j}|{}", j + 1),
-        }
+        let Role::Flank(f) = self;
+        format!("flank {f}")
     }
 }
 
@@ -70,27 +62,6 @@ impl Group {
 
     pub fn pressure(&self) -> f32 {
         self.enemy / self.own.max(OWN_FLOOR)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct SeamGeom {
-    origin: Vector2,
-    fwd: Vector2,
-    right: Vector2,
-    u: f32,
-}
-
-impl SeamGeom {
-    pub fn point(&self, me: Vector2, anchor: Vector2) -> Vector2 {
-        let v = |p: Vector2| (p - self.origin).dot(self.fwd);
-        let depth = v(me) + (v(anchor) - v(me)) * SEAM_DEPTH;
-        self.origin + self.right * self.u + self.fwd * depth
-    }
-
-    /// Signed distance across the front from the seam line.
-    pub fn lateral(&self, p: Vector2) -> f32 {
-        (p - self.origin).dot(self.right) - self.u
     }
 }
 
@@ -124,21 +95,17 @@ pub struct Flanks {
 impl Flanks {
     pub fn new(own: Vector2, enemy: Vector2, n_enemy: usize) -> Self {
         let fwd = (enemy - own).normalized_or_zero();
-        let k = if n_enemy >= 9 { 3 } else if n_enemy >= 3 { 2 } else { 1 };
+        let k = if n_enemy >= 3 { 2 } else { 1 };
         Flanks { origin: own, fwd, right: Vector2::new(fwd.y, -fwd.x), k, groups: Vec::new(), last_switch: f64::NEG_INFINITY, pending: Vec::new() }
+    }
+
+    /// Own spawn and the unit vector toward theirs.
+    pub fn axis(&self) -> (Vector2, Vector2) {
+        (self.origin, self.fwd)
     }
 
     pub fn lat(&self, p: Vector2) -> f32 {
         (p - self.origin).dot(self.right)
-    }
-
-    pub fn seam(&self, j: usize) -> Option<SeamGeom> {
-        let (a, b) = (self.groups.get(j)?, self.groups.get(j + 1)?);
-        Some(SeamGeom { origin: self.origin, fwd: self.fwd, right: self.right, u: (a.u + b.u) * 0.5 })
-    }
-
-    fn gap_u(&self, j: usize) -> f32 {
-        (self.groups[j].u + self.groups[j + 1].u) * 0.5
     }
 
     /// Contacts count at their last position however old: a flank dies when its ships sink, not when we lose them.
@@ -266,19 +233,10 @@ impl Flanks {
             g.own = 0.0;
         }
         for s in seats {
-            match s.role {
-                Some(Role::Flank(f)) => self.groups[f].own += s.hp,
-                Some(Role::Seam(j)) => {
-                    self.groups[j].own += s.hp * 0.5;
-                    self.groups[j + 1].own += s.hp * 0.5;
-                }
-                None => {}
+            if let Some(Role::Flank(f)) = s.role {
+                self.groups[f].own += s.hp;
             }
         }
-    }
-
-    fn seams_allowed(&self, seats: &[Seat]) -> bool {
-        self.groups.len() > 1 && seats.len() > 2 * self.groups.len()
     }
 
     /// Renumbers roles for a merge or split; a split flank's bots are dealt to its halves by enemy share.
@@ -286,22 +244,13 @@ impl Flanks {
         match r {
             Reshape::Merge(j) => {
                 for s in seats.iter_mut() {
-                    s.role = s.role.map(|r| match r {
-                        Role::Flank(f) if f > j => Role::Flank(f - 1),
-                        Role::Seam(x) if x == j => Role::Flank(j),
-                        Role::Seam(x) if x > j => Role::Seam(x - 1),
-                        r => r,
-                    });
+                    s.role = s.role.map(|Role::Flank(f)| Role::Flank(if f > j { f - 1 } else { f }));
                 }
             }
             Reshape::Split(g) => {
                 let mut on: Vec<usize> = Vec::new();
                 for (i, s) in seats.iter_mut().enumerate() {
-                    s.role = s.role.map(|r| match r {
-                        Role::Flank(f) if f > g => Role::Flank(f + 1),
-                        Role::Seam(x) if x >= g => Role::Seam(x + 1),
-                        r => r,
-                    });
+                    s.role = s.role.map(|Role::Flank(f)| Role::Flank(if f > g { f + 1 } else { f }));
                     if s.role == Some(Role::Flank(g)) {
                         on.push(i);
                     }
@@ -332,7 +281,7 @@ impl Flanks {
         }
     }
 
-    /// Sets missing roles, applies merges and splits, frees bots off dead flanks, fills empty seams,
+    /// Sets missing roles, applies merges and splits, frees bots off dead flanks,
     /// and moves at most one able bot to a short-handed flank.
     pub fn assign(&mut self, seats: &mut [Seat], now: f64) -> Vec<&'static str> {
         let mut why = Vec::new();
@@ -355,12 +304,6 @@ impl Flanks {
             let role = match seats[i].role {
                 None => self.nearest_live(u).map(|g| (Role::Flank(g), "flank_join")),
                 Some(Role::Flank(f)) if !self.groups[f].live() => self.nearest_live(u).map(|g| (Role::Flank(g), "flank_collapse")),
-                Some(Role::Seam(j)) => match (self.groups[j].live(), self.groups[j + 1].live()) {
-                    (true, true) => None,
-                    (true, false) => Some((Role::Flank(j), "seam_collapse")),
-                    (false, true) => Some((Role::Flank(j + 1), "seam_collapse")),
-                    (false, false) => self.nearest_live(u).map(|g| (Role::Flank(g), "seam_collapse")),
-                },
                 _ => None,
             };
             if let Some((r, w)) = role {
@@ -369,36 +312,10 @@ impl Flanks {
                 why.push(w);
             }
         }
-        why.extend(self.fill_seams(seats, now));
         self.tally_own(seats);
         if now - self.last_switch >= REBALANCE_GAP_S {
             if let Some(w) = self.rebalance(seats, now) {
                 why.push(w);
-            }
-        }
-        why
-    }
-
-    /// A live gap without a seam ship takes the non-brawler nearest it from a neighbouring flank that keeps another ship.
-    fn fill_seams(&self, seats: &mut [Seat], now: f64) -> Vec<&'static str> {
-        let mut why = Vec::new();
-        if !self.seams_allowed(seats) {
-            return why;
-        }
-        for j in 0..self.groups.len() - 1 {
-            if !self.groups[j].live() || !self.groups[j + 1].live() || seats.iter().any(|s| s.role == Some(Role::Seam(j))) {
-                continue;
-            }
-            let count = |f: usize| seats.iter().filter(|s| s.role == Some(Role::Flank(f))).count();
-            let su = self.gap_u(j);
-            let pick = (0..seats.len())
-                .filter(|&i| seats[i].style != Playstyle::Brawler)
-                .filter(|&i| matches!(seats[i].role, Some(Role::Flank(f)) if (f == j || f == j + 1) && count(f) > 1))
-                .min_by(|&a, &b| (self.lat(seats[a].pos) - su).abs().total_cmp(&(self.lat(seats[b].pos) - su).abs()));
-            if let Some(i) = pick {
-                seats[i].role = Some(Role::Seam(j));
-                seats[i].since = now;
-                why.push("seam_fill");
             }
         }
         why
@@ -428,20 +345,8 @@ impl Flanks {
         Some(if abandoned { "flank_abandoned" } else { "flank_rebalance" })
     }
 
-    /// Seam ships nearest each gap, then the rest in lateral order by each flank's share of the enemy.
+    /// In lateral order by each flank's share of the enemy.
     fn initial(&mut self, seats: &mut [Seat], now: f64) {
-        if self.seams_allowed(seats) {
-            for j in 0..self.groups.len() - 1 {
-                let su = self.gap_u(j);
-                let pick = (0..seats.len())
-                    .filter(|&i| seats[i].role.is_none() && seats[i].style != Playstyle::Brawler)
-                    .min_by(|&a, &b| (self.lat(seats[a].pos) - su).abs().total_cmp(&(self.lat(seats[b].pos) - su).abs()));
-                if let Some(i) = pick {
-                    seats[i].role = Some(Role::Seam(j));
-                    seats[i].since = now;
-                }
-            }
-        }
         let rest: Vec<usize> = (0..seats.len()).filter(|&i| seats[i].role.is_none()).collect();
         let live: Vec<usize> = (0..self.groups.len()).filter(|&g| self.groups[g].live()).collect();
         self.deal(seats, rest, &live, now);
@@ -539,10 +444,10 @@ mod tests {
         assert!(f.reshape(0.0).is_none());
         assert!(matches!(f.reshape(RESHAPE_S), Some(Reshape::Merge(0))));
         assert_eq!(f.groups.len(), 2);
-        let mut seats = vec![seat(0, 0.0, Role::Seam(0)), seat(1, 3000.0, Role::Flank(1)), seat(2, 0.0, Role::Seam(1)), seat(3, 20000.0, Role::Flank(2))];
+        let mut seats = vec![seat(0, 0.0, Role::Flank(0)), seat(1, 3000.0, Role::Flank(1)), seat(3, 20000.0, Role::Flank(2))];
         f.remap(Reshape::Merge(0), &mut seats, 1.0);
         let r: Vec<_> = seats.iter().map(|s| s.role.unwrap()).collect();
-        assert_eq!(r, vec![Role::Flank(0), Role::Flank(0), Role::Seam(0), Role::Flank(1)]);
+        assert_eq!(r, vec![Role::Flank(0), Role::Flank(0), Role::Flank(1)]);
     }
 
     #[test]
