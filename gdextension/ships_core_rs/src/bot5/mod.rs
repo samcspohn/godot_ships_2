@@ -762,6 +762,9 @@ impl World {
                 if f.is_some_and(|f| f.dark) {
                     scan_tel.push("station_dark");
                 }
+                if f.is_some_and(|f| f.checkpoint.is_some()) {
+                    scan_tel.push("station_checkpoint");
+                }
                 if req.target.is_some() && f.is_some_and(|f| !f.shot) {
                     scan_tel.push("station_no_shot");
                 }

@@ -62,6 +62,9 @@ pub struct Plan {
     pub score: f32,
     /// Hold fire: the station spots unseen.
     pub dark: bool,
+    /// Where the scan wants us; `station` is a checkpoint on the way when they differ.
+    pub goal: Vector2,
+    pub anchor_id: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -142,7 +145,9 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     };
 
     let nearest = |it: &mut dyn Iterator<Item = (Option<i64>, Vector2)>| it.min_by(|a, b| a.1.distance_to(my).total_cmp(&b.1.distance_to(my)));
-    let picked = assign.target.and_then(|id| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (Some(e.id), p)))
+    let in_view = |id: i64| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (Some(e.id), p));
+    let picked = assign.target.and_then(in_view)
+        .or_else(|| m.plan.and_then(|p| p.anchor_id).and_then(in_view))
         .or_else(|| nearest(&mut view.iter().filter(|(e, p)| ours(e, *p)).map(|&(e, p)| (Some(e.id), p))))
         .or_else(|| m.flank.as_ref().and_then(|f| f.centre).map(|c| (None, c)))
         .or_else(|| nearest(&mut view.iter().map(|&(e, p)| (Some(e.id), p))));
@@ -154,13 +159,16 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
         anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, seam: m.flank.as_ref().and_then(|f| f.seam), only,
     };
+    let still_good = |p: &Plan, scan: &mut dyn FnMut(&Req) -> Option<Found>|
+        scan(&req(None, None, Some(p.station))).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
+    let at_goal = |p: &Plan| p.station.distance_to(p.goal) < p.hold_radius;
     if let Some(p) = m.plan {
         let blocked = blocked(m, &p, my, assign.target);
         let arrived = p.posture == Posture::Engage && p.station.distance_to(my) < p.hold_radius;
-        let fine = p.posture == posture && !arrived && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot);
-        let again = fine && now >= p.hold_until && posture == Posture::Engage
-            && scan(&req(None, None, Some(p.station))).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
-        if fine && (now < p.hold_until || again) {
+        let fine = p.posture == posture && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot)
+            && !(arrived && !at_goal(&p));
+        let again = fine && (now >= p.hold_until || arrived) && posture == Posture::Engage && still_good(&p, scan);
+        if fine && ((now < p.hold_until && !arrived) || again) {
             let mut p = p;
             if again {
                 p.hold_until = now + HOLD_S;
@@ -175,6 +183,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         Some(p) if p.posture != posture => "posture",
         Some(_) if blocked => "blocked",
         Some(p) if p.anchor.distance_to(anchor) >= ANCHOR_MOVE_M => "anchor_moved",
+        Some(p) if p.station.distance_to(my) < p.hold_radius && !at_goal(&p) => "checkpoint",
         Some(p) if p.station.distance_to(my) < p.hold_radius => "arrived",
         Some(p) if now < p.hold_until => "no_shot",
         Some(_) => "expired",
@@ -182,13 +191,19 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
 
     let plan = match posture {
         Posture::Engage => {
-            let prev = m.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station);
-            let found = scan(&req(prev.filter(|_| matches!(reason, "expired" | "anchor_moved")),
-                prev.filter(|_| matches!(reason, "arrived" | "blocked")), None));
+            let prev = m.plan.filter(|p| p.posture == Posture::Engage);
+            let keep = prev.filter(|_| matches!(reason, "expired" | "anchor_moved" | "checkpoint")).map(|p| p.goal);
+            let found = scan(&req(keep, prev.filter(|_| matches!(reason, "arrived" | "blocked")).map(|p| p.station), None));
             let fallback = || anchor + dir_or(my - anchor, Vector2::new(0.0, 1.0)) * ((lo + hi) * 0.5);
-            Plan { posture, station: found.map_or_else(fallback, |f| f.station), anchor, heading: broadside(my, anchor, me.heading()),
+            let goal = found.map_or_else(fallback, |f| f.station);
+            let (station, shot, score, dark) = match found {
+                Some(Found { checkpoint: Some(c), .. }) => c,
+                Some(f) => (f.station, f.shot, f.net, f.dark),
+                None => (goal, false, 0.0, false),
+            };
+            Plan { posture, station, anchor, heading: broadside(my, anchor, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0,
-                shot: found.is_some_and(|f| f.shot), score: found.map_or(0.0, |f| f.net), dark: found.is_some_and(|f| f.dark) }
+                shot, score, dark, goal, anchor_id: picked.and_then(|c| c.0) }
         }
         Posture::TorpRun => {
             let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
@@ -198,7 +213,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
             Plan { posture, station: tp + dir * (TORP_RUN_RANGE * range), anchor: tp, heading: broadside(my, tp, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false,
-                score: 0.0, dark: false }
+                score: 0.0, dark: false, goal: tp + dir * (TORP_RUN_RANGE * range), anchor_id: Some(t.id) }
         }
         Posture::Retreat => {
             let threat = centroid(view.iter().map(|&(_, p)| p)).unwrap_or(anchor);
@@ -208,7 +223,8 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 dir = dir_or(dir + dir_or(a - my, Vector2::ZERO) * 0.5, dir);
             }
             Plan { posture, station: my + dir * (0.6 * me.gun_range), anchor, heading: 0.0, heading_weight: 0.0,
-                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: false }
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: false,
+                goal: my + dir * (0.6 * me.gun_range), anchor_id: None }
         }
     };
     (Some(plan), assign, Some(reason))

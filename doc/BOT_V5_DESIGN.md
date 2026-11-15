@@ -263,3 +263,19 @@ Tail cost is candidates x foes: in a 12-contact fight a long-range BB passes 500
 2. Prefilter on the hive target's band (or the flank group centre), not the union of every foe's band.
 3. Quick pass on every second berth along an arc, refine around the best.
 Target: worst scan under ~300 us.
+
+## Checkpoints (2026-11-14)
+
+- Plan keeps `goal` (the scan's pick) and `station` (where the navigator sails). A goal over 90 s away by sail gets a checkpoint: the best station passing the gates with net >= 0, within 90 s, at least 1 km nearer the goal, exact-checked when firing. The scan scores up to 8 near candidates in full for this.
+- Arriving at a checkpoint re-scans with keep = goal (`checkpoint` release); arriving at the goal holds it while it still scores (same check as expiry), else moves on (`arrived`).
+- Anchor stickiness: the previous plan's anchor contact is kept while in view and ours, after the hive target.
+- Counters: `station_checkpoint`.
+
+## v4 vs v5 baseline (2026-11-14, 12v12 t10, seeds 1-4, v5 on each side)
+
+| build | v5 wins / 8 | damage v5/v4 |
+|---|---|---|
+| feature scan | 0 | 0.51 |
+| + checkpoints | 1 | 0.60 |
+
+v5 BBs take ~3x the damage of v4 BBs (Yamato 150k vs 60k, Montana 131k vs 54k): v5 has no stance (heading broadside to the anchor, no angling, no dodge).

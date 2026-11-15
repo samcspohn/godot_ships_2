@@ -25,6 +25,12 @@ const LEE_HALF: f32 = std::f32::consts::FRAC_PI_3;
 /// Fallback water around a station that is also covered makes it defensible.
 const DEF_R: f32 = 900.0;
 const DEF_W: f32 = 0.25;
+/// A goal farther than this by sail is approached through a checkpoint: a fightable station on the way.
+const CHECK_MAX_S: f32 = 90.0;
+/// A checkpoint is at least this much nearer the goal than we are.
+const CHECK_PROGRESS_M: f32 = 1000.0;
+/// Near candidates scored in full as checkpoints, beside the top REFINE.
+const CHECK_REFINE: usize = 8;
 /// Candidates scored in full (both moments, dark, defensibility) after a now-only pass over all.
 const REFINE: usize = 24;
 const KEEP_MARGIN: f32 = 0.1;
@@ -290,6 +296,8 @@ pub struct Found {
     /// Nothing passed net >= 0: the best of the rest.
     pub negative: bool,
     pub candidates: usize,
+    /// On the way to a far station: (station, shot checked, net, dark).
+    pub checkpoint: Option<(Vector2, bool, f32, bool)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -468,9 +476,13 @@ impl Scan<'_> {
         }
         let keep = req.keep.and_then(|q| self.vis.cell_of(q));
         quick.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
-        let mut out: Vec<Cand> = Vec::with_capacity(REFINE + 1);
+        let mut near: Vec<(usize, f32)> = quick.iter().enumerate().skip(REFINE)
+            .filter(|(_, c)| c.transit_s <= CHECK_MAX_S && c.e.net >= 0.0).map(|(i, c)| (i, c.e.net)).collect();
+        near.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        near.truncate(CHECK_REFINE);
+        let mut out: Vec<Cand> = Vec::with_capacity(REFINE + CHECK_REFINE + 1);
         for (i, c) in quick.iter().enumerate() {
-            if i >= REFINE && Some(c.k) != keep {
+            if i >= REFINE && Some(c.k) != keep && !near.iter().any(|n| n.0 == i) {
                 continue;
             }
             let Some(e) = self.eval(c.k, req, need, true) else { continue };
@@ -486,7 +498,7 @@ impl Scan<'_> {
         let t0 = std::time::Instant::now();
         let v = self.vis;
         let found = |c: &Cand, shot: bool, negative: bool, n: usize| Found { station: c.p, shot, value: c.e.value, exposure: c.e.exposure,
-            net: c.e.net, dark: c.e.dark, negative, candidates: n };
+            net: c.e.net, dark: c.e.dark, negative, candidates: n, checkpoint: None };
         if let Some(q) = req.only {
             let k = v.cell_of(q)?;
             let e = self.eval(k, req, MIN_IN_RANGE.min(self.foes.len()), true).or_else(|| self.eval(k, req, 1, true))?;
@@ -547,7 +559,15 @@ impl Scan<'_> {
             d.us = t0.elapsed().as_micros() as u64;
             *out = d;
         }
-        chosen.map(|(i, shot)| found(&cands[i], shot, negative, n))
+        let mut f = chosen.map(|(i, shot)| found(&cands[i], shot, negative, n))?;
+        let goal = chosen.map(|(i, _)| cands[i])?;
+        if goal.transit_s > CHECK_MAX_S {
+            let to_goal = self.my.distance_to(goal.p) - CHECK_PROGRESS_M;
+            let mut on_way: Vec<&Cand> = cands.iter().filter(|c| c.transit_s <= CHECK_MAX_S && c.e.net >= 0.0 && c.p.distance_to(goal.p) <= to_goal).collect();
+            on_way.sort_unstable_by(|a, b| b.e.net.total_cmp(&a.e.net));
+            f.checkpoint = on_way.into_iter().take(VERIFY).find(|c| !needs_shot(c) || exact(c.p)).map(|c| (c.p, needs_shot(c), c.e.net, c.e.dark));
+        }
+        Some(f)
     }
 }
 
