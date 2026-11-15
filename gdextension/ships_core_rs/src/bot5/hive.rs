@@ -17,12 +17,16 @@ const RETREAT_CLEAR_S: f64 = 20.0;
 const FOCUS_BONUS: f32 = 0.3;
 const HOLD_RADIUS_M: f32 = 400.0;
 const BLOCKED_RELEASE_S: f32 = 3.0;
+/// Guns blocked on the way are expected; only blocked at the station releases it.
+const BLOCKED_AT_M: f32 = 1000.0;
 const TORP_RUN_HP: f32 = 0.5;
 const TORP_RUN_RANGE: f32 = 0.7;
 const TORP_RUN_REACH: f32 = 0.8;
 const TORP_RUN_LEAD: f32 = 0.7;
 /// Shooting outside our flank is worth this share: taken when nothing of ours is in reach.
 const OFF_FLANK_W: f32 = 0.4;
+/// An expired station that still scores this share of what it did when set is held again without a search.
+const HOLD_AGAIN: f32 = 0.75;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
@@ -54,6 +58,10 @@ pub struct Plan {
     pub serial: u32,
     /// Station checked navigable with a clear shot at the anchor.
     pub shot: bool,
+    /// Station net when set (HP share per minute), to judge it again on expiry.
+    pub score: f32,
+    /// Hold fire: the station spots unseen.
+    pub dark: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -143,18 +151,25 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
         p.shot && contact.is_some() && !shot(p.station, anchor);
 
+    let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
+        anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, seam: m.flank.as_ref().and_then(|f| f.seam), only,
+    };
     if let Some(p) = m.plan {
-        let blocked = m.blocked_s >= BLOCKED_RELEASE_S && assign.target.is_some();
+        let blocked = blocked(m, &p, my, assign.target);
         let arrived = p.posture == Posture::Engage && p.station.distance_to(my) < p.hold_radius;
-        let keep = p.posture == posture && now < p.hold_until && !arrived && !blocked
-            && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot);
-        if keep {
+        let fine = p.posture == posture && !arrived && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot);
+        let again = fine && now >= p.hold_until && posture == Posture::Engage
+            && scan(&req(None, None, Some(p.station))).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
+        if fine && (now < p.hold_until || again) {
             let mut p = p;
+            if again {
+                p.hold_until = now + HOLD_S;
+            }
             p.heading = broadside(my, anchor, me.heading());
             return (Some(p), assign, None);
         }
     }
-    let blocked = m.blocked_s >= BLOCKED_RELEASE_S && assign.target.is_some();
+    let blocked = m.plan.is_some_and(|p| blocked(m, &p, my, assign.target));
     let reason = match m.plan {
         None => "first",
         Some(p) if p.posture != posture => "posture",
@@ -168,20 +183,12 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let plan = match posture {
         Posture::Engage => {
             let prev = m.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station);
-            let req = Req {
-                anchor,
-                target: picked.and_then(|c| c.0),
-                lo,
-                hi,
-                keep: prev.filter(|_| matches!(reason, "expired" | "anchor_moved")),
-                avoid: prev.filter(|_| matches!(reason, "arrived" | "blocked")),
-                seam: m.flank.as_ref().and_then(|f| f.seam),
-            };
-            let found = scan(&req);
+            let found = scan(&req(prev.filter(|_| matches!(reason, "expired" | "anchor_moved")),
+                prev.filter(|_| matches!(reason, "arrived" | "blocked")), None));
             let fallback = || anchor + dir_or(my - anchor, Vector2::new(0.0, 1.0)) * ((lo + hi) * 0.5);
             Plan { posture, station: found.map_or_else(fallback, |f| f.station), anchor, heading: broadside(my, anchor, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0,
-                shot: found.is_some_and(|f| f.shot) }
+                shot: found.is_some_and(|f| f.shot), score: found.map_or(0.0, |f| f.net), dark: found.is_some_and(|f| f.dark) }
         }
         Posture::TorpRun => {
             let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
@@ -190,7 +197,8 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
             let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
             Plan { posture, station: tp + dir * (TORP_RUN_RANGE * range), anchor: tp, heading: broadside(my, tp, me.heading()),
-                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false }
+                heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false,
+                score: 0.0, dark: false }
         }
         Posture::Retreat => {
             let threat = centroid(view.iter().map(|&(_, p)| p)).unwrap_or(anchor);
@@ -200,10 +208,14 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 dir = dir_or(dir + dir_or(a - my, Vector2::ZERO) * 0.5, dir);
             }
             Plan { posture, station: my + dir * (0.6 * me.gun_range), anchor, heading: 0.0, heading_weight: 0.0,
-                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false }
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: false }
         }
     };
     (Some(plan), assign, Some(reason))
+}
+
+fn blocked(m: &Member, p: &Plan, my: Vector2, target: Option<i64>) -> bool {
+    m.blocked_s >= BLOCKED_RELEASE_S && target.is_some() && p.station.distance_to(my) < BLOCKED_AT_M
 }
 
 fn pick_target(m: &Member, snap: &Snapshot, committed: &[Committed], now: f64, assign: &mut Assignment,

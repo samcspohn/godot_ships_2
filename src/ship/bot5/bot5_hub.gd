@@ -12,6 +12,8 @@ const PAIR_RETRY_S := 2.0
 ## Bots whose pair and threat keys are filled per frame: the first fill is every enemy for every bot.
 const PAIR_SLOTS_PER_FRAME := 2
 const LIVE_EVERY_S := 0.5
+## Real over predicted main-battery damage, from tools/botmatch/bot5_learn.py.
+const CALIB_PATH := "res://assets/bot5_calib.json"
 const STATIC_EVERY_S := 2.0
 
 var world: BotWorld = BotWorld.new()
@@ -36,6 +38,11 @@ var _trace := OS.has_environment("SHIPS_BOT5_TRACE")
 var _gates: Dictionary = {}
 var _data := PackedFloat32Array()
 var _frame_us := PackedInt32Array()
+## Per frame, GD_PHASES µs: register, ships, pairs, live, inputs, tick, apply.
+var _gd_ph := PackedInt32Array()
+const GD_PHASES := ["register", "ships", "pairs", "live", "inputs", "tick", "apply"]
+const RS_PHASES := ["beliefs", "tracks", "flanks", "field", "curves", "spot_needs", "resolve", "scans", "spotters",
+	"drive", "guns", "torps", "consumables", "tel", "valid_station"]
 ## Slots holding every enemy's pair and threat keys; cleared when ships register.
 var _pairs_done: Dictionary = {}
 
@@ -46,6 +53,10 @@ func add_ship(ship: Ship, team_data: Dictionary) -> void:
 
 func is_v5(ship: Ship) -> bool:
 	return _slot_of.has(ship)
+
+
+func feature_bytes() -> PackedByteArray:
+	return world.feature_bytes()
 
 
 func field_bytes(ship: Ship, dark: bool) -> PackedByteArray:
@@ -69,6 +80,11 @@ func _setup() -> bool:
 	world.setup(NavigationMapManager.get_map(), NavigationMapManager.get_hpa_graph(), server.ship_registry,
 		ProjectileManager.get_raw(), get_viewport().find_world_3d().direct_space_state,
 		NavigationMapManager.get_visibility(), NavigationMapManager.get_reach_field())
+	var calib = JSON.parse_string(FileAccess.get_file_as_string(CALIB_PATH)) if FileAccess.file_exists(CALIB_PATH) else null
+	if calib is Dictionary:
+		world.set_calib(calib)
+	else:
+		push_warning("bot5: no damage calibration at %s; predicted damage used raw" % CALIB_PATH)
 	_setup_done = true
 	return true
 
@@ -82,17 +98,34 @@ func _physics_process(delta: float) -> void:
 		world.prepare()
 	if _ships.is_empty():
 		return
+	var ph := PackedInt32Array()
+	ph.resize(GD_PHASES.size())
+	var tp := Time.get_ticks_usec()
+	ph[0] = tp - t0
 	var now: float = SimClock.now()
 	_push_ships(now)
+	ph[1] = Time.get_ticks_usec() - tp
+	tp = Time.get_ticks_usec()
 	if _pairs_done.size() < _ships.size() and now >= _pair_t:
 		_push_pairs(now)
+	ph[2] = Time.get_ticks_usec() - tp
+	tp = Time.get_ticks_usec()
 	if now - _live_t >= LIVE_EVERY_S:
 		_live_t = now
 		_push_live()
+		_push_damage(now)
+	ph[3] = Time.get_ticks_usec() - tp
+	tp = Time.get_ticks_usec()
 	for slot in _ships.size():
 		_push_inputs(slot)
+	ph[4] = Time.get_ticks_usec() - tp
+	tp = Time.get_ticks_usec()
 	world.tick(now, delta, ProjectileManager.get_shell_time_multiplier())
+	ph[5] = Time.get_ticks_usec() - tp
+	tp = Time.get_ticks_usec()
 	_apply(world.commands(), now)
+	ph[6] = Time.get_ticks_usec() - tp
+	_gd_ph.append_array(ph)
 	BotTiming.add(&"bot5", t0)
 	_frame_us.append(Time.get_ticks_usec() - t0)
 	var f: Ship = Debug.follow_ship
@@ -131,6 +164,7 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 	var gp: GunParams = ship.artillery_controller.get_params()
 	var slot := world.add_bot({
 		ship_id = ship.get_instance_id(),
+		name = ship.scene_file_path.get_file().get_basename(),
 		team = ship.team.team_id,
 		hull_class = int(ship.ship_class),
 		playstyle = int(cfg.get("playstyle", -1)),
@@ -334,6 +368,13 @@ func _push_pairs(now: float) -> void:
 		_pair_t = now + PAIR_RETRY_S
 
 
+func _push_damage(now: float) -> void:
+	for slot in _ships.size():
+		var s := _ships[slot]
+		if is_instance_valid(s) and s.is_alive() and s.stats != null:
+			world.set_damage(slot, now, s.stats.main_damage, s.stats.main_taken)
+
+
 func _push_live() -> void:
 	for t: Ship in server.get_all_ships():
 		if not is_instance_valid(t) or not t.is_alive():
@@ -531,7 +572,36 @@ func shots_of(ship: Ship) -> PackedInt32Array:
 func telemetry() -> Dictionary:
 	var t := world.telemetry()
 	t["hub_frame_us"] = frame_stats()
+	t["frame_phases"] = phase_stats()
 	return t
+
+
+## Mean µs per phase over all frames, over frames at or past the p99 total, and the ten worst frames.
+func phase_stats() -> Dictionary:
+	var rs := world.frame_phases()
+	var n := _frame_us.size()
+	var ng := GD_PHASES.size()
+	var nr := RS_PHASES.size()
+	if n == 0 or _gd_ph.size() != n * ng or rs.size() != n * nr:
+		return {"error": "frames %d gd %d rs %d" % [n, _gd_ph.size() / ng, rs.size() / nr]}
+	var order := range(n)
+	order.sort_custom(func(a, b): return _frame_us[a] > _frame_us[b])
+	var row := func(f: int) -> Dictionary:
+		var d := {"total": _frame_us[f]}
+		for i in ng:
+			d[GD_PHASES[i]] = _gd_ph[f * ng + i]
+		for i in nr:
+			d[RS_PHASES[i]] = rs[f * nr + i]
+		return d
+	var mean := func(frames: Array) -> Dictionary:
+		var acc := {}
+		for f in frames:
+			var r: Dictionary = row.call(f)
+			for k in r:
+				acc[k] = acc.get(k, 0.0) + float(r[k]) / frames.size()
+		return acc
+	var tail := order.slice(0, maxi(1, n / 100))
+	return {"all": mean.call(order), "p99_tail": mean.call(tail), "worst": order.slice(0, 10).map(row)}
 
 
 func frame_stats() -> Dictionary:

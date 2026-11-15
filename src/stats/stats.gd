@@ -12,6 +12,8 @@ var citadel_count: int = 0
 var citadel_overpen_count: int = 0
 var partial_pen_count: int = 0
 var main_damage: float = 0
+## Main-battery damage this ship has taken.
+var main_taken: float = 0
 
 var frags: int = 0
 
@@ -125,6 +127,8 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 	else:
 		main_damage += damage
 		main_hits += 1
+		if is_instance_valid(damaged_ship) and damaged_ship.stats != null:
+			damaged_ship.stats.main_taken += damage
 
 	# Track hit type counter
 	var counter_name: String = HIT_TYPE_COUNTERS.get(hit_type, "")

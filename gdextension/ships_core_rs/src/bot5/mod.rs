@@ -1,7 +1,8 @@
 //! Bot controller v5: team hive + per-bot controllers. See doc/BOT_V5_DESIGN.md.
 
 pub mod belief;
-pub mod field;
+pub mod features;
+mod field;
 pub mod flank;
 pub mod gunnery;
 pub mod hive;
@@ -49,6 +50,8 @@ const NAV_PUSH_EVERY: i64 = 12;
 const JUMP_PUSHES_PER_FRAME: u32 = 4;
 /// Bots that re-plan per frame; a team pass resumes in its aptitude order on the next frame.
 const REPLANS_PER_FRAME: u32 = 2;
+/// A cruiser hiding inside this share of its gun range may hold fire to spot.
+const DARK_CA_CONCEAL: f32 = 0.7;
 const AIM_EVERY: i64 = 3;
 const STATION_JUMP_M: f32 = 1000.0;
 const BOT_INPUT_STRIDE: usize = 18;
@@ -101,6 +104,7 @@ struct Command {
 
 struct Bot {
     ship_id: i64,
+    name: String,
     team: i32,
     style: Playstyle,
     apt: Aptitude,
@@ -134,12 +138,31 @@ struct Bot {
     role_since: f64,
     /// Point-table keys of each enemy's AP/HE against our hull.
     threats: HashMap<i64, [Option<String>; 2]>,
+    dmg: Option<DmgSample>,
+}
+
+/// Last damage sample: cumulative main-battery damage, and the raw predicted rates (per minute) booked until the next.
+struct DmgSample {
+    at: f64,
+    dealt: f32,
+    taken: f32,
+    rate_in: f32,
+    rate_out: f32,
+    key_out: Option<String>,
 }
 
 struct Pass {
     order: Vec<usize>,
     next: usize,
     committed: Vec<Committed>,
+    spot: HashMap<i64, SpotNeed>,
+}
+
+/// Who lights an enemy, and each ally's fire on it (HP share per minute) that depends on it being lit.
+#[derive(Default)]
+struct SpotNeed {
+    lit_by: Vec<i64>,
+    fire: Vec<(i64, f32)>,
 }
 
 #[derive(Default)]
@@ -164,6 +187,7 @@ pub struct World {
     vis: Option<Gd<VisibilityGrid>>,
     reach: Option<Gd<ReachField>>,
     layout: Option<Layout>,
+    features: Option<features::Features>,
     matrices: HashMap<i64, Arc<GunMatrix>>,
     curves: Curves,
     store: Option<Store>,
@@ -181,12 +205,95 @@ pub struct World {
     jump_pushes: u32,
     /// Station scan: [cells and scoring, exact rays, curve refresh], µs.
     scan_us: [u64; 4],
+    /// This frame's µs per Phase, and every frame's.
+    ph: [u32; PHASES],
+    phases: Vec<[u32; PHASES]>,
+    calib_in: HashMap<String, f32>,
+    calib_out: HashMap<String, f32>,
+}
+
+fn fire_of<'a>(snap: &'a Snapshot, curves: &'a Curves, id: i64, keys: Option<&[Option<String>; 2]>) -> Option<Fire<'a>> {
+    let ship = snap.get(id)?;
+    let k = keys?;
+    let c = [0, 1].map(|a| k[a].as_deref().and_then(|k| curves.get(k)));
+    c.iter().any(|c| c.is_some()).then(|| Fire::new(c, ship))
+}
+
+/// Each field source once, with its fire on `bot` and its gun-matrix row from its cell.
+fn threats_of<'a>(field: &'a TeamField, bot: &Bot, snap: &'a Snapshot, curves: &'a Curves,
+        matrices: &'a HashMap<i64, Arc<GunMatrix>>, tel: &mut Vec<&'static str>, ahead: bool) -> Vec<Threat<'a>> {
+    let mut out = Vec::new();
+    for (_, now_i, ahead_i) in sources_by_id(field) {
+        let s = &field.sources[if ahead { ahead_i } else { now_i }];
+        let Some(f) = fire_of(snap, curves, s.id, bot.threats.get(&s.id)) else {
+            tel.push("threat_no_table");
+            continue;
+        };
+        let row = matrices.get(&s.id).and_then(|m| m.row(s.cell));
+        out.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f });
+    }
+    out
+}
+
+/// Per enemy id its source now, and its source ahead (the same one when not forecast).
+fn sources_by_id(field: &TeamField) -> Vec<(i64, usize, usize)> {
+    let mut out: Vec<(i64, usize, usize)> = Vec::new();
+    for (i, s) in field.sources.iter().enumerate() {
+        match out.iter_mut().find(|o| o.0 == s.id) {
+            Some(o) if s.ahead => o.2 = i,
+            Some(_) => {}
+            None => out.push((s.id, i, i)),
+        }
+    }
+    out
+}
+
+fn class_key(c: HullClass) -> String {
+    format!("{c:?}")
+}
+
+impl World {
+    /// Books the raw predicted rates since the last sample against what landed, then predicts from here.
+    fn damage_sample(&mut self, i: usize, now: f64, dealt: f32, taken: f32) {
+        let Some(bot) = self.bots.get(i) else { return };
+        let (Some(me), Some(vis), Some(h)) = (self.snap.get(bot.ship_id), &self.vis, self.teams.get(&bot.team)) else { return };
+        if let Some(d) = &bot.dmg {
+            let dt = (now - d.at) as f32 / 60.0;
+            self.tel.calib(format!("in|{:?}", me.class), d.rate_in * dt, taken - d.taken, dt);
+            if let Some(k) = &d.key_out {
+                self.tel.calib(k.clone(), d.rate_out * dt, dealt - d.dealt, dt);
+            }
+        }
+        let vis = vis.bind();
+        let mut tel = Vec::new();
+        let threats = threats_of(&h.field, bot, &self.snap, &self.curves, &self.matrices, &mut tel, false);
+        let p = me.p2();
+        let rate_in = vis.cell_of(p).map_or(0.0, |k| station::exposure_at(&threats, h.field.seen_at(&vis, k, me.conceal.max(me.gun_range)), k, p));
+        let tgt = bot.assign.target.and_then(|id| self.snap.get(id)).filter(|t| t.alive && t.seen && t.p2().distance_to(p) <= me.gun_range);
+        let out = tgt.and_then(|t| fire_of(&self.snap, &self.curves, t.id, bot.gun.pairs.get(&t.id).map(|q| &q.keys))
+            .map(|f| (Target { ship: t, at: t.p2(), fire: f }.value_at(p), format!("out|{:?}>{:?}", me.class, t.class))));
+        let s = DmgSample { at: now, dealt, taken, rate_in, rate_out: out.as_ref().map_or(0.0, |o| o.0), key_out: out.map(|o| o.1) };
+        self.bots[i].dmg = Some(s);
+    }
+}
+
+/// beliefs, tracks, flanks, field, curves, spot_needs, resolve, scans, spotters, drive, guns, torps, consumables, tel, valid_station
+const PHASES: usize = 15;
+
+fn us(t: std::time::Instant) -> u32 {
+    t.elapsed().as_micros() as u32
+}
+
+fn scan_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SHIPS_BOT5_SCAN_TRACE").is_some())
 }
 
 impl World {
     fn add_bot(&mut self, cfg: &VarDictionary) -> i32 {
         let g = |k: &str| cfg.get(k).map_or(0.0, |v| v.to_f32());
         let ship_id = cfg.get("ship_id").map_or(0, |v| v.to_i64());
+        let name = cfg.get("name").map_or_else(String::new, |v| v.to_string());
         let team = g("team") as i32;
         let class = HullClass::from_i32(g("hull_class") as i32);
         let kin = Kinematics {
@@ -234,6 +341,7 @@ impl World {
         self.teams.entry(team).or_default();
         self.bots.push(Bot {
             ship_id,
+            name,
             team,
             style: Playstyle::from_i32(cfg.get("playstyle").map_or(-1, |v| v.to_i32()), class),
             apt: Aptitude { level: g("aptitude") as i32 },
@@ -264,6 +372,7 @@ impl World {
             role: None,
             role_since: 0.0,
             threats: HashMap::new(),
+            dmg: None,
         });
         (self.bots.len() - 1) as i32
     }
@@ -279,7 +388,13 @@ impl World {
             if !v.is_ready() {
                 return false;
             }
-            self.layout = Some(Layout::new(&v));
+            let lay = Layout::new(&v);
+            let t = std::time::Instant::now();
+            self.features = Some(features::Features::build(&v, &lay));
+            let f = self.features.as_ref().unwrap();
+            godot_print!("bot5 features: {} islands, {} berths, {} gaps, {} lattice in {} ms", f.islands.len(),
+                f.islands.iter().map(|i| i.berths.len()).sum::<usize>(), f.gaps.len(), f.lattice.len(), t.elapsed().as_millis());
+            self.layout = Some(lay);
         }
         for b in self.bots.iter_mut().filter(|b| b.shot_gun.is_none()) {
             b.shot_gun = b.gun.spec(b.gun_range).and_then(|g| self.shots.gun(g));
@@ -290,9 +405,13 @@ impl World {
     fn tick(&mut self, now: f64, dt: f32, time_mult: f64) {
         self.frame += 1;
         self.time_mult = time_mult;
+        self.ph = [0; PHASES];
         let t0 = std::time::Instant::now();
         self.update_beliefs(now);
+        self.ph[0] = us(t0);
+        let t = std::time::Instant::now();
         self.tracks.update(now, &self.snap.ships);
+        self.ph[1] = us(t);
         self.hive(now);
         let t1 = std::time::Instant::now();
         self.jump_pushes = 0;
@@ -300,17 +419,27 @@ impl World {
             self.drive(i, dt);
         }
         let t2 = std::time::Instant::now();
+        self.ph[9] = (t2 - t1).as_micros() as u32;
         for i in 0..self.bots.len() {
+            let t = std::time::Instant::now();
             self.guns(i, now, dt, time_mult);
+            let g = std::time::Instant::now();
             self.torps(i, now);
+            let c = std::time::Instant::now();
             self.consumables(i);
             self.spot_cmd(i);
+            self.ph[10] += (g - t).as_micros() as u32;
+            self.ph[11] += (c - g).as_micros() as u32;
+            self.ph[12] += us(c);
         }
+        let t = std::time::Instant::now();
         self.tel.resolve(now, &self.snap);
+        self.ph[13] = us(t);
         let t3 = std::time::Instant::now();
         self.time_us[0] += (t1 - t0).as_micros() as u64;
         self.time_us[1] += (t2 - t1).as_micros() as u64;
         self.time_us[2] += (t3 - t2).as_micros() as u64;
+        self.phases.push(self.ph);
     }
 
     fn update_beliefs(&mut self, now: f64) {
@@ -442,10 +571,13 @@ impl World {
 
     /// Ascending aptitude: weaker bots commit first; stronger ones plan around them.
     fn solve_team(&mut self, team: i32, now: f64) {
+        let t = std::time::Instant::now();
         self.update_flanks(team, now);
+        self.ph[2] += us(t);
         let t0 = std::time::Instant::now();
         self.update_field(team, now);
         self.time_us[3] += t0.elapsed().as_micros() as u64;
+        self.ph[3] += us(t0);
         let mut order: Vec<usize> = (0..self.bots.len())
             .filter(|&i| self.bots[i].team == team && self.snap.get(self.bots[i].ship_id).is_some_and(|s| s.alive))
             .collect();
@@ -467,14 +599,49 @@ impl World {
             }
         }
         self.scan_us[2] += tc.elapsed().as_micros() as u64;
+        self.ph[4] += us(tc);
         let n = order.len();
-        self.teams.get_mut(&team).unwrap().pass = Some(Pass { order, next: 0, committed: Vec::with_capacity(n) });
+        let ts = std::time::Instant::now();
+        let spot = self.spot_needs(team);
+        self.ph[5] += us(ts);
+        self.teams.get_mut(&team).unwrap().pass = Some(Pass { order, next: 0, committed: Vec::with_capacity(n), spot });
         self.run_pass(team, now);
+    }
+
+    /// Per enemy in the field: allies lighting it now (eyes with line of sight, or radar/hydro), and bots' fire on it.
+    fn spot_needs(&self, team: i32) -> HashMap<i64, SpotNeed> {
+        let mut out: HashMap<i64, SpotNeed> = HashMap::new();
+        let Some(vis) = &self.vis else { return out };
+        let vis = vis.bind();
+        let field = &self.teams[&team].field;
+        for s in field.sources.iter().filter(|s| !s.ahead) {
+            let Some(e) = self.snap.get(s.id) else { continue };
+            let n = out.entry(s.id).or_default();
+            let hp = (e.hp_frac * e.hp_max).max(1.0);
+            for a in self.snap.allies_of(team).filter(|a| a.alive) {
+                let d = a.p2().distance_to(s.at);
+                let eyes = d <= e.conceal && vis.cell_of(a.p2()).is_some_and(|k| vis.visible_idx(k, s.cell));
+                if eyes || d <= a.force_spot {
+                    n.lit_by.push(a.id);
+                }
+                if d > a.gun_range {
+                    continue;
+                }
+                let Some(b) = self.bots.iter().find(|b| b.ship_id == a.id).filter(|b| b.assign.target.is_none_or(|t| t == s.id)) else { continue };
+                if let Some(f) = fire_of(&self.snap, &self.curves, s.id, b.gun.pairs.get(&s.id).map(|q| &q.keys)) {
+                    let k = *self.calib_out.get(&format!("{:?}>{:?}", a.class, e.class)).unwrap_or(&1.0);
+                    n.fire.push((a.id, f.mean_at(d) * k / hp));
+                }
+            }
+        }
+        out
     }
 
     /// Resolves the pass's bots in order until REPLANS_PER_FRAME of them re-planned; the rest wait for the next frame.
     fn run_pass(&mut self, team: i32, now: f64) {
         let Some(mut p) = self.teams.get_mut(&team).and_then(|h| h.pass.take()) else { return };
+        let t_pass = std::time::Instant::now();
+        let (mut scan_sum, mut valid_sum) = (0u32, 0u32);
         let store = self.store.clone();
         let mut scan_t = [0u64; 3];
         let time_mult = self.time_mult;
@@ -515,44 +682,48 @@ impl World {
             };
             let field = &self.teams[&team].field;
             let (curves, matrices) = (&self.curves, &self.matrices);
+            let (calib_in, calib_out) = (&self.calib_in, &self.calib_out);
             let vis = self.vis.as_ref().map(|v| v.bind());
             let mut scan_tel: Vec<&'static str> = Vec::new();
             let mut scan = |req: &station::Req| -> Option<station::Found> {
                 let ts = std::time::Instant::now();
-                let (Some(lay), Some(vis)) = (&self.layout, &vis) else { return None };
-                let fire = |id: i64, keys: Option<&[Option<String>; 2]>| -> Option<Fire> {
-                    let ship = snap.get(id)?;
-                    let k = keys?;
-                    let c = [0, 1].map(|a| k[a].as_deref().and_then(|k| curves.get(k)));
-                    c.iter().any(|c| c.is_some()).then(|| Fire::new(c, ship))
-                };
-                let mut seen_ids = std::collections::HashSet::new();
-                let mut threats = Vec::new();
-                for s in field.sources.iter().filter(|s| seen_ids.insert(s.id)) {
-                    let Some(f) = fire(s.id, bot.threats.get(&s.id)) else {
-                        scan_tel.push("threat_no_table");
+                let (Some(lay), Some(vis), Some(feats)) = (&self.layout, &vis, &self.features) else { return None };
+                let threats = [threats_of(field, bot, snap, curves, matrices, &mut scan_tel, false),
+                    threats_of(field, bot, snap, curves, matrices, &mut Vec::new(), true)];
+                let own = matrices.get(&me.id);
+                let mut foes: Vec<station::Foe> = Vec::new();
+                for (id, now_i, ahead_i) in sources_by_id(field) {
+                    let Some(fire) = fire_of(snap, curves, id, bot.gun.pairs.get(&id).map(|q| &q.keys)) else {
+                        if req.target == Some(id) {
+                            scan_tel.push("station_no_value");
+                        }
                         continue;
                     };
-                    let row = matrices.get(&s.id).and_then(|m| m.row(s.cell));
-                    threats.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f });
+                    let pos = |i: usize| {
+                        let s = &field.sources[i];
+                        station::Pos { at: if req.target == Some(id) && !s.ahead { req.anchor } else { s.at }, cell: s.cell, col: own.and_then(|m| m.col(s.cell)) }
+                    };
+                    if req.target == Some(id) && own.and_then(|m| m.col(field.sources[now_i].cell)).is_none() {
+                        scan_tel.push("station_no_column");
+                    }
+                    let spot = p.spot.get(&id).filter(|n| !n.lit_by.iter().any(|&l| l != me.id))
+                        .map_or(0.0, |n| n.fire.iter().filter(|f| f.0 != me.id).map(|f| f.1).sum());
+                    let k_out = *calib_out.get(&format!("{:?}>{:?}", me.class, fire.ship.class)).unwrap_or(&1.0);
+                    let hp = (fire.ship.hp_frac * fire.ship.hp_max).max(1.0);
+                    foes.push(station::Foe { hp, k_out, primary: req.target == Some(id), spot, at: [pos(now_i), pos(ahead_i)], fire });
                 }
-                let target = req.target.and_then(|id| fire(id, bot.gun.pairs.get(&id).map(|p| &p.keys)).map(|f| Target { ship: f.ship, at: req.anchor, fire: f }));
-                if req.target.is_some() && target.is_none() {
-                    scan_tel.push("station_no_value");
-                }
+                let bloom = me.conceal.max(me.gun_range);
+                let seen = [false, true].map(|later| [bloom, me.conceal].map(|r| field.seen_by(lay, vis, r, |s| later || !s.ahead)));
+                let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, my: me.p2(), speed: me.max_speed,
+                    clearance, risk: m.style.risk, reach: me.gun_range, my_hp: (me.hp_frac * me.hp_max).max(1.0),
+                    k_in: *calib_in.get(&class_key(me.class)).unwrap_or(&1.0),
+                    dark_ok: me.class == HullClass::Dd || me.class == HullClass::Ca && me.conceal < DARK_CA_CONCEAL * me.gun_range };
                 let tcell = vis.cell_of(req.anchor);
-                let col = tcell.and_then(|c| matrices.get(&me.id)?.col(c));
-                if req.target.is_some() && col.is_none() {
-                    scan_tel.push("station_no_column");
-                }
-                let own = |k: usize| -> Option<bool> { col.as_ref().map(|c| field::has(c, k)) };
-                let seen = field.seen(lay, vis, me.conceal.max(me.gun_range));
-                let sc = Scan { lay, vis, seen: &seen, threats, target, own: &own, my: me.p2(), speed: me.max_speed,
-                    clearance, risk: m.style.risk * (2.0 - me.hp_frac) };
                 let t0 = std::time::Instant::now();
                 scan_t[2] += (t0 - ts).as_micros() as u64;
                 let mut exact_us = 0u64;
                 let centre = tcell.map(|c| vis.centres[c]);
+                let mut diag = scan_trace().then(station::Diag::default);
                 let f = sc.run(req, &mut |p| {
                     let t = std::time::Instant::now();
                     let r = shot(p, req.anchor);
@@ -565,21 +736,45 @@ impl World {
                     }
                     exact_us += t.elapsed().as_micros() as u64;
                     r
-                });
+                }, diag.as_mut());
+                if let Some(d) = diag.as_ref().filter(|_| req.only.is_none()) {
+                    let c = |c: &station::DiagCell| format!("r={:.0} v={:.4} x={:.4} t={:.0}s s={:.4} at=({:.0},{:.0})",
+                        c.range, c.value, c.exposure, c.transit_s, c.score, c.p.x, c.p.y);
+                    let tgt = req.target.and_then(|id| snap.get(id));
+                    godot_print!("scan5 t={:.0} {} {:?}/{} hp={:.2}/{:.0} conceal={:.0} gun={:.0} tgt={} band={:.0}-{:.0} my_r={:.0} foes={} cands berth={} gap={} other={} passing={} hidden={} shielded={} us={} | pick {} dark={} neg={} | cover {}",
+                        now, bot.name, me.class, bot.style.name(), me.hp_frac, me.hp_max, me.conceal, me.gun_range,
+                        tgt.map_or("-".to_string(), |t| format!("{:?}", t.class)), req.lo, req.hi, me.p2().distance_to(req.anchor),
+                        sc.foes.len(), d.kinds[0], d.kinds[1], d.kinds[2], d.passing, d.hidden, d.shielded, d.us,
+                        d.pick.map_or("none".to_string(), |(p, shot)| format!("{} shot={}", c(&p), shot)),
+                        f.is_some_and(|f| f.dark), f.is_some_and(|f| f.negative),
+                        d.cover.map_or("none".to_string(), |(p, why)| format!("{} why={}", c(&p), why)));
+                }
                 scan_t[0] += t0.elapsed().as_micros() as u64 - exact_us;
                 scan_t[1] += exact_us;
+                if req.only.is_some() {
+                    scan_tel.push(if f.is_some() { "station_hold_ok" } else { "station_hold_check" });
+                    return f;
+                }
                 scan_tel.push(if f.is_some() { "station_scan" } else { "station_scan_empty" });
+                if f.is_some_and(|f| f.negative) {
+                    scan_tel.push("station_negative");
+                }
+                if f.is_some_and(|f| f.dark) {
+                    scan_tel.push("station_dark");
+                }
                 if req.target.is_some() && f.is_some_and(|f| !f.shot) {
                     scan_tel.push("station_no_shot");
                 }
                 f
             };
+            let old = m.plan;
             let (plan, assign, reason) = hive::resolve(&m, snap, belief, &p.committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
             drop(scan);
             drop(vis);
             for w in scan_tel {
                 self.tel.count(w);
             }
+            scan_sum += (scan_t[0] + scan_t[1] + scan_t[2]) as u32;
             self.scan_us[0] += scan_t[0];
             self.scan_us[1] += scan_t[1];
             self.scan_us[3] += scan_t[2];
@@ -592,6 +787,9 @@ impl World {
             }
             if let Some(r) = reason {
                 self.tel.release(r);
+                if let (Some(o), Some(n)) = (old, plan) {
+                    self.tel.shift(r, o.station.distance_to(n.station), o.anchor.distance_to(n.anchor), o.station.distance_to(me.p2()));
+                }
             }
             let bot = &mut self.bots[i];
             if let Some(r) = reason {
@@ -603,7 +801,9 @@ impl World {
                 if reason.is_some() {
                     bot.serial += 1;
                     if !p.shot {
+                        let tv = std::time::Instant::now();
                         p.station = self.valid_station(i, me.p2(), p.station);
+                        valid_sum += us(tv);
                     }
                 }
                 p.serial = self.bots[i].serial;
@@ -612,12 +812,18 @@ impl World {
             p.committed.push(Committed { target: assign.target });
             replans += reason.is_some() as u32;
         }
+        let rest = us(t_pass);
+        self.ph[7] += scan_sum;
+        self.ph[14] += valid_sum;
+        self.ph[6] += rest.saturating_sub(scan_sum + valid_sum);
         if p.next < p.order.len() {
             self.tel.count("hive_pass_resumed");
             self.teams.get_mut(&team).unwrap().pass = Some(p);
             return;
         }
+        let t = std::time::Instant::now();
         self.spotters(team, now);
+        self.ph[8] += us(t);
     }
 
     /// Ascending aptitude like the plan pass; team-aware bots skip contacts an earlier spotter took.
@@ -849,8 +1055,9 @@ impl World {
             self.tel.count(k);
         }
         let hold = in_range && blocked.is_none() && b.gun.sync_hold(now, b.inputs.ready_guns, b.inputs.max_lag_s);
-        b.cmd.fire = in_range && blocked.is_none() && !hold;
-        b.last_gate = if !in_range { "out_of_range" } else if let Some(k) = blocked { k } else if hold { "sync_hold" } else { "fire" };
+        let dark = b.plan.is_some_and(|p| p.dark);
+        b.cmd.fire = in_range && blocked.is_none() && !hold && !dark;
+        b.last_gate = if !in_range { "out_of_range" } else if let Some(k) = blocked { k } else if hold { "sync_hold" } else if dark { "dark" } else { "fire" };
         *b.gates.entry(b.last_gate).or_default() += 1;
     }
 
@@ -935,6 +1142,21 @@ impl BotWorld {
     }
 
     /// `fires`: target-local [x, y, z, burning] per fire zone.
+    /// Cumulative main-battery damage dealt and taken by the slot's ship.
+    #[func]
+    fn set_damage(&mut self, slot: i32, now: f64, dealt: f32, taken: f32) {
+        self.w.damage_sample(slot as usize, now, dealt, taken);
+    }
+
+    /// {"in": {class: k}, "out": {"class>class": k}}: real over predicted main-battery damage.
+    #[func]
+    fn set_calib(&mut self, d: VarDictionary) {
+        let read = |k: &str| d.get(k).and_then(|v| v.try_to::<VarDictionary>().ok()).map(|m| m.iter_shared()
+            .map(|(k, v)| (k.to_string(), v.to_f32())).collect::<HashMap<_, _>>()).unwrap_or_default();
+        self.w.calib_in = read("in");
+        self.w.calib_out = read("out");
+    }
+
     #[func]
     fn set_target_live(&mut self, id: i64, sat: i64, fires: PackedFloat32Array, fire_k: f32) {
         let fires = fires.as_slice().chunks_exact(4).map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
@@ -1109,6 +1331,19 @@ impl BotWorld {
         d.set("roles", &roles);
         d.set("view_delay", delay);
         d
+    }
+
+    /// Debug overlay, one byte per VisibilityGrid cell (row-major, land 0): 1 berth, 2 gap, 3 lattice, 4 other water.
+    /// PHASES µs per tick, flattened.
+    #[func]
+    fn frame_phases(&self) -> PackedInt32Array {
+        PackedInt32Array::from(self.w.phases.iter().flat_map(|p| p.iter().map(|&v| v as i32)).collect::<Vec<_>>().as_slice())
+    }
+
+    #[func]
+    fn feature_bytes(&self) -> PackedByteArray {
+        let (Some(f), Some(vis)) = (&self.w.features, &self.w.vis) else { return PackedByteArray::new() };
+        PackedByteArray::from(f.bytes(&vis.bind()).as_slice())
     }
 
     /// Debug overlay, one byte per VisibilityGrid cell (row-major, land 0): 1 seen not shot, 2 shot not seen, 3 both.

@@ -8,7 +8,7 @@ use crate::nav::visibility::VisibilityGrid;
 use super::belief::{Belief, FORGET_S};
 use super::snapshot::Snapshot;
 
-const FORECAST_S: f32 = 20.0;
+pub const FORECAST_S: f32 = 60.0;
 const FORECAST_MIN_M: f32 = 300.0;
 
 /// Water cells are numbered row-major, so a disc covers one index run per grid row.
@@ -20,6 +20,8 @@ pub struct Layout {
     min_z: f32,
     pre: Vec<u32>,
     pub words: usize,
+    /// Per water cell its water neighbours, four straight then four diagonal.
+    pub adj: Vec<[u32; 8]>,
 }
 
 impl Layout {
@@ -31,7 +33,7 @@ impl Layout {
             n += (k >= 0) as u32;
         }
         pre.push(n);
-        Layout { w: v.w, h: v.h, cell: v.cell, min_x: v.min_x, min_z: v.min_z, pre, words: v.stride }
+        Layout { w: v.w, h: v.h, cell: v.cell, min_x: v.min_x, min_z: v.min_z, pre, words: v.stride, adj: crate::nav::sail_table::adjacency(v) }
     }
 
     /// Index runs [a, b) of the water cells whose centres lie within `r` of `c`.
@@ -77,9 +79,10 @@ pub struct Source {
     pub id: i64,
     pub at: Vector2,
     pub cell: usize,
+    /// FORECAST_S ahead along its course.
+    pub ahead: bool,
     range: f32,
     force: f32,
-    pub conceal: f32,
     matrix: Option<Arc<GunMatrix>>,
 }
 
@@ -105,9 +108,9 @@ impl TeamField {
             let ahead = c.last_pos + Vector2::new(s.vel.x, s.vel.z) * FORECAST_S;
             let fc = (c.seen_now && ahead.distance_to(c.last_pos) > FORECAST_MIN_M).then_some(ahead);
             let m = matrix(id);
-            for at in std::iter::once(c.last_pos).chain(fc) {
+            for (at, ahead) in std::iter::once((c.last_pos, false)).chain(fc.map(|f| (f, true))) {
                 let Some(cell) = vis.cell_of(at) else { continue };
-                self.sources.push(Source { id, at, cell, range: s.gun_range, force: s.force_spot, conceal: s.conceal, matrix: m.clone() });
+                self.sources.push(Source { id, at, cell, ahead, range: s.gun_range, force: s.force_spot, matrix: m.clone() });
             }
         }
         self.shot.clear();
@@ -127,8 +130,12 @@ impl TeamField {
 
     /// Cells some enemy would detect a ship of detection radius `radius` in: its eyes need line of sight, radar and hydro do not.
     pub fn seen(&self, lay: &Layout, vis: &VisibilityGrid, radius: f32) -> Vec<u64> {
+        self.seen_by(lay, vis, radius, |_| true)
+    }
+
+    pub fn seen_by(&self, lay: &Layout, vis: &VisibilityGrid, radius: f32, by: impl Fn(&Source) -> bool) -> Vec<u64> {
         let mut out = vec![0u64; lay.words];
-        for s in &self.sources {
+        for s in self.sources.iter().filter(|s| by(s)) {
             let los = &vis.bits[s.cell * vis.stride..(s.cell + 1) * vis.stride];
             lay.spans(s.at, radius, |a, b| or_span(&mut out, a, b, |w| los[w]));
             lay.spans(s.at, s.force, |a, b| or_span(&mut out, a, b, |_| !0));
@@ -136,10 +143,12 @@ impl TeamField {
         out
     }
 
-    /// Sources a ship in cell `k` (at `p`) would light with its own eyes.
-    pub fn lights<'a>(&'a self, vis: &'a VisibilityGrid, k: usize, p: Vector2) -> impl Iterator<Item = &'a Source> + 'a {
-        self.sources.iter().filter(move |s| s.at.distance_to(p) <= s.conceal && vis.visible_idx(s.cell, k))
+    /// One cell of `seen`.
+    pub fn seen_at(&self, vis: &VisibilityGrid, k: usize, radius: f32) -> bool {
+        let c = vis.centres[k];
+        self.sources.iter().any(|s| { let d = s.at.distance_to(c); d <= s.force || d <= radius && vis.visible_idx(s.cell, k) })
     }
+
 }
 
 #[cfg(test)]
@@ -157,7 +166,7 @@ mod tests {
             n += (k >= 0) as u32;
         }
         pre.push(n);
-        let lay = Layout { w: 4, h: 3, cell: 100.0, min_x: 0.0, min_z: 0.0, pre, words: 1 };
+        let lay = Layout { w: 4, h: 3, cell: 100.0, min_x: 0.0, min_z: 0.0, pre, words: 1, adj: Vec::new() };
         let mut got = Vec::new();
         lay.spans(Vector2::new(150.0, 150.0), 110.0, |a, b| got.extend(a..b));
         assert_eq!(got, vec![1, 4, 5, 8]);

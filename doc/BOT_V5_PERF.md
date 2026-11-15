@@ -16,3 +16,12 @@ Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed acr
 | 2026-11-14 | 41fa5176+ | matrices from target cells, matrix cache loaded | 1 | 1257 | 1067 | 2131 | 3910 | 5956 | 14845 | 9260 | 767 |
 | 2026-11-14 | 41fa5176+ | spike fixes: pair fill spread, one hive pass per frame, 4 station jumps per frame | 1 | 1147 | 992 | 1952 | 3554 | 4691 | 5733 | 14459 | 1200 |
 | 2026-11-14 | 6f707461+ | staggered re-plans: 2 per frame, pass resumes in order | 1 | 1073 | 906 | 1879 | 3294 | 4582 | 5196 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | flood transit scan + damage calibration | 1 | 1272 | 995 | 2505 | 5106 | 7070 | 13305 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | flood: memoized cell rates | 1 | 1261 | 987 | 2348 | 4835 | 6897 | 8371 | 12669 | 1051 |
+| 2026-11-14 | b41170b3+ | flood 240 s, 1 re-plan per frame | 1 | 1122 | 897 | 2101 | 4274 | 6198 | 10033 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | damage sample reads one seen cell | 1 | 1075 | 876 | 2080 | 3260 | 4105 | 4544 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | blocked releases only within 1 km of the station | 1 | 927 | 734 | 1870 | 3289 | 4312 | 4794 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | feature station scan, 2 re-plans per frame | 1 | 796 | 619 | 1579 | 3340 | 4877 | 7253 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | feature station scan, 1 re-plan per frame | 1 | 852 | 662 | 1774 | 3467 | 4908 | 5982 | 14459 | 1200 |
+| 2026-11-14 | b41170b3+ | feature scan, 2 re-plans, phase timers | 1 | 1318 | 1144 | 2239 | 3979 | 5662 | 7415 | 8516 | 705 |
+| 2026-11-14 | b41170b3+ | rerun: input push spike check | 1 | 943 | 754 | 1854 | 3748 | 5041 | 6422 | 14459 | 1200 |

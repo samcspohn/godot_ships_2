@@ -13,7 +13,7 @@ const UNITS_PER_CELL: f32 = 10.0;
 /// An eight-way grid route runs this much longer than the smoothed path a ship sails.
 const GRID_STRETCH: f32 = 1.04;
 const NO_ROUTE: u16 = u16::MAX;
-const NO_NEIGHBOUR: u32 = u32::MAX;
+pub(crate) const NO_NEIGHBOUR: u32 = u32::MAX;
 
 pub(crate) struct SailTable {
     cell: f32,
@@ -132,7 +132,7 @@ fn quantise(d: f32, unit: f32) -> u16 {
 }
 
 /// Per fine cell its water neighbours: four straight, then four diagonal.
-fn adjacency(g: &VisibilityGrid) -> Vec<[u32; 8]> {
+pub(crate) fn adjacency(g: &VisibilityGrid) -> Vec<[u32; 8]> {
     let at = |x: i32, z: i32| {
         if x < 0 || z < 0 || x >= g.w || z >= g.h {
             return NO_NEIGHBOUR;

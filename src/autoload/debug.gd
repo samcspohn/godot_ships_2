@@ -1466,9 +1466,10 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 #                  range: pale in sight, blue island shadow
 #   FIELD5         v5 team field at firing bloom: yellow seen not shot, cyan shot not seen, red both
 #   FIELD5_DARK    the same at our concealment
+#   FEATURES5      v5 station features: green island berths, magenta gaps, white lattice
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, COVER, DETECT, SHADOW, FIELD5, FIELD5_DARK }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, COVER, DETECT, SHADOW, FIELD5, FIELD5_DARK, FEATURES5 }
 
 const REACH_REFRESH_SECONDS: float = 0.5
 const REACH_DRAW_Y: float = 2.5
@@ -1501,6 +1502,11 @@ void fragment() {
 		col = mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c) / 255.0);
 	} else if (mode == 6) {
 		col = c == 1 ? vec3(1.0, 1.0, 0.65) : vec3(0.15, 0.2, 0.7);
+	} else if (mode == 9) {
+		if (c == 4) {
+			discard;
+		}
+		col = c == 1 ? vec3(0.1, 1.0, 0.3) : c == 2 ? vec3(1.0, 0.2, 0.9) : vec3(1.0);
 	} else {
 		col = c == 1 ? vec3(1.0, 0.9, 0.2) : c == 2 ? vec3(0.2, 0.8, 1.0) : vec3(1.0, 0.15, 0.1);
 	}
@@ -1622,6 +1628,13 @@ func _reach_server_tick() -> void:
 			bytes = hub.field_bytes(ship, _reach_srv_mode == ReachMode.FIELD5_DARK)
 			info = vis_info
 			note = "v5 field, %s" % ("concealment" if _reach_srv_mode == ReachMode.FIELD5_DARK else "firing bloom")
+		ReachMode.FEATURES5:
+			var hub5: Bot5Hub = get_node_or_null("/root/Server/Bot5Hub") as Bot5Hub
+			if hub5 == null or vis == null:
+				return
+			bytes = hub5.feature_bytes()
+			info = vis_info
+			note = "v5 station features"
 		ReachMode.REACH:
 			if g.is_empty():
 				return

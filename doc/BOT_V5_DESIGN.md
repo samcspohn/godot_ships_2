@@ -227,3 +227,39 @@ Next: cover gate, checkpoints, Spot posture.
 - One team's hive work per frame: an unfinished pass first, else the most overdue team. Teams start half an interval apart.
 - At most 4 jumped-station navigator pushes per frame.
 - The hub fills point-table pair and threat keys for 2 bots per frame and skips bots that have them all.
+
+## Station transit and damage calibration (2026-11-14)
+
+- Transit: one Dijkstra flood per scan from our cell over the 300 m water grid (hull clearance), out to 240 s past the first band cell (median ~7.5k cells, ~0.5 ms; rates memoized per cell). Each cell gets sail time and the route's earnings: damage out minus risk x damage in, per step, at that cell's rates (out is 0 past our gun range or where our column misses).
+- Score = (route earnings + 90 s x the cell's net rate) / (sail time + 90 s): an average rate, so a route that keeps shooting costs nothing. Replaces the 90 s horizon penalty and the coarse/refine sampling (every band cell the flood reaches is scored).
+- Calibration: the hub sends cumulative main-battery damage dealt and taken (`Stats.main_taken`) every 0.5 s; the world books the raw predicted rates (exposure at our cell; value on our seen in-range target) against them, per `in|class` and `out|class>class` (`bot5.calib` in metrics). `tools/botmatch/bot5_learn.py <metrics>...` writes `assets/bot5_calib.json`; the scan scales exposure by `in` and value by `out`. No file = raw, with a warning.
+- First fold (2 x 12v12): taken is ~0.2-0.25 of predicted for every class; dealt 0.10 (Dd>Ca, Bb>Ca) to 0.48 (Ca>Dd).
+- Re-plans per frame cut to 1 (a scan is now ~0.5 ms). The damage sample reads only our own cell's seen bit (`TeamField::seen_at`); a full seen bitset per bot per sample was a frame spike.
+- Trace: `SHIPS_BOT5_SCAN_TRACE=1` prints a `scan5` line per scan (pick, best zero-exposure cell and why it lost).
+- Blocked guns release a plan only within 1 km of its station (`BLOCKED_AT_M`); blocked in transit is expected. 12v12 seed 1: blocked releases 754 -> 16, scans 1730 -> 1100.
+
+## Feature station scan (2026-11-14)
+
+Replaces the flood. `bot5/features.rs`, built at prepare from the VisibilityGrid (~1 ms):
+- Islands: 8-connected land components of the 300 m grid; each water cell labelled with its nearest island by sail distance.
+- Berths: water within 900 m of land, per island, sorted by bearing from its centre. Gaps: cells where two islands' labels meet, 600 m - 3 km from land, every other cell. Lattice: every 4th cell.
+- Debug: Ctrl+R overlay FEATURES5 (green berths, magenta gaps, white lattice).
+
+Scan (`station.rs`):
+- Candidates: lee berths (within 60° of the side away from the enemies' centre) of islands in gun range of the anchor, gaps, our cell, the kept station; each within [lo, hi] of some foe (or a spot foe's concealment when dark is allowed). Lattice only when none nets >= 0.
+- Per foe (every field contact): our value at its aspect x calibration / its HP, best target full (the hive's target first when set) and the next three at 0.5, 0.25, 0.125.
+- Gates: the hive's target in gun range with a column hit, at least min(2, foes) foes in gun range, one in band; relaxed to 1 when no candidate passes.
+- Net (HP share per minute) = value + spot - risk x exposure / our HP, at the worse of now and 60 s ahead (field forecast now 60 s), + 0.25 x the covered share of water within 900 m x value.
+- Spot: per pass, allies lighting each enemy (eyes with LOS inside its concealment, or radar/hydro) and bots' fire on it (only bots targeting it or with no target). A foe nobody else lights is worth the others' fire on it to whoever lights it.
+- Dark: DDs, and CAs with concealment under 0.7 of gun range, also score holding fire (no gun value, seen at concealment); the plan's `dark` holds fire (`dark` gate).
+- Two stages: now-only, straight-line transit for every candidate; the top 24 in full (ahead, dark, defensibility, sail-table transit).
+- Expiry: the held station is scored alone (`Req::only`); held again for HOLD_S if it nets >= 0 and >= 0.75 of its score when set (`station_hold_ok`).
+- Re-plans per frame back to 2. 12v12 seed 1: scan 266 us mean; 606 scans, 247 holds re-used.
+
+### Feature scan: pending optimizations
+
+Tail cost is candidates x foes: in a 12-contact fight a long-range BB passes 500-900 berths and gaps through the prefilter (~1-1.3 ms per scan).
+1. One berth ring per island: keep only the nearest ring the hull can use, not all water within 900 m (~3 rings). ~3x fewer berths.
+2. Prefilter on the hive target's band (or the flank group centre), not the union of every foe's band.
+3. Quick pass on every second berth along an arc, refine around the best.
+Target: worst scan under ~300 us.

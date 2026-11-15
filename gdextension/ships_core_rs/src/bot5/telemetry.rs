@@ -44,11 +44,32 @@ pub struct Telemetry {
     buckets: BTreeMap<String, Bucket>,
     pub counters: BTreeMap<&'static str, u64>,
     pub releases: BTreeMap<&'static str, u64>,
+    /// Release reason -> [n, station kept, station shift m, shift > 2 km, anchor shift m, old station distance m].
+    pub shift: BTreeMap<&'static str, [f64; 6]>,
+    /// Damage key -> [predicted, real, minutes].
+    pub calib: BTreeMap<String, [f64; 3]>,
 }
 
 impl Telemetry {
     pub fn count(&mut self, k: &'static str) {
         *self.counters.entry(k).or_default() += 1;
+    }
+
+    pub fn calib(&mut self, k: String, pred: f32, real: f32, minutes: f32) {
+        let e = self.calib.entry(k).or_default();
+        e[0] += pred as f64;
+        e[1] += real.max(0.0) as f64;
+        e[2] += minutes as f64;
+    }
+
+    pub fn shift(&mut self, k: &'static str, station: f32, anchor: f32, away: f32) {
+        let e = self.shift.entry(k).or_default();
+        e[0] += 1.0;
+        e[1] += (station < 1.0) as u8 as f64;
+        e[2] += station as f64;
+        e[3] += (station > 2000.0) as u8 as f64;
+        e[4] += anchor as f64;
+        e[5] += away as f64;
     }
 
     pub fn release(&mut self, k: &'static str) {
@@ -160,6 +181,16 @@ impl Telemetry {
             r.set(*k, *v as i64);
         }
         out.set("releases", &r);
+        let mut c = VarDictionary::new();
+        for (k, v) in &self.calib {
+            c.set(k.as_str(), &PackedFloat64Array::from(&v[..]));
+        }
+        out.set("calib", &c);
+        let mut sh = VarDictionary::new();
+        for (k, v) in &self.shift {
+            sh.set(*k, &PackedFloat64Array::from(&v[..]));
+        }
+        out.set("shift", &sh);
         out
     }
 }
