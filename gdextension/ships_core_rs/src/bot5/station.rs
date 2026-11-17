@@ -24,6 +24,8 @@ const LEE_HALF: f32 = std::f32::consts::FRAC_PI_3;
 /// Fallback water around a station that is also covered makes it defensible.
 const DEF_R: f32 = 900.0;
 const DEF_W: f32 = 0.25;
+/// Hidden scans search this far out from each lee berth, away from its island.
+const COVER_REACH_M: f32 = 3000.0;
 /// v4's window: every station lies within this of us; a hop gains at least HOP_MIN_M on the anchor.
 pub const WINDOW_M: f32 = 6000.0;
 const HOP_MIN_M: f32 = 500.0;
@@ -315,6 +317,8 @@ pub struct Req {
     pub escape: bool,
     /// Disengage cones: (bearing from us, transit multiplier); a cell must lie within CONE_HALF of one. Empty: no limit.
     pub cones: Vec<(f32, f32)>,
+    /// Cover: unseen by the field at our firing bloom (escape: at our dark bloom); with no foes, out of the anchor's sight with a shot to it.
+    pub hidden: bool,
 }
 
 /// A believed enemy position at one moment.
@@ -472,11 +476,17 @@ impl Scan<'_> {
                 let (u, v) = (p - req.anchor, c - req.anchor);
                 (u.angle_to(v).abs() / OPEN_FLANK_RAD).min(1.0)
             });
+            if req.hidden && hidden == 0.0 {
+                return None;
+            }
             let net = OPEN_COVER_W * hidden + OPEN_FLANK_W * flank - x;
             return (d >= req.lo && d <= req.hi).then_some(Eval { value: 0.0, spot: 0.0, exposure: x, net, dark: false });
         }
         if req.escape {
             let dark = self.dark_ok;
+            if req.hidden && (0..1 + full as usize).any(|m| has(&self.seen[m][1], k)) {
+                return None;
+            }
             let x = (0..1 + full as usize).map(|m| exposure_at(&self.threats[m], has(&self.seen[m][dark as usize], k), k, p))
                 .fold(0.0, f32::max) * self.k_in / self.my_hp;
             return Some(Eval { value: 0.0, spot: 0.0, exposure: x, net: -self.risk * x, dark });
@@ -484,7 +494,7 @@ impl Scan<'_> {
         let spread = self.spread(p, req.anchor);
         let mut best: Option<Eval> = None;
         for dark in [false, true] {
-            if dark && !self.dark_ok {
+            if dark && !self.dark_ok || req.hidden && (0..1 + full as usize).any(|m| has(&self.seen[m][dark as usize], k)) {
                 continue;
             }
             let mut e = Eval { value: 0.0, spot: 0.0, exposure: 0.0, net: f32::INFINITY, dark };
@@ -636,7 +646,18 @@ impl Scan<'_> {
             let away = is.centre - centre;
             let lee = away.x.atan2(away.y);
             let all = away.length() < 1.0;
-            out.extend(is.berths.iter().filter(|b| all || wrap(b.0 - lee).abs() <= LEE_HALF).map(|b| (b.1 as usize, 0)));
+            let lee_berths = is.berths.iter().filter(|b| all || wrap(b.0 - lee).abs() <= LEE_HALF);
+            if req.hidden {
+                // Flat-fire ships need the water well behind the island, where their shells clear its crest.
+                for b in lee_berths {
+                    let p = v.centres[b.1 as usize];
+                    let dir = (p - is.centre).normalized_or_zero();
+                    let steps = (COVER_REACH_M / v.cell) as usize;
+                    out.extend((0..=steps).map_while(|i| v.cell_of(p + dir * (i as f32 * v.cell))).map(|k| (k, 0)));
+                }
+            } else {
+                out.extend(lee_berths.map(|b| (b.1 as usize, 0)));
+            }
         }
         out.extend(self.feats.gaps.iter().filter(|&&k| v.centres[k as usize].distance_to(req.anchor) <= self.reach).map(|&k| (k as usize, 1)));
         out.extend(v.cell_of(self.my).into_iter().chain(req.keep.and_then(|q| v.cell_of(q))).map(|k| (k, 2)));
@@ -686,7 +707,7 @@ impl Scan<'_> {
         if let Some(q) = req.only {
             let k = v.cell_of(q)?;
             let e = self.eval(k, req, MIN_IN_RANGE.min(self.foes.len()), true).or_else(|| self.eval(k, req, 1, true))?;
-            let needs = !req.escape && req.target.is_some();
+            let needs = !req.escape && (req.target.is_some() || req.hidden && self.foes.is_empty());
             return (!needs || exact(q)).then(|| found(&Cand { k, p: q, e, score: e.net, transit_s: 0.0 }, needs, e.net < 0.0, 1));
         }
         let mut d = Diag::default();
@@ -712,7 +733,7 @@ impl Scan<'_> {
         }
         cands.sort_unstable_by(|a, b| b.score.total_cmp(&a.score).then(a.transit_s.total_cmp(&b.transit_s)));
         let n = cands.len();
-        let needs_shot = |_: &Cand| !req.escape && req.target.is_some();
+        let needs_shot = |_: &Cand| !req.escape && (req.target.is_some() || req.hidden && self.foes.is_empty());
         let keep_p = req.keep.and_then(|q| v.cell_of(q)).map(|k| v.centres[k]);
         let chosen: Option<(usize, bool)> = match cands.iter().take(VERIFY).position(|c| !needs_shot(c) || exact(c.p)) {
             None => None,
@@ -741,6 +762,9 @@ impl Scan<'_> {
             }));
             d.us = t0.elapsed().as_micros() as u64;
             *out = d;
+        }
+        if req.hidden {
+            return chosen.map(|(i, shot)| found(&cands[i], shot, negative, n));
         }
         let fire = !req.escape && req.target.is_some();
         let mut ok = |p: Vector2| !fire || exact(p);

@@ -79,6 +79,8 @@ pub struct Plan {
     pub anchor_id: Option<i64>,
     /// Kiting: drive steers straight away from the guns on us each tick instead of to `station`.
     pub kite: bool,
+    /// Heading to or holding hidden cover.
+    pub cover: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +130,8 @@ pub struct Member<'a> {
     pub kite_axis: Option<f32>,
     /// Enemy shells aimed near us are in the air.
     pub under_fire: bool,
+    /// Not a destroyer, brawler or its flank's spotter: may fight from, and fall back to, hidden cover.
+    pub cover_ok: bool,
 }
 
 /// The fire on one bot, v4's threat: 1 - exp(-horizon / time to die).
@@ -178,7 +182,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let d = &m.danger;
     let posture = if m.plan.is_some_and(|p| p.posture == Posture::Disengage) {
         let held = me.seen && now - assign.dis_since < DISENGAGE_MIN_S;
-        if !me.seen && !m.under_fire {
+        if !m.cover_ok && !me.seen && !m.under_fire {
             assign.dis_left = now;
             Posture::Engage
         } else if held || d.ttw.is_some_and(|w| d.ttd < w * STAY_MARGIN) || d.threat > REENGAGE_THREAT {
@@ -216,9 +220,9 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let picked = if hunting { None } else { picked };
     let contact = picked.map(|c| c.1);
     let anchor = if hunting { belief.last_known().filter(|p| p.distance_to(my) > HUNT_M).or(belief.enemy_spawn).unwrap_or(my) }
-        else { contact.or(belief.enemy_spawn).unwrap_or(my) };
+        else { contact.or_else(|| belief.presumed_end(my)).or(belief.enemy_spawn).unwrap_or(my) };
     let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
-        !p.kite && p.shot && contact.is_some() && !shot(p.station, anchor);
+        !p.kite && p.shot && picked.and_then(|c| c.0).is_some() && !shot(p.station, anchor);
 
     let (lo, hi) = if hunting { (0.0, HUNT_M) } else { picked.and_then(|c| c.0).and_then(|id| m.bands.get(&id).copied()).unwrap_or((lo, hi)) };
     let cover = (d.cover_first && !m.brawl).then_some(d.safe_x);
@@ -227,32 +231,42 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let kite = m.kite_axis.filter(|_| !m.brawl);
     let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
         anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, only,
-        cover, escape: false, cones: kite.filter(|_| only.is_none()).map(|a| (a, 1.0)).into_iter().collect(),
+        cover, escape: false, cones: kite.filter(|_| only.is_none()).map(|a| (a, 1.0)).into_iter().collect(), hidden: false,
     };
-    let off_cone = |p: &Plan| !p.kite && kite.is_some_and(|a| {
+    let off_cone = |p: &Plan| !p.kite && !p.cover && kite.is_some_and(|a| {
         let d = p.station - my;
         d.length() < p.hold_radius || wrap(d.x.atan2(d.y) - a).abs() > super::station::CONE_HALF
     });
     let kite_leg = |axis: f32| my + Vector2::new(axis.sin(), axis.cos()) * KITE_LEG_M;
     let escape = |scan: &mut dyn FnMut(&Req) -> Option<Found>, keep: Option<Vector2>| {
-        if let Some(&(axis, _)) = cones.first() {
+        let hid = m.cover_ok.then(|| scan(&Req { anchor: my, target: None, lo: 0.0, hi: me.gun_range, keep, avoid: None, only: None,
+            cover: None, escape: true, cones: cones.clone(), hidden: true })).flatten();
+        if let Some(f) = hid {
+            return Plan { posture: Posture::Disengage, station: f.station, anchor, heading: 0.0, heading_weight: 0.0,
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.net, dark: true,
+                anchor_id: None, kite: false, cover: true };
+        }
+        if let Some(&(axis, _)) = cones.first().filter(|_| me.seen || !m.cover_ok) {
             return Plan { posture: Posture::Disengage, station: kite_leg(axis), anchor, heading: 0.0, heading_weight: 0.0,
                 hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: false,
-                anchor_id: None, kite: true };
+                anchor_id: None, kite: true, cover: false };
         }
         let f = scan(&Req { anchor: my, target: None, lo: 0.0, hi: me.gun_range, keep, avoid: None, only: None,
-            cover: None, escape: true, cones: cones.clone() });
+            cover: None, escape: true, cones: if me.seen { cones.clone() } else { Vec::new() }, hidden: false });
         let (station, dark) = f.map_or((my, false), |f| (f.station, f.dark));
         Plan { posture: Posture::Disengage, station, anchor, heading: 0.0, heading_weight: 0.0, hold_radius: HOLD_RADIUS_M,
             set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.map_or(0.0, |f| f.net), dark, anchor_id: None,
-            kite: f.is_some_and(|f| f.kite) }
+            kite: f.is_some_and(|f| f.kite), cover: false }
     };
+    let went_dark = |p: &Plan| p.posture == Posture::Disengage && p.kite && m.cover_ok && !me.seen;
     let still_good = |p: &Plan, scan: &mut dyn FnMut(&Req) -> Option<Found>|
-        scan(&req(None, None, Some(p.station))).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
+        scan(&Req { hidden: p.cover, ..req(None, None, Some(p.station)) }).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
     if let Some(p) = m.plan {
         let blocked = blocked(m, &p, my, assign.target);
         let arrived = p.posture == Posture::Engage && p.station.distance_to(my) < p.hold_radius;
-        let fine = p.posture == posture && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot) && !off_cone(&p) && (p.posture != Posture::Engage || p.kite == kite.is_some())
+        let moved = p.anchor.distance_to(anchor) >= ANCHOR_MOVE_M;
+        let fine = p.posture == posture && !blocked && (!moved || p.cover && p.posture == Posture::Engage && still_good(&p, scan)) && !lost_shot(&p, shot) && !off_cone(&p) && (p.posture != Posture::Engage || p.cover || p.kite == kite.is_some())
+            && !went_dark(&p)
             && (p.shot || p.posture != Posture::Engage || assign.target.is_none());
         let again = fine && (now >= p.hold_until || arrived) && posture == Posture::Engage && still_good(&p, scan);
         if fine && ((now < p.hold_until && !arrived) || again) {
@@ -261,6 +275,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 p.hold_until = now + HOLD_S;
             }
             p.heading = broadside(my, anchor, me.heading());
+            p.anchor = anchor;
             return (Some(p), assign, None);
         }
     }
@@ -271,7 +286,8 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         Some(_) if blocked => "blocked",
         Some(p) if p.anchor.distance_to(anchor) >= ANCHOR_MOVE_M => "anchor_moved",
         Some(p) if off_cone(&p) => "ring_kite",
-        Some(p) if p.posture == Posture::Engage && p.kite != kite.is_some() => "kite_end",
+        Some(p) if went_dark(&p) => "went_dark",
+        Some(p) if p.posture == Posture::Engage && !p.cover && p.kite != kite.is_some() => "kite_end",
         Some(p) if p.posture == Posture::Engage && !p.shot && assign.target.is_some() => "unshot",
         Some(p) if p.station.distance_to(my) < p.hold_radius => "arrived",
         Some(p) if now < p.hold_until => "no_shot",
@@ -279,13 +295,22 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     };
 
     let plan = match posture {
-        Posture::Engage if kite.is_some() => Plan { posture, station: kite_leg(kite.unwrap()), anchor, heading: broadside(my, anchor, me.heading()),
-            heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: true, score: 0.0,
-            dark: false, anchor_id: picked.and_then(|c| c.0), kite: true },
         Posture::Engage => {
             let prev = m.plan.filter(|p| p.posture == Posture::Engage);
             let keep = prev.filter(|_| matches!(reason, "expired" | "anchor_moved")).map(|p| p.station);
-            let found = scan(&req(keep, prev.filter(|_| matches!(reason, "arrived" | "blocked")).map(|p| p.station), None));
+            let avoid = prev.filter(|_| matches!(reason, "arrived" | "blocked")).map(|p| p.station);
+            let hid = m.cover_ok.then(|| scan(&Req { hidden: true, cover: None, ..req(keep, avoid, None) })).flatten();
+            if let Some(f) = hid {
+                return (Some(Plan { posture, station: f.station, anchor, heading: broadside(my, anchor, me.heading()), heading_weight: 0.0,
+                    hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: f.shot, score: f.net, dark: f.dark,
+                    anchor_id: picked.and_then(|c| c.0), kite: false, cover: true }), assign, Some(reason));
+            }
+            if let Some(a) = kite {
+                return (Some(Plan { posture, station: kite_leg(a), anchor, heading: broadside(my, anchor, me.heading()),
+                    heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: true, score: 0.0,
+                    dark: false, anchor_id: picked.and_then(|c| c.0), kite: true, cover: false }), assign, Some(reason));
+            }
+            let found = scan(&req(keep, avoid, None));
             let target = picked.and_then(|c| c.0).is_some();
             let found = found.or_else(|| cover.and(scan(&Req { cover: None, ..req(None, None, None) })));
             if found.is_none() && target {
@@ -300,7 +325,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let (station, shot, score, dark) = found.map_or_else(|| (fallback(), false, 0.0, false), |f| (f.station, f.shot, f.net, f.dark));
             Plan { posture, station, anchor, heading: broadside(my, anchor, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0,
-                shot, score, dark, anchor_id: picked.and_then(|c| c.0), kite: kite.is_some() }
+                shot, score, dark, anchor_id: picked.and_then(|c| c.0), kite: false, cover: false }
         }
         Posture::TorpRun => {
             let (t, (range, loaded)) = (run_target.unwrap(), m.torp.unwrap());
@@ -311,7 +336,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
             Plan { posture, station: tp + dir * range, anchor: tp, heading: broadside(my, tp, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false,
-                score: 0.0, dark: true, anchor_id: Some(t.id), kite: false }
+                score: 0.0, dark: true, anchor_id: Some(t.id), kite: false, cover: false }
         }
         Posture::Disengage => {
             let keep = m.plan.filter(|p| p.posture == Posture::Disengage && reason == "expired").map(|p| p.station);

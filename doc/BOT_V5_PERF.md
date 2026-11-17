@@ -28,3 +28,5 @@ Run: `tools/botmatch/bot5_perf.sh <label> [seed]` (appends a row). Same seed acr
 | 2026-11-14 | a8c56624+ | stance, 4 Hz, veto rollouts | 1 | 1050 | 815 | 2185 | 4195 | 6019 | 7533 | 14459 | 1200 |
 | 2026-11-15 | a8c56624+ | rings, window, hops, 2 flanks, focus shot, fire fix | 1 | 1514 | 1232 | 2777 | 4648 | 5944 | 396594 | 14459 | 1200 |
 | 2026-11-15 | a8c56624+ | rerun: walls on change, sec cached | 1 | 1275 | 1066 | 2132 | 3986 | 5205 | 366149 | 14459 | 1200 |
+| 2026-11-16 | a4455ebb+ | hidden cover + outward berth search, dodge full control, torp boats, disengage cover | 1 | 2223 | 1748 | 4142 | 7872 | 10359 | 425451 | 14459 | 1200 |
+| 2026-11-16 | a4455ebb+ | rerun at 12 fps (game tick rate) | 1 | 2097 | 1613 | 4079 | 7094 | 9172 | 397475 | 14459 | 1200 |

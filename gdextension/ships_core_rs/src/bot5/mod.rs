@@ -684,9 +684,8 @@ impl World {
         for i in 0..self.bots.len() {
             let t = std::time::Instant::now();
             self.guns(i, now, dt, time_mult);
-            let b = &mut self.bots[i];
-            if b.plan.is_some_and(|p| p.posture == Posture::TorpRun) && self.snap.get(b.ship_id).is_some_and(|s| !s.seen) {
-                b.cmd.fire = false;
+            if self.guns_dark(i) {
+                self.bots[i].cmd.fire = false;
             }
             let g = std::time::Instant::now();
             self.torps(i, now);
@@ -1039,7 +1038,7 @@ impl World {
             let bot = &self.bots[i];
             let m = Member { me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
                 torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank, danger, bands: bands.clone(), brawl, kite_axis, hunt,
-                under_fire: now < bot.fired_on_until };
+                under_fire: now < bot.fired_on_until, cover_ok: me.class != HullClass::Dd && !brawl && spot_on.is_none() && !hunt };
             let live = &self.live;
             let gun = &bot.gun;
             let mut no_table = 0u32;
@@ -1178,7 +1177,8 @@ impl World {
             let (kite_axis, n_src, n_holds) = (m.kite_axis, field.sources.len(), holds.len());
             let (plan, assign, reason) = hive::resolve(&m, snap, belief, &p.committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
             if scan_trace() {
-                godot_print!("pass5 t={:.0} {} kite={:?} src={} holds={} tgt={:?} reason={:?} posture={:?}", now, self.bots[i].name, kite_axis.map(|a| a.to_degrees() as i32),
+                godot_print!("pass5 t={:.0} {} cover={} pkite={} st={:?} kite={:?} src={} holds={} tgt={:?} reason={:?} posture={:?}", now, self.bots[i].name,
+                    plan.is_some_and(|p| p.cover), plan.is_some_and(|p| p.kite), plan.map(|p| (p.station.x as i32, p.station.y as i32)), kite_axis.map(|a| a.to_degrees() as i32),
                     n_src, n_holds, assign.target, reason, plan.map(|p| p.posture));
             }
             drop(scan);
@@ -1404,7 +1404,8 @@ impl World {
         let hp = (me.hp_frac * me.hp_max).max(1.0);
         let k_in = *self.calib_in.get(&class_key(me.class)).unwrap_or(&1.0);
         let horizon = -(1.0 - hive::DISENGAGE_THREAT).ln() * DISENGAGE_TTD_SHARE * self.time_left.max(0.0);
-        let bloom = if b.plan.is_some_and(|p| p.dark) { me.conceal } else { me.conceal.max(me.gun_range) };
+        // Disengage reads the threat we would draw firing from here: only hidden cover lets it end.
+        let bloom = if b.plan.is_some_and(|p| p.dark && p.posture != Posture::Disengage) { me.conceal } else { me.conceal.max(me.gun_range) };
         let seen = field.seen_at(&vis, k, bloom);
         let mut tel = Vec::new();
         let now_t = threats_of(field, b, &self.snap, &self.curves, &self.matrices, &mut tel, false);
@@ -1718,6 +1719,24 @@ impl World {
 
     /// The assigned target, or while it cannot be shot (unseen, out of range, terrain), the nearest seen enemy in range
     /// with a clear shot from here, held ALT_HOLD_S.
+    /// Unlit: torpedo boats and disengaging ships hold fire; cover-bound ships fire only where firing keeps them hidden.
+    fn guns_dark(&self, i: usize) -> bool {
+        let b = &self.bots[i];
+        let (Some(p), Some(me)) = (b.plan, self.snap.get(b.ship_id)) else { return false };
+        if me.seen {
+            return false;
+        }
+        match p.posture {
+            Posture::TorpRun | Posture::Disengage => true,
+            Posture::Engage if p.cover => {
+                let (Some(vis), Some(h)) = (&self.vis, self.teams.get(&b.team)) else { return false };
+                let vis = vis.bind();
+                vis.cell_of(me.p2()).is_none_or(|k| h.field.seen_at(&vis, k, me.conceal.max(me.gun_range)))
+            }
+            Posture::Engage => false,
+        }
+    }
+
     fn guns(&mut self, i: usize, now: f64, dt: f32, time_mult: f64) {
         let frame = self.frame;
         let b = &mut self.bots[i];

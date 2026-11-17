@@ -135,6 +135,12 @@ impl Belief {
         }
     }
 
+    /// Where the presumed enemy nearest `p` ends its march: a stable opening reference.
+    pub fn presumed_end(&self, p: Vector2) -> Option<Vector2> {
+        self.presumed.iter().map(|r| if r.held { r.pos } else { r.spawn + r.dir * r.stop })
+            .min_by(|a, b| a.distance_to(p).total_cmp(&b.distance_to(p)))
+    }
+
     /// Where the latest-seen enemy was last seen, however long ago.
     pub fn last_known(&self) -> Option<Vector2> {
         self.contacts.values().max_by(|a, b| a.last_seen.total_cmp(&b.last_seen)).map(|c| c.last_pos)
