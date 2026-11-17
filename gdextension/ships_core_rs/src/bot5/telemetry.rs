@@ -48,6 +48,8 @@ pub struct Telemetry {
     pub shift: BTreeMap<&'static str, [f64; 6]>,
     /// Damage key -> [predicted, real, minutes].
     pub calib: BTreeMap<String, [f64; 3]>,
+    /// "ship|ap" / "ship|he" -> samples per 10° of the angle off our bow incoming shells come from.
+    pub angling: BTreeMap<String, [u64; 19]>,
 }
 
 impl Telemetry {
@@ -70,6 +72,11 @@ impl Telemetry {
         e[3] += (station > 2000.0) as u8 as f64;
         e[4] += anchor as f64;
         e[5] += away as f64;
+    }
+
+    pub fn angling(&mut self, ship: &str, he: bool, off_bow_deg: f32) {
+        let e = self.angling.entry(format!("{ship}|{}", if he { "he" } else { "ap" })).or_default();
+        e[((off_bow_deg / 10.0).round() as usize).min(18)] += 1;
     }
 
     pub fn release(&mut self, k: &'static str) {
@@ -150,6 +157,11 @@ impl Telemetry {
 
     pub fn to_dict(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
+        let mut ang = VarDictionary::new();
+        for (k, v) in &self.angling {
+            ang.set(k.as_str(), &PackedInt64Array::from(v.map(|x| x as i64).as_slice()));
+        }
+        out.set("angling", &ang);
         let mut salvos = VarDictionary::new();
         for (k, b) in &self.buckets {
             let n = (b.shots - b.target_gone).max(1) as f64;

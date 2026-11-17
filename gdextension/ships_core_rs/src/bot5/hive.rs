@@ -1,6 +1,6 @@
 use godot::prelude::*;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::belief::Belief;
 use super::params::{Aptitude, Style};
@@ -13,6 +13,8 @@ const TARGET_SWITCH: f32 = 1.25;
 const TARGET_HOLD_S: f64 = 8.0;
 /// Threat (v4's scale): disengage at or above, re-engage at or below; past FORCE the cooldown is waived.
 pub const DISENGAGE_THREAT: f32 = 0.4;
+/// Threat that starts a disengage regardless of the race (DISENGAGE_THREAT only calibrates the horizon).
+const DISENGAGE_AT: f32 = 0.5;
 pub const REENGAGE_THREAT: f32 = 0.35;
 const DISENGAGE_FORCE_THREAT: f32 = 0.6;
 const DISENGAGE_MIN_S: f64 = 20.0;
@@ -25,12 +27,15 @@ const FOCUS_BONUS: f32 = 0.3;
 /// A target our shells cannot clear terrain to from here keeps this share of its score.
 const NO_SHOT_W: f32 = 0.2;
 const HOLD_RADIUS_M: f32 = 400.0;
+const HUNT_M: f32 = 3000.0;
+/// Where a kite plan points until drive's per-tick kite takes over.
+const KITE_LEG_M: f32 = 3000.0;
 const BLOCKED_RELEASE_S: f32 = 3.0;
 /// Guns blocked on the way are expected; only blocked at the station releases it.
 const BLOCKED_AT_M: f32 = 1000.0;
-const TORP_RUN_HP: f32 = 0.5;
 const TORP_RUN_RANGE: f32 = 0.7;
-const TORP_RUN_REACH: f32 = 0.8;
+/// Reloading, a torpedo boat waits this share of its torpedo range out.
+const TORP_WAIT_RANGE: f32 = 0.9;
 const TORP_RUN_LEAD: f32 = 0.7;
 /// Shooting outside our flank is worth this share: taken when nothing of ours is in reach.
 const OFF_FLANK_W: f32 = 0.4;
@@ -72,6 +77,8 @@ pub struct Plan {
     /// Hold fire: the station spots unseen.
     pub dark: bool,
     pub anchor_id: Option<i64>,
+    /// Kiting: drive steers straight away from the guns on us each tick instead of to `station`.
+    pub kite: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,6 +118,16 @@ pub struct Member<'a> {
     pub torp: Option<(f32, bool)>,
     pub flank: Option<FlankView>,
     pub danger: Danger,
+    /// Per enemy, the range band its trade (or our spot role) holds us to.
+    pub bands: HashMap<i64, (f32, f32)>,
+    /// Secondaries win this fight up close: push, never kite.
+    pub brawl: bool,
+    /// A spotter with nothing in the field: sail to where an enemy was last seen, then to its spawn.
+    pub hunt: bool,
+    /// Bearing straight away from the enemies we are too close to by their trade; stations only within its cone.
+    pub kite_axis: Option<f32>,
+    /// Enemy shells aimed near us are in the air.
+    pub under_fire: bool,
 }
 
 /// The fire on one bot, v4's threat: 1 - exp(-horizon / time to die).
@@ -159,16 +176,18 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     }
 
     let d = &m.danger;
-    let aggr = m.style.aggression;
     let posture = if m.plan.is_some_and(|p| p.posture == Posture::Disengage) {
         let held = me.seen && now - assign.dis_since < DISENGAGE_MIN_S;
-        if held || !(d.threat <= REENGAGE_THREAT || d.winning(STAY_MARGIN, aggr)) {
+        if !me.seen && !m.under_fire {
+            assign.dis_left = now;
+            Posture::Engage
+        } else if held || d.ttw.is_some_and(|w| d.ttd < w * STAY_MARGIN) || d.threat > REENGAGE_THREAT {
             Posture::Disengage
         } else {
             assign.dis_left = now;
             Posture::Engage
         }
-    } else if me.seen && d.threat >= DISENGAGE_THREAT && !d.winning(1.0, aggr)
+    } else if me.seen && (d.ttw.is_some_and(|w| d.ttd < w) || d.threat > DISENGAGE_AT)
             && (now - assign.dis_left >= DISENGAGE_COOLDOWN_S || d.threat >= DISENGAGE_FORCE_THREAT) {
         assign.dis_since = now;
         Posture::Disengage
@@ -182,8 +201,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let (lo, hi) = (m.style.band.0 * me.gun_range, m.style.band.1 * me.gun_range);
     let run_target = assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen);
     let posture = match (posture, m.torp, run_target) {
-        (Posture::Engage, Some((range, true)), Some(_)) if me.hp_frac >= TORP_RUN_HP
-            && (lo + hi) * 0.5 > TORP_RUN_REACH * range => Posture::TorpRun,
+        (Posture::Engage, Some(_), Some(_)) if me.torp_boat() => Posture::TorpRun,
         (p, _, _) => p,
     };
 
@@ -194,29 +212,48 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         .or_else(|| nearest(&mut view.iter().filter(|(e, p)| ours(e, *p)).map(|&(e, p)| (Some(e.id), p))))
         .or_else(|| m.flank.as_ref().and_then(|f| f.centre).map(|c| (None, c)))
         .or_else(|| nearest(&mut view.iter().map(|&(e, p)| (Some(e.id), p))));
+    let hunting = m.hunt && view.is_empty();
+    let picked = if hunting { None } else { picked };
     let contact = picked.map(|c| c.1);
-    let anchor = contact.or(belief.enemy_spawn).unwrap_or(my);
+    let anchor = if hunting { belief.last_known().filter(|p| p.distance_to(my) > HUNT_M).or(belief.enemy_spawn).unwrap_or(my) }
+        else { contact.or(belief.enemy_spawn).unwrap_or(my) };
     let lost_shot = |p: &Plan, shot: &mut dyn FnMut(Vector2, Vector2) -> bool|
-        p.shot && contact.is_some() && !shot(p.station, anchor);
+        !p.kite && p.shot && contact.is_some() && !shot(p.station, anchor);
 
-    let cover = d.cover_first.then_some(d.safe_x);
+    let (lo, hi) = if hunting { (0.0, HUNT_M) } else { picked.and_then(|c| c.0).and_then(|id| m.bands.get(&id).copied()).unwrap_or((lo, hi)) };
+    let cover = (d.cover_first && !m.brawl).then_some(d.safe_x);
+    let away: Vector2 = view.iter().filter(|(e, p)| p.distance_to(my) < e.gun_range * 1.05).map(|(_, p)| dir_or(my - *p, Vector2::ZERO)).sum();
+    let cones = if away.length() > 1e-3 { vec![(away.x.atan2(away.y), 1.0)] } else { m.kite_axis.map(|a| (a, 1.0)).into_iter().collect() };
+    let kite = m.kite_axis.filter(|_| !m.brawl);
     let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
         anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, only,
-        cover, escape: false,
+        cover, escape: false, cones: kite.filter(|_| only.is_none()).map(|a| (a, 1.0)).into_iter().collect(),
     };
+    let off_cone = |p: &Plan| !p.kite && kite.is_some_and(|a| {
+        let d = p.station - my;
+        d.length() < p.hold_radius || wrap(d.x.atan2(d.y) - a).abs() > super::station::CONE_HALF
+    });
+    let kite_leg = |axis: f32| my + Vector2::new(axis.sin(), axis.cos()) * KITE_LEG_M;
     let escape = |scan: &mut dyn FnMut(&Req) -> Option<Found>, keep: Option<Vector2>| {
+        if let Some(&(axis, _)) = cones.first() {
+            return Plan { posture: Posture::Disengage, station: kite_leg(axis), anchor, heading: 0.0, heading_weight: 0.0,
+                hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: false,
+                anchor_id: None, kite: true };
+        }
         let f = scan(&Req { anchor: my, target: None, lo: 0.0, hi: me.gun_range, keep, avoid: None, only: None,
-            cover: None, escape: true });
+            cover: None, escape: true, cones: cones.clone() });
         let (station, dark) = f.map_or((my, false), |f| (f.station, f.dark));
         Plan { posture: Posture::Disengage, station, anchor, heading: 0.0, heading_weight: 0.0, hold_radius: HOLD_RADIUS_M,
-            set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.map_or(0.0, |f| f.net), dark, anchor_id: None }
+            set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.map_or(0.0, |f| f.net), dark, anchor_id: None,
+            kite: f.is_some_and(|f| f.kite) }
     };
     let still_good = |p: &Plan, scan: &mut dyn FnMut(&Req) -> Option<Found>|
         scan(&req(None, None, Some(p.station))).is_some_and(|f| f.net >= 0.0 && f.net >= HOLD_AGAIN * p.score && f.dark == p.dark);
     if let Some(p) = m.plan {
         let blocked = blocked(m, &p, my, assign.target);
         let arrived = p.posture == Posture::Engage && p.station.distance_to(my) < p.hold_radius;
-        let fine = p.posture == posture && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot);
+        let fine = p.posture == posture && !blocked && p.anchor.distance_to(anchor) < ANCHOR_MOVE_M && !lost_shot(&p, shot) && !off_cone(&p) && (p.posture != Posture::Engage || p.kite == kite.is_some())
+            && (p.shot || p.posture != Posture::Engage || assign.target.is_none());
         let again = fine && (now >= p.hold_until || arrived) && posture == Posture::Engage && still_good(&p, scan);
         if fine && ((now < p.hold_until && !arrived) || again) {
             let mut p = p;
@@ -233,19 +270,28 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         Some(p) if p.posture != posture => "posture",
         Some(_) if blocked => "blocked",
         Some(p) if p.anchor.distance_to(anchor) >= ANCHOR_MOVE_M => "anchor_moved",
+        Some(p) if off_cone(&p) => "ring_kite",
+        Some(p) if p.posture == Posture::Engage && p.kite != kite.is_some() => "kite_end",
+        Some(p) if p.posture == Posture::Engage && !p.shot && assign.target.is_some() => "unshot",
         Some(p) if p.station.distance_to(my) < p.hold_radius => "arrived",
         Some(p) if now < p.hold_until => "no_shot",
         Some(_) => "expired",
     };
 
     let plan = match posture {
+        Posture::Engage if kite.is_some() => Plan { posture, station: kite_leg(kite.unwrap()), anchor, heading: broadside(my, anchor, me.heading()),
+            heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: true, score: 0.0,
+            dark: false, anchor_id: picked.and_then(|c| c.0), kite: true },
         Posture::Engage => {
             let prev = m.plan.filter(|p| p.posture == Posture::Engage);
             let keep = prev.filter(|_| matches!(reason, "expired" | "anchor_moved")).map(|p| p.station);
             let found = scan(&req(keep, prev.filter(|_| matches!(reason, "arrived" | "blocked")).map(|p| p.station), None));
-            if found.is_none() && (cover.is_some() || threatened) {
-                assign.dis_since = now;
-                return (Some(escape(scan, None)), assign, Some(if cover.is_some() { "no_cover" } else { "no_station" }));
+            let target = picked.and_then(|c| c.0).is_some();
+            let found = found.or_else(|| cover.and(scan(&Req { cover: None, ..req(None, None, None) })));
+            if found.is_none() && target {
+                if let Some(p) = prev.filter(|p| p.shot && !lost_shot(p, shot)) {
+                    return (Some(Plan { hold_until: now + HOLD_S, ..p }), assign, Some("no_shot_station"));
+                }
             }
             let fallback = || {
                 let band = anchor + dir_or(my - anchor, Vector2::new(0.0, 1.0)) * ((lo + hi) * 0.5);
@@ -254,17 +300,18 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             let (station, shot, score, dark) = found.map_or_else(|| (fallback(), false, 0.0, false), |f| (f.station, f.shot, f.net, f.dark));
             Plan { posture, station, anchor, heading: broadside(my, anchor, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0,
-                shot, score, dark, anchor_id: picked.and_then(|c| c.0) }
+                shot, score, dark, anchor_id: picked.and_then(|c| c.0), kite: kite.is_some() }
         }
         Posture::TorpRun => {
-            let (t, range) = (run_target.unwrap(), m.torp.unwrap().0);
+            let (t, (range, loaded)) = (run_target.unwrap(), m.torp.unwrap());
+            let range = (if loaded { TORP_RUN_RANGE } else { TORP_WAIT_RANGE } * range).max(me.conceal * crate::bot5::snapshot::SPOT_SAFE);
             let tp = t.p2();
             let away = dir_or(my - tp, Vector2::new(0.0, 1.0));
             let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
             let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
-            Plan { posture, station: tp + dir * (TORP_RUN_RANGE * range), anchor: tp, heading: broadside(my, tp, me.heading()),
+            Plan { posture, station: tp + dir * range, anchor: tp, heading: broadside(my, tp, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false,
-                score: 0.0, dark: false, anchor_id: Some(t.id) }
+                score: 0.0, dark: true, anchor_id: Some(t.id), kite: false }
         }
         Posture::Disengage => {
             let keep = m.plan.filter(|p| p.posture == Posture::Disengage && reason == "expired").map(|p| p.station);

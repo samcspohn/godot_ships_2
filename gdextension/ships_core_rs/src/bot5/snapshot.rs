@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 34;
+pub const STRIDE: usize = 43;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -71,9 +71,30 @@ pub struct ShipState {
     pub sec_range: f32,
     /// Secondary damage per minute inside sec_range, on a hull like its own.
     pub sec_dpm: f32,
+    /// Torpedoes: max range, m/s, damage, reload s, tubes per launcher, detection m, s to bring tubes to bear; range 0 without.
+    pub torp_range: f32,
+    pub torp_speed: f32,
+    pub torp_damage: f32,
+    pub torp_reload: f32,
+    pub torp_tubes: f32,
+    pub torp_detect: f32,
+    pub torp_bear_s: f32,
+    /// Degrees off the bow where every main gun bears.
+    pub guns_bear: f32,
+    pub rudder_lag: f32,
 }
 
+/// v4 DDBehavior._is_gunboat inverted: tubes reaching well past our own detection.
+const TORP_ENGAGE_RATIO: f32 = 0.8;
+pub const SPOT_SAFE: f32 = 1.15;
+const TORP_BAND_RATIO: f32 = 1.5;
+
 impl ShipState {
+    pub fn torp_boat(&self) -> bool {
+        self.class == HullClass::Dd && self.torp_range > 0.0
+            && (self.conceal <= 0.0 || self.torp_range * TORP_ENGAGE_RATIO >= self.conceal * SPOT_SAFE * TORP_BAND_RATIO)
+    }
+
     fn from_row(id: i64, r: &[f32]) -> Self {
         ShipState {
             id,
@@ -107,6 +128,15 @@ impl ShipState {
             damage: [r[30], r[31]],
             sec_range: r[32],
             sec_dpm: r[33],
+            torp_range: r[34],
+            torp_speed: r[35],
+            torp_damage: r[36],
+            torp_reload: r[37],
+            torp_tubes: r[38],
+            torp_detect: r[39],
+            torp_bear_s: r[40],
+            guns_bear: r[41],
+            rudder_lag: r[42],
         }
     }
 

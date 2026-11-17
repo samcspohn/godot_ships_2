@@ -98,14 +98,14 @@ impl ShipNavigator {
         if self.ships.is_empty() || self.skip_ship_obstacles {
             return None;
         }
-        let prefer = if self.turn_latch != 0.0 { -self.turn_latch } else { self.state.current_rudder.signum() };
+        let prefer = self.state.current_rudder.signum();
         let prefer = if prefer == 0.0 { 1.0 } else { prefer };
         let mut fallback: Option<(f32, f32, f32, Vec<ArcPoint>, f32)> = None;
         let steps = (std::f32::consts::PI / HEADING_STEP).round() as i32;
         for t in [throttle, if throttle < 0 { 4 } else { -1 }] {
             let goal = self.steer_goal(t < 0);
             for k in 0..=steps {
-                // Sides in rudder terms: the latched or current turn is tried first at each step.
+                // Sides in rudder terms: the current turn is tried first at each step.
                 let sides: &[f32] = if k == 0 { &[1.0] } else { &[prefer, -prefer] };
                 for &side in sides {
                     let h = goal - side * k as f32 * HEADING_STEP;

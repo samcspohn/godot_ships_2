@@ -335,3 +335,96 @@ v4's ladder, native, per bot each hive pass (`World::danger`, `hive::Danger`).
 - Flanks: two by default (one for under 3 enemies); seam roles removed. Flank-mates spread: station value × (1 + 0.5 · min(sep / 60°, 1)), sep the least angle at the anchor to a flank-mate's station.
 - Focus: a target our shells cannot clear terrain to from here keeps 0.2 of its score; the focus bonus counts only allies who had a clear shot on it.
 - 8 matches v4 vs v5 (12v12 t10, seeds 1-4, both sides), refit calibration: 0/8, damage ratio 0.59 (0.64 before refit, 0.64 previous build). v5 BBs still take ~2-3x v4's damage.
+
+## v4 vs v5 baseline (2026-11-16, `make vs`, 7390b98b + point-table fix)
+
+100 matches of 12v12 t10: seeds 0-49, each played with v5 on team 0 and on team 1. Results in `~/Documents/ships_sim/vs_baseline_20261116`.
+
+| v5 wins | damage v5/v4 | v5 damage share | v5 ships alive at end | v4 ships alive at end |
+|---|---|---|---|---|
+| 6 / 100 | 0.65 | 0.378 ± 0.006 | 3-9% | 40-72% |
+
+Every v5 class takes more damage and deals less than the same v4 class. Biggest gaps: BB damage taken (Yamato 143k vs 78k, KW 179k vs 126k) and DD/CA damage dealt (Shimakaze 18k vs 65k, Smolensk 18k vs 52k).
+
+## Dodge and torpedo avoidance (2026-11-16)
+
+- Torpedoes: the hub pushes every armed enemy torpedo the target team has seen (`set_torpedoes`, once per frame). Each
+  bot's navigator gets those within 3 km whose closest approach on our held course passes within a hull length + 30 s of
+  top speed (`torp_closes`), as v4 torpedo obstacles (id −100000 − k, length 0). The navigator's torpedo override wins over stance and dodge.
+- Dodge (`bot5/dodge.rs`), every 3 frames staggered: fresh enemy shells within 1.5 km → sail the lie (stance heading,
+  last throttle) and full rudder held 0/1/2/3/4/6 s/whole flight × levels 4/3/2/0/−1 on `Hull::step` at 0.25 s; v4's
+  `shell_hit` (caliber³ over 300 mm, citadel ×4, citadel box from the hull's mesh). Stays in the progress cone, off land;
+  must beat the lie by 0.5 after 0.3/rad off-lie and 0.2/power gear costs. Rudder/throttle set directly until the last shell lands.
+- Counters: `dodge_turn/astern/forward/stop/lie`, `dodge_frames`, `torp_override_frames`. Trace: `SHIPS_BOT5_DODGE_TRACE`.
+
+| build | v5 wins / 100 | v5 damage share | hub mean µs | drive µs |
+|---|---|---|---|---|
+| baseline | 6 | 0.378 | 1464 | 303 |
+| + dodge + torpedoes | 28 | 0.438 | 2250 | 1023 |
+| + closest-approach filter | 32 | 0.443 | 1967 | 745 |
+
+Still open: v5 BBs take 3-6× v4's torpedo damage (KW 25k vs 7k, Yamato 15k vs 4k); drive is 2.5× baseline (torpedo
+override bypasses the steering cache); dodge has no aspect weighting (v4 used hit rows).
+
+### Dodge aspect weighting (2026-11-16)
+
+Each shell is matched to the enemy within 10° of the bearing it came from (99.9% matched). Its weight per arrival aspect is that
+shooter's AP or HE (as the shell is) damage per hit on our hull, best aim slot `v[0] / landed` (`Curve::hit_at`), over
+the row's mean. Rows look right (Yamato vs 460 mm AP: 0.37 bow, 1.47 at ~65°, 0.75 stern; HE flat).
+
+| build | v5 wins / 100 | v5 damage share |
+|---|---|---|
+| dodge, no aspect (2 batches) | 28, 32 | 0.438, 0.443 |
+| dodge + aspect (2 batches) | 22, 31 | 0.427, 0.434 |
+
+Pooled −1.0 point, about 1.4 s.e.: no measured gain, possibly a small loss.
+
+t11_vs_t11 (Wotan vs Vermont, both v5, 100 seeds per arm; `SHIPS_BOT5_DODGE_ASPECT=0` turns it off; telemetry `angling`
+= angle off the bow of the heaviest incoming shell, per ship and AP/HE, sampled while shells are in the air):
+
+| arm | Wotan wins / draws / losses | Wotan dealt | Wotan vs AP: 0-45° / 70-115° | Wotan vs HE: 0-45° / mean |
+|---|---|---|---|---|
+| aspect on | 90 / 10 / 0 | 156.5k | 52% / 49% | 41% / 64° |
+| aspect off | 68 / 31 / 1 | 128.0k | 2% / 76% | 43% / 60° |
+
+Vermont fires 88% HE. Against AP, aspect weighting turns Wotan bow-in instead of broadside. Against HE, Wotan still lies
+within 45° about 40% of the time in both arms: that angling comes from stance, whose `Fire.at` takes the better shell
+(AP) at each aspect, with no shell read (v4: two HE salvos in a row → price HE).
+
+### Shell read (2026-11-16)
+
+v4's SalvoClock read in `bot5/shell_read.rs`: each enemy shell landing near us is attributed by its landing velocity to
+the enemy within 10° of that bearing (no owner lookup); landings > 3 s apart start a salvo. Last salvo AP → AP, last two
+HE → HE, else the worse curve. Applied to every threat (`Fire::read` in `threats_of`). `SHIPS_BOT5_SHELL_READ=0` turns it off.
+
+| test | read on | read off |
+|---|---|---|
+| t11 Wotan wins / draws (both v5) | 71 / 29 | 96 / 4 |
+| t11 Vermont dealt | 174.8k | 159.3k |
+| t11 Wotan vs HE within 45° | 36% | 42% |
+| 12v12 vs v4: v5 share | 0.431 | 0.427, 0.434 (aspect batches) |
+
+Wotan's angling to HE is from the HE curve itself (bow-on takes fewer HE hits), not a missing read. In t11 the read helps
+Vermont (it reads Wotan's AP and kites stern-on more). 12v12: no change.
+
+## Trade rings, brawler push, spotter roles (2026-11-16)
+
+- `bot5/trade.rs`: v4 `_desired_by_trade` port. Kill rates per range from mains + secondaries (`Fire`) + torpedoes (v4 torpedo_curve/rate; snapshot now carries torpedo stats, guns-bear aspect, rudder lag). Band = contiguous ranges within 10% of the chosen range's ratio; ring = band lo − 500 m. Replaces `station::ring_of`.
+- Brawler (secondaries ≥ 0.75 × mains at half secondary range) with the guns on us inside 90°: band 0–min(4 km, trade range), no ring, no cover-first, disengage only at force threat.
+- Kite: inside the near half of any enemy's band, stations are limited to ±35° of the away bearing; v4 kite leg as fallback. The same cone applies to Disengage.
+- Spotters: one per flank (torp DD > DD > BB > CA). Spot target = nearest field enemy in the flank. Band capped at target detection − 500 m, ideally past own detection. LOS to it required. With no field contact, it hunts: last seen position, then enemy spawn.
+- Fixed: ring route walls were never cleared once rings went empty, which left ships idling against a stale wall.
+
+| t11 Wotan vs Vermont, both v5, 100 each | Wotan | Vermont | draw | Vermont dealt |
+|---|---|---|---|---|
+| before (read on) | 71 | | | 174.8k |
+| rings + spotters | 58 | 42 | 0 | 228.2k |
+| rings, spotters off | 33 | 25 | 42 | 223.5k |
+
+t11 outcomes cluster into ~5 distinct trajectories per arm; effective N is small.
+
+| 12v12 v5 vs v4 | wins | share |
+|---|---|---|
+| dodge2 | 32 | 0.443 |
+| read | 21 | 0.431 |
+| rings + spotters | 21 | 0.426 |

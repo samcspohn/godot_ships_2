@@ -4,8 +4,7 @@ use std::f64::consts::PI;
 use super::hull::rudder_to_heading;
 use super::{
     ShipNavigator, SteerCache, SteeringChoice, ThreatEval, DODGE_COMMITMENT_BIAS, DODGE_COMMITMENT_DURATION,
-    PARKED_SPEED_THRESHOLD, SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER, TURN_LATCH_MIN,
-    TURN_LATCH_PENALTY_S, TURN_LATCH_RELEASE,
+    PARKED_SPEED_THRESHOLD, SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER,
 };
 use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint, DynamicObstacle};
 
@@ -136,16 +135,6 @@ impl ShipNavigator {
         desired_rudder: f32,
         desired_throttle: i32,
     ) -> SteeringChoice {
-        let turn_err = self.turn_error(desired_throttle);
-        if turn_err < TURN_LATCH_RELEASE {
-            self.turn_latch = 0.0;
-        }
-        // Making sternway the rudder acts backwards, and the latch only knows turns made ahead.
-        let way = self.way_sign();
-        if way < 0.0 {
-            self.turn_latch = 0.0;
-        }
-        let desired_rudder = if self.turn_latch * -desired_rudder < 0.0 { -desired_rudder } else { desired_rudder };
         let cache = self.steer_cache.take();
         let mut result = SteeringChoice {
             rudder: desired_rudder,
@@ -213,7 +202,6 @@ impl ShipNavigator {
                 inputs.end_t = arc.last().map_or(0.0, |p| p.time);
                 self.winning_arc = arc;
                 self.winning_arc_inputs = inputs;
-                self.arm_turn_latch(&choice, turn_err);
                 return choice;
             }
         }
@@ -227,7 +215,6 @@ impl ShipNavigator {
             self.perf_last_steering_terrain_rejects = 0;
             self.perf_last_steering_short_arc_rejects = 0;
             self.perf_last_steering_arc_points_simulated = self.winning_arc.len() as i32;
-            self.arm_turn_latch(&result, turn_err);
             return result;
         }
 
@@ -281,7 +268,6 @@ impl ShipNavigator {
             }
             self.steer_cache = Some(c);
             self.perf_last_steering_candidates_simulated = 0;
-            self.arm_turn_latch(&choice, turn_err);
             return choice;
         }
 
@@ -685,9 +671,6 @@ impl ShipNavigator {
                 any_collision = true;
             }
             let mut score = pass_data[i].nav_score;
-            if self.turn_latch * -pass_data[i].rudder < -0.01 && pass_data[i].throttle >= 0 {
-                score += TURN_LATCH_PENALTY_S;
-            }
             if self.out_rudder.abs() > 0.3 && pass_data[i].rudder * self.out_rudder < -0.09 {
                 score += RUDDER_FLIP_PENALTY_S;
             }
@@ -802,7 +785,6 @@ impl ShipNavigator {
             self.dodge_committed_rudder = 0.0;
             self.dodge_commitment_timer = 0.0;
         }
-        self.arm_turn_latch(&result, turn_err);
 
         result
     }
@@ -835,26 +817,6 @@ impl ShipNavigator {
             && angle_difference(self.state.heading, pred.heading).abs() <= STEER_REUSE_DRIFT_RAD
     }
 
-    /// Which way the rudder acts: the hull's actual direction through the water.
-    pub(crate) fn way_sign(&self) -> f32 {
-        if self.state.current_speed < -0.5 { -1.0 } else { 1.0 }
-    }
-
-    /// Bow's error from where it is steering to; 0 while backing.
-    fn turn_error(&self, throttle: i32) -> f32 {
-        if throttle < 0 {
-            return 0.0;
-        }
-        angle_difference(self.state.heading, self.steer_goal(false)).abs()
-    }
-
-    /// A big turn keeps its side until near done: from far off, port and
-    /// starboard score alike and small changes flip the ship between them.
-    fn arm_turn_latch(&mut self, choice: &SteeringChoice, turn_err: f32) {
-        if self.turn_latch == 0.0 && self.way_sign() > 0.0 && turn_err > TURN_LATCH_MIN && choice.throttle >= 0 && choice.rudder.abs() >= 0.3 {
-            self.turn_latch = -choice.rudder.signum();
-        }
-    }
 
     // ============================================================================
     // Pure pursuit steering

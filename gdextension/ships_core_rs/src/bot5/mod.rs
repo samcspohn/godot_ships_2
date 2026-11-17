@@ -1,6 +1,9 @@
 //! Bot controller v5: team hive + per-bot controllers. See doc/BOT_V5_DESIGN.md.
 
 pub mod belief;
+pub mod dodge;
+pub mod shell_read;
+pub mod trade;
 pub mod features;
 mod field;
 pub mod flank;
@@ -22,6 +25,7 @@ use std::sync::Arc;
 use crate::nav::gun_matrix::GunMatrix;
 use crate::nav::hpa::HpaGraph;
 use crate::nav::map::NavigationMap;
+use crate::nav::navigator::hull::Hull;
 use crate::nav::navigator::ShipNavigator;
 use crate::nav::reach::{ReachField, Shell};
 use crate::nav::ships::ShipRegistry;
@@ -60,6 +64,13 @@ const WALL_SHORT_M: f32 = 200.0;
 /// Walls are re-sent to the navigator (a replan) only when one moves this much.
 const WALL_MOVE_M: f32 = 500.0;
 const STANCE_EVERY: i64 = 4;
+const DODGE_EVERY: i64 = 3;
+/// v4's torpedo_track_range and obstacle id namespace.
+const TORP_TRACK_M: f32 = 3000.0;
+const TORP_ID: i32 = -100000;
+const TORP_RADIUS_M: f32 = 5.0;
+/// A torpedo is tracked if it passes within a hull length plus this many seconds of our top speed.
+const TORP_SLACK_S: f32 = 30.0;
 /// Gear vetoes re-priced this often per bot.
 const VETO_EVERY_S: f64 = 1.0;
 /// Mount arcs are sampled toward a point this far off.
@@ -120,6 +131,10 @@ struct Bot {
     name: String,
     team: i32,
     style: Playstyle,
+    /// Last pass: pushing as a brawler, the enemy spotted for the flank, the trade band on the target.
+    brawl: bool,
+    spot_for: Option<i64>,
+    trade_band: Option<(f32, f32)>,
     apt: Aptitude,
     nav: Gd<ShipNavigator>,
     plan: Option<Plan>,
@@ -155,8 +170,18 @@ struct Bot {
     hull: crate::nav::types::ShipParams,
     /// Per main-battery mount: bit b set when it bears on a point b stance bins off the bow.
     mounts: Vec<u128>,
+    gun_nodes: Vec<Gd<Node3D>>,
     stance: Stance,
+    /// Kiting: the quarter (+1/-1) the guns on us sit on, and this tick's heading and point.
+    kite_side: f32,
+    kite: Option<(f32, Vector2)>,
+    /// Enemy shells aimed near us are in the air until then.
+    fired_on_until: f64,
+    kite_fired: bool,
     veto_at: f64,
+    dodge: dodge::Dodge,
+    citadel: Rect2,
+    reads: shell_read::ShellReads,
     /// Threat rings as route walls, each pulled in short of the station.
     walls: Vec<(Vector2, f32)>,
     walls_new: bool,
@@ -179,6 +204,8 @@ struct Pass {
     next: usize,
     committed: Vec<Committed>,
     spot: HashMap<i64, SpotNeed>,
+    /// Bot index -> the enemy it spots for its flank; None with none in the field.
+    spotters: HashMap<usize, Option<i64>>,
 }
 
 /// Who lights an enemy, and each ally's fire on it (HP share per minute) that depends on it being lit.
@@ -207,6 +234,9 @@ pub struct World {
     hpa: Option<Gd<HpaGraph>>,
     space: Option<Gd<PhysicsDirectSpaceState3D>>,
     registry: Option<Gd<ShipRegistry>>,
+    pm: Option<Gd<ProjectileManager>>,
+    /// Enemy torpedoes the hub saw this frame: [owner team, x, z, vx, vz].
+    torps_in: Vec<[f32; 5]>,
     vis: Option<Gd<VisibilityGrid>>,
     reach: Option<Gd<ReachField>>,
     layout: Option<Layout>,
@@ -244,6 +274,49 @@ fn fire_of<'a>(snap: &'a Snapshot, curves: &'a Curves, gun: i64, id: i64, keys: 
     c.iter().any(|c| c.is_some()).then(|| Fire::new(c, gun, ship))
 }
 
+/// The threat this far off the stern while kiting; opened to KITE_ANGLE_FIRED while its shells are in the air, which
+/// angles the belt further and throws its lead off the stern citadel.
+const KITE_ANGLE: f32 = 30.0 * std::f32::consts::PI / 180.0;
+const KITE_ANGLE_FIRED: f32 = 35.0 * std::f32::consts::PI / 180.0;
+const KITE_EVERY: i64 = 3;
+/// Summed sine of the turrets' swing off the centreline below which no beam is trained.
+const TRAINED_MIN: f32 = 0.5;
+/// Stance's window about the kite heading.
+const KITE_TOL: f32 = 0.0;
+const KITE_REACH_M: f32 = 3000.0;
+const KITE_REACH_TURNS: f32 = 8.0;
+const KITE_SWING: f32 = 15.0 * std::f32::consts::PI / 180.0;
+const KITE_SWING_MAX: f32 = 150.0 * std::f32::consts::PI / 180.0;
+const KITE_SAMPLES: usize = 12;
+/// Open legs priced for a shot, nearest the wanted heading first.
+const KITE_LEGS: usize = 4;
+
+/// Short of the trade range a station may sit, and past it.
+const BAND_OUT_M: f32 = 1500.0;
+/// v4 _brawl: push to this, while the guns on us lie within BRAWL_CROSSFIRE.
+const BRAWL_CROSSFIRE: f32 = std::f32::consts::FRAC_PI_2;
+/// Kite out while in this share of the band nearest the target: a station across the bow lets an equal-speed chaser in.
+const KITE_BAND: f32 = 0.5;
+/// The ring sits this far inside the band.
+const RING_IN_M: f32 = 500.0;
+/// Spotting short of the target's detection by this much.
+const SPOT_INSET_M: f32 = 500.0;
+
+struct Hold {
+    trade: trade::Trade,
+    /// Our secondaries out-gun our mains on this enemy, crossfire aside.
+    brawler: bool,
+    band: (f32, f32),
+    ring: f32,
+    brawl: bool,
+}
+
+/// Inside the target's detection, past our own when it sees farther than we hide; at its detection when it hides better.
+fn spot_band(me: &snapshot::ShipState, e: &snapshot::ShipState) -> (f32, f32) {
+    let hi = (e.conceal - SPOT_INSET_M).max(0.0);
+    if e.conceal <= me.conceal { ((hi - BAND_OUT_M).max(0.0), hi) } else { (me.conceal.min(hi), hi) }
+}
+
 /// Each field source once, with its fire on `bot` and its gun-matrix row from its cell.
 fn threats_of<'a>(field: &'a TeamField, bot: &Bot, snap: &'a Snapshot, curves: &'a Curves,
         matrices: &'a HashMap<i64, Arc<GunMatrix>>, tel: &mut Vec<&'static str>, ahead: bool) -> Vec<Threat<'a>> {
@@ -254,6 +327,7 @@ fn threats_of<'a>(field: &'a TeamField, bot: &Bot, snap: &'a Snapshot, curves: &
             tel.push("threat_no_table");
             continue;
         };
+        let f = if shell_read_on() { f.read(bot.reads.read(s.id)) } else { f };
         let row = matrices.get(&s.id).and_then(|m| m.row(s.cell));
         out.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f, aim: 1.0, ring: 0.0 });
     }
@@ -278,6 +352,17 @@ fn helm(s: &Stance) -> (f32, f32, bool, bool) {
     if s.active { (s.heading, 1.0, s.astern, !s.astern) } else { (s.heading, 0.0, false, false) }
 }
 
+/// The beam (+1/-1, as `stance::best_in` signs it off `hdg`) the live main turrets point to now, each weighted by how far
+/// it is swung off the centreline; None when they sit fore and aft.
+fn trained_beam(guns: &[Gd<Node3D>], hdg: f32) -> Option<f32> {
+    let s: f32 = guns.iter().filter(|g| g.is_instance_valid()).filter(|g| !crate::combat::turret::Turret::load((*g).clone()).is_disabled())
+        .map(|g| {
+            let f = -g.get_global_transform().basis.col_c();
+            stance::wrap(f.x.atan2(f.z) - hdg).sin()
+        }).sum();
+    (s.abs() >= TRAINED_MIN).then(|| s.signum())
+}
+
 fn mount_masks(cfg: &VarDictionary) -> Vec<u128> {
     let (Some(guns), Some(hull)) = (cfg.get("guns").and_then(|v| v.try_to::<AnyArray>().ok()),
         cfg.get("hull").and_then(|v| v.try_to::<Gd<Node3D>>().ok())) else { return Vec::new() };
@@ -292,6 +377,67 @@ fn mount_masks(cfg: &VarDictionary) -> Vec<u128> {
             t.in_fire_arcs(stance::wrap((t.rot_y() + t.angle_to_target(at)) as f32) as f64)
         }).fold(0u128, |m, b| m | 1 << b)
     }).filter(|&m| m != 0).collect()
+}
+
+/// Per shell, dodge::ASPECTS weights: its shooter's damage per hit on us by the aspect it arrives at (AP or HE as the
+/// shell is), over that row's mean; 1 where no shooter lies within SOURCE_MATCH of where it came from or no table.
+fn shell_aspects(snap: &Snapshot, curves: &Curves, threats: &HashMap<i64, [Option<String>; 2]>, team: i32,
+        shells: &[(crate::projectile::manager::ShellLandingEntry, f32)]) -> Vec<f32> {
+    let step = 180.0 / (dodge::ASPECTS - 1) as f32;
+    let mut out = Vec::with_capacity(shells.len() * dodge::ASPECTS);
+    for (e, _) in shells {
+        let land = Vector2::new(e.landing_x, e.landing_z);
+        let src = shell_source(snap, team, e);
+        let curve = src.and_then(|s| threats.get(&s.id)?[e.is_he as usize].as_deref().and_then(|k| curves.get(k)));
+        let row: Vec<f32> = match (src, curve) {
+            (Some(s), Some(c)) => {
+                let r = s.p2().distance_to(land);
+                (0..dodge::ASPECTS).map(|a| c.hit_at(r, a as f32 * step)).collect()
+            }
+            _ => Vec::new(),
+        };
+        let mean = row.iter().sum::<f32>() / dodge::ASPECTS as f32;
+        if mean > 0.0 {
+            out.extend(row.iter().map(|v| v / mean));
+        } else {
+            out.extend(std::iter::repeat_n(1.0, dodge::ASPECTS));
+        }
+    }
+    out
+}
+
+/// The enemy of `team` within SOURCE_MATCH of the bearing a shell arrives from (its landing velocity), in gun range.
+fn shell_source<'a>(snap: &'a Snapshot, team: i32, e: &crate::projectile::manager::ShellLandingEntry) -> Option<&'a ShipState> {
+    const SOURCE_MATCH: f32 = 10.0 * std::f32::consts::PI / 180.0;
+    let land = Vector2::new(e.landing_x, e.landing_z);
+    let from = (-e.landing_vx).atan2(-e.landing_vz);
+    snap.ships.iter().filter(|s| s.alive && s.team != team && s.p2().distance_to(land) <= s.gun_range * 1.1)
+        .map(|s| (stance::wrap(stance::bearing(land, s.p2()) - from).abs(), s))
+        .filter(|(d, _)| *d <= SOURCE_MATCH)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, s)| s)
+}
+
+/// Whether a torpedo at `at` running `v` passes within `reach` of us at any point ahead, our course held.
+fn torp_closes(my: Vector2, my_v: Vector2, at: Vector2, v: Vector2, reach: f32) -> bool {
+    let (d, rv) = (at - my, v - my_v);
+    let t = (-d.dot(rv) / rv.length_squared().max(1e-3)).max(0.0);
+    (d + rv * t).length() <= reach
+}
+
+fn shell_read_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("SHIPS_BOT5_SHELL_READ").map_or(true, |v| v != "0"))
+}
+
+fn dodge_aspect() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("SHIPS_BOT5_DODGE_ASPECT").map_or(true, |v| v != "0"))
+}
+
+fn dodge_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SHIPS_BOT5_DODGE_TRACE").is_some())
 }
 
 fn stance_trace() -> bool {
@@ -344,6 +490,11 @@ const PHASES: usize = 16;
 
 fn us(t: std::time::Instant) -> u32 {
     t.elapsed().as_micros() as u32
+}
+
+/// Unset or anything but "0" is on.
+fn env_on(k: &str) -> bool {
+    std::env::var(k).map_or(true, |v| v != "0")
 }
 
 fn scan_trace() -> bool {
@@ -408,6 +559,9 @@ impl World {
             name,
             team,
             style: Playstyle::from_i32(cfg.get("playstyle").map_or(-1, |v| v.to_i32()), class),
+            brawl: false,
+            spot_for: None,
+            trade_band: None,
             apt: Aptitude { level: g("aptitude") as i32 },
             nav,
             plan: None,
@@ -439,8 +593,17 @@ impl World {
             dmg: None,
             hull,
             mounts: mount_masks(cfg),
+            gun_nodes: cfg.get("guns").and_then(|v| v.try_to::<AnyArray>().ok())
+                .map_or_else(Vec::new, |a| a.iter_shared().filter_map(|g| g.try_to::<Gd<Node3D>>().ok()).collect()),
             stance: Stance::default(),
+            kite_side: 0.0,
+            kite: None,
+            fired_on_until: f64::NEG_INFINITY,
+            kite_fired: false,
             veto_at: f64::NEG_INFINITY,
+            dodge: dodge::Dodge::default(),
+            reads: shell_read::ShellReads::default(),
+            citadel: cfg.get("citadel").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
             walls: Vec::new(),
             walls_new: false,
             alt: None,
@@ -490,17 +653,41 @@ impl World {
                 self.stance(i, now);
             }
         }
+        for i in 0..self.bots.len() {
+            if self.frame % DODGE_EVERY == i as i64 % DODGE_EVERY {
+                self.dodge(i, now);
+            }
+        }
         self.ph[15] = us(t);
         let t1 = std::time::Instant::now();
         self.jump_pushes = 0;
         for i in 0..self.bots.len() {
-            self.drive(i, dt);
+            self.drive(i, dt, now);
+        }
+        if scan_trace() && self.frame % 36 == 0 {
+            for b in &self.bots {
+                let Some(me) = self.snap.get(b.ship_id).filter(|s| s.alive) else { continue };
+                let Some(e) = self.snap.enemies_of(b.team).filter(|e| e.alive).min_by(|x, y| x.pos.distance_to(me.pos).total_cmp(&y.pos.distance_to(me.pos))) else { continue };
+                let away = me.p2() - e.p2();
+                let off = stance::wrap(me.heading() - away.x.atan2(away.y)).to_degrees();
+                let st = b.plan.map(|p| p.station - me.p2()).map_or(f32::NAN, |d| stance::wrap(d.x.atan2(d.y) - away.x.atan2(away.y)).to_degrees());
+                godot_print!("move5 t={:.0} {} pos=({:.0},{:.0}) eseen={} gr={} st=({:.0},{:.0}) d={:.0} v={:.1} hdg_off_away={:.0} station_off_away={:.0} st_d={:.0} posture={:?} dodge={} thr={}",
+                    now, b.name, me.pos.x, me.pos.z, e.seen, b.inputs.grounded, b.plan.map_or(0.0, |p| p.station.x), b.plan.map_or(0.0, |p| p.station.y), away.length(), me.speed(), off, st, b.plan.map_or(0.0, |p| p.station.distance_to(me.p2())),
+                    b.plan.map(|p| p.posture), b.dodge.active(now).map_or("-", |p| p.kind), b.cmd.throttle);
+                let n = b.nav.bind();
+                godot_print!("nav5 t={:.0} {} state={} fail={} reason={} path={} wp=({:.0},{:.0}) walls={}", now, b.name, n.get_nav_state(), n.get_path_failure_count(),
+                    n.get_last_path_failure_reason_name(), n.get_current_path().len(), n.get_current_waypoint().x, n.get_current_waypoint().z, b.walls.len());
+            }
         }
         let t2 = std::time::Instant::now();
         self.ph[9] = (t2 - t1).as_micros() as u32;
         for i in 0..self.bots.len() {
             let t = std::time::Instant::now();
             self.guns(i, now, dt, time_mult);
+            let b = &mut self.bots[i];
+            if b.plan.is_some_and(|p| p.posture == Posture::TorpRun) && self.snap.get(b.ship_id).is_some_and(|s| !s.seen) {
+                b.cmd.fire = false;
+            }
             let g = std::time::Instant::now();
             self.torps(i, now);
             let c = std::time::Instant::now();
@@ -681,9 +868,74 @@ impl World {
         let n = order.len();
         let ts = std::time::Instant::now();
         let spot = self.spot_needs(team);
+        let spotters = if env_on("SHIPS_BOT5_SPOTTERS") { self.assign_spotters(team, &order) } else { HashMap::new() };
+        for _ in &spotters {
+            self.tel.count("spotter_role");
+        }
         self.ph[5] += us(ts);
-        self.teams.get_mut(&team).unwrap().pass = Some(Pass { order, next: 0, committed: Vec::with_capacity(n), spot });
+        self.teams.get_mut(&team).unwrap().pass = Some(Pass { order, next: 0, committed: Vec::with_capacity(n), spot, spotters });
         self.run_pass(team, now);
+    }
+
+    /// Per enemy in the field, the band v4's trade holds bot `i` to, and whether its secondaries win it up close.
+    fn holds(&self, i: usize, team: i32, me: &snapshot::ShipState) -> HashMap<i64, Hold> {
+        let bot = &self.bots[i];
+        let field = &self.teams[&team].field;
+        let theirs = threats_of(field, bot, &self.snap, &self.curves, &self.matrices, &mut Vec::new(), false);
+        let k_in = *self.calib_in.get(&class_key(me.class)).unwrap_or(&1.0);
+        let my_hp = (me.hp_frac * me.hp_max).max(1.0);
+        let budget = trade::TTK_BUDGET_SHARE * self.time_left.max(60.0);
+        let mut bearings: Vec<f32> = field.sources.iter().filter(|s| !s.ahead)
+            .filter(|s| self.snap.get(s.id).is_some_and(|e| s.at.distance_to(me.p2()) <= e.gun_range * 1.05))
+            .map(|s| (s.at.x - me.pos.x).atan2(s.at.y - me.pos.z)).collect();
+        let crossfire = station::arc_of(&mut bearings);
+        let mut out = HashMap::new();
+        for (id, _, _) in sources_by_id(field) {
+            let Some(e) = self.snap.get(id) else { continue };
+            let ours = fire_of(&self.snap, &self.curves, me.id, id, bot.gun.pairs.get(&id).map(|q| &q.keys));
+            let k_out = *self.calib_out.get(&format!("{:?}>{:?}", me.class, e.class)).unwrap_or(&1.0);
+            let us = trade::Side { ship: me, fire: ours.as_ref(), k: k_out, hp: my_hp };
+            let them = trade::Side { ship: e, fire: theirs.iter().find(|t| t.fire.ship.id == id).map(|t| &t.fire), k: k_in,
+                hp: (e.hp_frac * e.hp_max).max(1.0) };
+            let t = trade::desired(&us, &them, me.hp_frac, bot.style.style().aggression, budget);
+            let brawler = ours.as_ref().is_some_and(|f| trade::brawler(f, me, me.guns_bear));
+            let brawl = brawler && crossfire <= BRAWL_CROSSFIRE;
+            let (lo, hi) = if brawl { (0.0, trade::BRAWL_RANGE_M.min(t.range)) } else { t.band };
+            out.insert(id, Hold { trade: t, brawler, band: (lo, hi), ring: if brawl { 0.0 } else { (lo - RING_IN_M).max(0.0) }, brawl });
+        }
+        out
+    }
+
+    /// One spotter per flank (a lone ship spots for itself): torpedo DD, gunboat DD, BB, then CA. It spots the flank's
+    /// enemy nearest it.
+    fn assign_spotters(&self, team: i32, order: &[usize]) -> HashMap<usize, Option<i64>> {
+        let rank = |s: &snapshot::ShipState| match s.class {
+            HullClass::Dd if s.torp_range > 0.0 => 0,
+            HullClass::Dd => 1,
+            HullClass::Bb => 2,
+            HullClass::Ca => 3,
+            HullClass::Cv => 9,
+        };
+        let hive = &self.teams[&team];
+        let mut roles: Vec<Option<Role>> = Vec::new();
+        for &i in order {
+            if !roles.contains(&self.bots[i].role) {
+                roles.push(self.bots[i].role);
+            }
+        }
+        let mut out = HashMap::new();
+        for r in roles {
+            let pick = order.iter().copied().filter(|&i| self.bots[i].role == r)
+                .filter_map(|i| self.snap.get(self.bots[i].ship_id).map(|s| (i, s)))
+                .filter(|(_, s)| rank(s) < 9)
+                .min_by_key(|(i, s)| (rank(s), self.bots[*i].ship_id));
+            let Some((i, me)) = pick else { continue };
+            let ids = r.zip(hive.flanks.as_ref()).map(|(r, f)| f.view(r, me.p2()).0);
+            let near = hive.field.sources.iter().filter(|s| !s.ahead && ids.as_ref().is_none_or(|ids| ids.contains(&s.id)))
+                .min_by(|a, b| a.at.distance_to(me.p2()).total_cmp(&b.at.distance_to(me.p2())));
+            out.insert(i, near.map(|s| s.id));
+        }
+        out
     }
 
     /// Per enemy in the field: allies lighting it now (eyes with line of sight, or radar/hydro), and bots' fire on it.
@@ -748,9 +1000,46 @@ impl World {
             if danger.threat >= hive::DISENGAGE_THREAT {
                 self.tel.count("threat_high");
             }
+            let spot_on = p.spotters.get(&i).copied().flatten();
+            let hunt = p.spotters.get(&i).is_some_and(|s| s.is_none());
+            let mut holds = self.holds(i, team, me);
+            if let Some(e) = spot_on.and_then(|id| snap.get(id)) {
+                let (s, h) = (spot_band(me, e), holds.get_mut(&e.id));
+                if let Some(h) = h {
+                    h.band = if h.band.0 <= s.1 { (h.band.0, h.band.1.min(s.1)) } else { s };
+                    h.ring = h.ring.min((h.band.0 - RING_IN_M).max(0.0));
+                }
+            }
+            if scan_trace() {
+                for (id, h) in &holds {
+                    godot_print!("trade5 t={:.0} {} vs {} {:?} r={:.0} band={:.0}-{:.0} ring={:.0} brawl={} spot={}", now, self.bots[i].name,
+                        snap.get(*id).map_or(0.0, |e| e.conceal), h.trade.desire, h.trade.range, h.band.0, h.band.1, h.ring, h.brawl, spot_on == Some(*id));
+                }
+            }
+            let bands: HashMap<i64, (f32, f32)> = holds.iter().map(|(&id, h)| (id, h.band)).collect();
+            if self.bots[i].style != Playstyle::Brawler && holds.values().any(|h| h.brawler) {
+                self.bots[i].style = Playstyle::Brawler;
+                self.tel.count("style_brawler");
+            }
+            let bot = &self.bots[i];
+            let brawl = bot.assign.target.and_then(|t| holds.get(&t)).is_some_and(|h| h.brawl);
+            let tgt_band = bot.assign.target.and_then(|t| holds.get(&t)).map(|h| h.band);
+            let b = &mut self.bots[i];
+            (b.brawl, b.spot_for, b.trade_band) = (brawl, spot_on, tgt_band);
+            let away: Vector2 = self.teams[&team].field.sources.iter().filter(|s| !s.ahead)
+                .filter(|s| holds.get(&s.id).is_some_and(|h| !h.brawl && s.at.distance_to(me.p2()) < KITE_BAND * h.band.1 + (1.0 - KITE_BAND) * h.band.0))
+                .map(|s| (me.p2() - s.at).normalized()).sum();
+            let kite_axis = (away.length() > 1e-3).then(|| away.x.atan2(away.y));
+            if kite_axis.is_some() {
+                self.tel.count("ring_in");
+            }
+            if brawl {
+                self.tel.count("brawl");
+            }
             let bot = &self.bots[i];
             let m = Member { me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
-                torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank, danger };
+                torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank, danger, bands: bands.clone(), brawl, kite_axis, hunt,
+                under_fire: now < bot.fired_on_until };
             let live = &self.live;
             let gun = &bot.gun;
             let mut no_table = 0u32;
@@ -792,16 +1081,13 @@ impl World {
                     threats_of(field, bot, snap, curves, matrices, &mut Vec::new(), true)];
                 for t in threats.iter_mut().flatten() {
                     t.aim = aim_share(snap, team, me, t.at, t.range);
-                    let e = t.fire.ship;
-                    let ours = fire_of(snap, curves, me.id, e.id, bot.gun.pairs.get(&e.id).map(|q| &q.keys));
-                    let k_out = *calib_out.get(&format!("{:?}>{:?}", me.class, e.class)).unwrap_or(&1.0);
-                    t.ring = station::ring_of(t, ours.as_ref(), k_in, k_out, my_hp);
+                    t.ring = holds.get(&t.fire.ship.id).map_or(0.0, |h| h.ring);
                 }
                 rings = threats[0].iter().map(|t| (t.at, t.ring)).collect();
                 let own = matrices.get(&me.id);
                 let mut foes: Vec<station::Foe> = Vec::new();
                 for (id, now_i, ahead_i) in sources_by_id(field) {
-                    let theirs = m.flank.as_ref().is_some_and(|f| !f.ids.contains(&id)) && req.target != Some(id)
+                    let theirs = m.flank.as_ref().is_some_and(|f| !f.ids.contains(&id)) && req.target != Some(id) && spot_on != Some(id)
                         && snap.get(id).is_none_or(|e| field.sources[now_i].at.distance_to(me.p2()) > e.gun_range * 1.05);
                     if theirs {
                         continue;
@@ -823,12 +1109,14 @@ impl World {
                         .map_or(0.0, |n| n.fire.iter().filter(|f| f.0 != me.id).map(|f| f.1).sum());
                     let k_out = *calib_out.get(&format!("{:?}>{:?}", me.class, fire.ship.class)).unwrap_or(&1.0);
                     let hp = (fire.ship.hp_frac * fire.ship.hp_max).max(1.0);
-                    foes.push(station::Foe { hp, k_out, primary: req.target == Some(id), spot, at: [pos(now_i), pos(ahead_i)], fire });
+                    let band = bands.get(&id).copied().unwrap_or((req.lo, req.hi));
+                    let must = spot_on == Some(id) && !req.escape;
+                    foes.push(station::Foe { hp, k_out, primary: req.target == Some(id), spot, band, must, at: [pos(now_i), pos(ahead_i)], fire });
                 }
                 let bloom = me.conceal.max(me.gun_range);
                 let seen = [false, true].map(|later| [bloom, me.conceal].map(|r| field.seen_by(lay, vis, r, |s| later || !s.ahead)));
                 let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, my: me.p2(), speed: me.max_speed,
-                    clearance, risk: m.style.risk, reach: me.gun_range, my_hp, k_in, mates: mates.clone(), front,
+                    clearance, turn_radius: me.turn_radius, risk: m.style.risk, reach: me.gun_range, my_hp, k_in, mates: mates.clone(), front,
                     dark_ok: me.class == HullClass::Dd || me.class == HullClass::Ca && me.conceal < DARK_CA_CONCEAL * me.gun_range,
                     allies: {
                         let a: Vec<Vector2> = snap.allies_of(team).filter(|a| a.alive && a.id != me.id).map(|a| a.p2()).collect();
@@ -887,7 +1175,12 @@ impl World {
                 f
             };
             let old = m.plan;
+            let (kite_axis, n_src, n_holds) = (m.kite_axis, field.sources.len(), holds.len());
             let (plan, assign, reason) = hive::resolve(&m, snap, belief, &p.committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
+            if scan_trace() {
+                godot_print!("pass5 t={:.0} {} kite={:?} src={} holds={} tgt={:?} reason={:?} posture={:?}", now, self.bots[i].name, kite_axis.map(|a| a.to_degrees() as i32),
+                    n_src, n_holds, assign.target, reason, plan.map(|p| p.posture));
+            }
             drop(scan);
             drop(vis);
             for w in scan_tel {
@@ -904,6 +1197,9 @@ impl World {
             for _ in 0..no_table {
                 self.tel.count("target_no_table");
             }
+            if plan.is_some_and(|p| p.posture == Posture::Engage && assign.target.is_some() && !p.shot) {
+                self.tel.count("engage_no_shot");
+            }
             if let Some(r) = reason {
                 self.tel.release(r);
                 if let (Some(o), Some(n)) = (old, plan) {
@@ -916,7 +1212,7 @@ impl World {
             }
             bot.hp_at_pass = hp;
             bot.assign = assign;
-            if let Some(st) = plan.map(|p| p.station).filter(|_| !rings.is_empty()) {
+            if let Some(st) = plan.map(|p| p.station) {
                 let walls: Vec<(Vector2, f32)> = rings.iter().map(|&(at, r)| (at, r.min(at.distance_to(st) - WALL_SHORT_M).max(0.0)))
                     .filter(|w| w.1 > 0.0).collect();
                 if walls.len() != bot.walls.len() || walls.iter().zip(&bot.walls).any(|(a, b)| a.0.distance_to(b.0) > WALL_MOVE_M || (a.1 - b.1).abs() > WALL_MOVE_M) {
@@ -1196,7 +1492,10 @@ impl World {
         let wp = b.nav.bind().get_current_waypoint_impl();
         let wp = Vector2::new(wp.x, wp.z);
         let to = if wp.distance_to(my) > 1.0 { wp } else { p.station };
-        let route = stance::bearing(my, to);
+        let route = b.kite.map_or_else(|| stance::bearing(my, to), |k| k.0);
+        let half = if b.kite.is_some() { KITE_TOL } else { stance::CONE };
+        let side_ref = tgt.map(|t| stance::bearing(my, t.p2()))
+            .or_else(|| threats.iter().min_by(|a, b| a.at.distance_to(my).total_cmp(&b.at.distance_to(my))).map(|t| stance::bearing(my, t.at)));
         let (hdg, speed) = (me.heading(), me.speed());
         let omega = stance::swing_rate(&b.hull, speed);
         let lag = b.hull.rudder_response_time * 0.5;
@@ -1205,7 +1504,8 @@ impl World {
         let mut st = Stance { active: true, holding, gear_at: prev.gear_at, turn_loss: prev.turn_loss,
             ..Stance::default() };
         let mut vetoed = None;
-        let best = |c: f32, half: f32, keep: Option<f32>| stance::best_in(&rates, c, half, hdg, omega, lag, keep).0;
+        let trained = trained_beam(&b.gun_nodes, hdg);
+        let best = |c: f32, half: f32, keep: Option<f32>| stance::best_in(&rates, c, half, hdg, omega, lag, keep, side_ref, trained).0;
         if holding {
             st.heading = best(hdg, PI, prev.active.then_some(prev.heading));
             st.why = "stance_hold";
@@ -1216,7 +1516,7 @@ impl World {
             if behind && now - b.veto_at >= VETO_EVERY_S && (!prev.active || now - prev.gear_at >= stance::GEAR_HOLD_S) {
                 let hull0 = crate::nav::navigator::hull::Hull { pos: my, vel: Vector2::new(me.vel.x, me.vel.z), heading: hdg,
                     yaw: me.yaw_rate, rudder: b.inputs.rudder, power: b.inputs.engine_power };
-                let (astern, loss) = stance::veto(&b.hull, hull0, &rates, best(route, stance::CONE, None), b.style.style().risk);
+                let (astern, loss) = stance::veto(&b.hull, hull0, &rates, best(route, half, None), b.style.style().risk);
                 st.turn_loss = loss;
                 if astern != st.astern || !prev.active {
                     st.gear_at = now;
@@ -1225,12 +1525,12 @@ impl World {
                 vetoed = Some(astern);
             }
             let keep = prev.active.then_some(prev.heading).filter(|_| prev.astern == st.astern);
-            st.heading = best(if st.astern { back_c } else { route }, stance::CONE, keep);
+            st.heading = best(if st.astern { back_c } else { route }, half, keep);
             st.why = if st.astern { "stance_astern" } else if behind { "stance_turn" } else { "stance_ahead" };
         }
         if stance_trace() {
-            godot_print!("stance5 {} m={} t={:.0} {} hdg={:.0} want={:.0} route={:.0} v={:.1} turn_loss={:.3} in={:.4} out={:.4}",
-                b.name, b.mounts.len(), now, st.why, hdg.to_degrees(), st.heading.to_degrees(), route.to_degrees(), speed, st.turn_loss,
+            godot_print!("stance5 {} m={} t={:.0} {} trained={:?} beam={:?} kite={} hdg={:.0} want={:.0} route={:.0} v={:.1} turn_loss={:.3} in={:.4} out={:.4}",
+                b.name, b.mounts.len(), now, st.why, trained, side_ref.map(|s| stance::wrap(s - hdg).signum()), b.kite.is_some(), hdg.to_degrees(), st.heading.to_degrees(), route.to_degrees(), speed, st.turn_loss,
                 rates.inc[stance::bin(st.heading)], rates.out[stance::bin(st.heading)]);
         }
         (st, vetoed)
@@ -1255,7 +1555,53 @@ impl World {
         m.safe_nav_point_internal(from, p, clearance, turn)
     }
 
-    fn drive(&mut self, i: usize, dt: f32) {
+    /// v4's kite, recomputed every tick relative to us: away from the guns on us, the threat held KITE_ANGLE off the
+    /// stern on the quarter it already sits on; swung toward open water (a shot preferred) when land is ahead.
+    fn kite_now(&mut self, i: usize, now: f64) {
+        let b = &self.bots[i];
+        let (Some(me), Some(true)) = (self.snap.get(b.ship_id).filter(|s| s.alive), b.plan.map(|p| p.kite)) else {
+            let b = &mut self.bots[i];
+            (b.kite, b.kite_side) = (None, 0.0);
+            return;
+        };
+        let fired = now < b.fired_on_until;
+        if b.kite.is_some() && (self.frame + i as i64) % KITE_EVERY != 0 && fired == b.kite_fired {
+            return;
+        }
+        let my = me.p2();
+        let field = &self.teams[&b.team].field;
+        let near: Vec<&field::Source> = field.sources.iter().filter(|s| !s.ahead)
+            .filter(|s| self.snap.get(s.id).is_some_and(|e| s.at.distance_to(my) <= e.gun_range * 1.05)).collect();
+        let away: Vector2 = near.iter().map(|s| (my - s.at).normalized_or_zero()).sum();
+        if away.length() < 1e-3 {
+            self.bots[i].kite = None;
+            return;
+        }
+        let tb = stance::wrap(away.x.atan2(away.y) + std::f32::consts::PI);
+        let side = if b.kite_side != 0.0 { b.kite_side } else {
+            trained_beam(&b.gun_nodes, me.heading()).unwrap_or(if stance::wrap(tb - me.heading()) >= 0.0 { 1.0 } else { -1.0 })
+        };
+        let want = stance::wrap(tb - side * (std::f32::consts::PI - if fired { KITE_ANGLE_FIRED } else { KITE_ANGLE }));
+        let reach = KITE_REACH_M.max(KITE_REACH_TURNS * me.turn_radius);
+        let clearance = b.nav.bind().get_ship_clearance();
+        let aim = b.assign.target.and_then(|t| self.snap.get(t)).map(|t| t.p2()).or_else(|| near.first().map(|s| s.at));
+        let open = |p: Vector2| self.map.as_ref().is_some_and(|m| {
+            let m = m.bind();
+            (1..=KITE_SAMPLES).all(|k| { let q = my + (p - my) * (k as f32 / KITE_SAMPLES as f32); m.get_distance_impl(q.x, q.y) >= clearance })
+        });
+        let shot = |p: Vector2| match (&b.shot_gun, aim) { (Some(g), Some(a)) => self.shots.clear(g, p, a), _ => true };
+        let n = (KITE_SWING_MAX / KITE_SWING).round() as i32;
+        let legs: Vec<(f32, Vector2)> = (0..=n).flat_map(|k| [k, -k]).map(|k| stance::wrap(want + k as f32 * KITE_SWING))
+            .map(|h| (h, my + Vector2::new(h.sin(), h.cos()) * reach)).filter(|&(_, p)| open(p)).take(KITE_LEGS).collect();
+        let pick = legs.iter().copied().find(|&(_, p)| shot(p)).or_else(|| legs.first().copied());
+        let b = &mut self.bots[i];
+        b.kite_side = side;
+        b.kite = pick;
+        b.kite_fired = fired;
+    }
+
+    fn drive(&mut self, i: usize, dt: f32, now: f64) {
+        self.kite_now(i, now);
         let frame = self.frame;
         let b = &mut self.bots[i];
         let Some(me) = self.snap.get(b.ship_id).copied().filter(|s| s.alive) else {
@@ -1265,6 +1611,14 @@ impl World {
         let slot = i as i64;
         let mut nav = b.nav.bind_mut();
         if frame % NAV_STATE_EVERY == slot % NAV_STATE_EVERY {
+            nav.clear_obstacles_impl();
+            for (k, t) in self.torps_in.iter().enumerate() {
+                let at = Vector2::new(t[1], t[2]);
+                if t[0] as i32 != b.team && at.distance_to(me.p2()) <= TORP_TRACK_M
+                    && torp_closes(me.p2(), Vector2::new(me.vel.x, me.vel.z), at, Vector2::new(t[3], t[4]), me.length + me.max_speed * TORP_SLACK_S) {
+                    nav.register_obstacle_impl(TORP_ID - k as i32, at, Vector2::new(t[3], t[4]), TORP_RADIUS_M, 0.0);
+                }
+            }
             nav.set_state_impl(me.pos, me.vel, me.heading(), me.yaw_rate, b.inputs.rudder, me.speed(),
                 b.inputs.engine_power, dt * NAV_STATE_EVERY as f32);
             nav.grounded = b.inputs.grounded;
@@ -1279,7 +1633,8 @@ impl World {
                 if std::mem::take(&mut b.walls_new) {
                     nav.set_threat_circles_impl(&b.walls);
                 }
-                nav.navigate_to_impl(Vector3::new(p.station.x, 0.0, p.station.y), h, p.hold_radius, 0.2618, w, back, ahead);
+                let to = b.kite.map_or(p.station, |k| k.1);
+                nav.navigate_to_impl(Vector3::new(to.x, 0.0, to.y), h, p.hold_radius, 0.2618, w, back, ahead);
                 b.pushed = Some((p.serial, p.station));
             }
         }
@@ -1287,6 +1642,77 @@ impl World {
         b.cmd.throttle = nav.out_throttle;
         if b.stance.active && b.stance.holding && !nav.torpedo_override_active && b.cmd.throttle > 0 {
             b.cmd.throttle = b.cmd.throttle.min((stance::HOLD_POWER * 4.0) as i32);
+        }
+        if nav.torpedo_override_active {
+            self.tel.count("torp_override_frames");
+        } else if let Some(d) = b.dodge.active(now) {
+            let h = Hull { pos: me.p2(), vel: Vector2::new(me.vel.x, me.vel.z), heading: me.heading(), yaw: me.yaw_rate,
+                rudder: b.inputs.rudder, power: b.inputs.engine_power };
+            let lie = if b.stance.active { b.stance.heading } else { b.kite.map_or(me.heading(), |k| k.0) };
+            b.cmd.rudder = d.rudder(&h, &b.hull, lie, now);
+            b.cmd.throttle = d.level;
+            self.tel.count("dodge_frames");
+        }
+        if now < b.fired_on_until && frame % 3 == 0 && std::env::var("SHIPS_BOT5_RUDDER_TRACE").is_ok() {
+            godot_print!("rud5 {} t={:.1} land_in={:.1} cmd={:.2} rudder={:.2} yaw={:.2}deg/s hdg={:.1} thr={} dodge={} kite={}",
+                b.name, now, b.fired_on_until - now, b.cmd.rudder, b.inputs.rudder, me.yaw_rate.to_degrees(), me.heading().to_degrees(),
+                b.cmd.throttle, b.dodge.active(now).map_or("-", |d| d.kind), b.kite.is_some());
+        }
+    }
+
+    /// Re-plans bot i's dodge when enemy shells it has not planned against are in the air near it.
+    fn dodge(&mut self, i: usize, now: f64) {
+        let Some(pm) = &self.pm else { return };
+        let b = &mut self.bots[i];
+        let Some(me) = self.snap.get(b.ship_id).copied().filter(|s| s.alive) else { return };
+        let shells = pm.bind().shells_near(me.p2(), dodge::QUERY_M, b.team);
+        if let Some(t) = shells.iter().map(|(_, tr)| *tr).reduce(f32::max) {
+            b.fired_on_until = b.fired_on_until.max(now + t as f64);
+        }
+        for (e, tr) in &shells {
+            if let Some(src) = shell_source(&self.snap, b.team, e) {
+                b.reads.note(src.id, now + *tr as f64, e.is_he);
+            }
+        }
+        if let Some((e, _)) = shells.iter().max_by(|a, b| a.0.caliber.total_cmp(&b.0.caliber)) {
+            let from = (-e.landing_vx).atan2(-e.landing_vz);
+            self.tel.angling(&b.name, e.is_he, stance::wrap(from - me.heading()).abs().to_degrees());
+        }
+        let dodge::Check::Replan(shells) = b.dodge.check(shells, now) else { return };
+        let nav = b.nav.bind();
+        let route = b.plan.filter(|p| p.station.distance_to(me.p2()) >= p.hold_radius).map(|p| {
+            let wp = nav.get_current_waypoint_impl();
+            let wp = Vector2::new(wp.x, wp.z);
+            stance::bearing(me.p2(), if wp.distance_to(me.p2()) > 1.0 { wp } else { p.station })
+        });
+        let map = self.map.as_ref().map(|m| m.bind());
+        let aspect_w = if dodge_aspect() { shell_aspects(&self.snap, &self.curves, &b.threats, b.team, &shells) } else { Vec::new() };
+        let size = Vector2::new(me.beam, me.length);
+        let hull = Rect2::new(-size * 0.5, size);
+        let c = dodge::Ctx {
+            p: &b.hull,
+            h0: Hull { pos: me.p2(), vel: Vector2::new(me.vel.x, me.vel.z), heading: me.heading(), yaw: me.yaw_rate,
+                rudder: b.inputs.rudder, power: b.inputs.engine_power },
+            hull,
+            cit: if b.citadel.has_area() { b.citadel } else { Rect2::new(-size * Vector2::new(0.3, 0.25), size * Vector2::new(0.6, 0.5)) },
+            top: me.top,
+            lie_h: if b.stance.active { b.stance.heading } else { b.kite.map_or(me.heading(), |k| k.0) },
+            lie_level: if b.stance.active && b.stance.astern { -1 } else { b.cmd.throttle },
+            route,
+            map: map.as_deref(),
+            clearance: nav.get_ship_clearance(),
+            aspect_w: &aspect_w,
+        };
+        let (pick, cost0, cost) = dodge::plan(&c, &shells);
+        drop(nav);
+        let until = now + shells.iter().map(|(_, tr)| *tr as f64).fold(0.0, f64::max);
+        b.dodge.plan = pick.map(|(side, hold, level, kind)| dodge::Plan { side, turn_until: now + hold as f64, level, until, kind });
+        self.tel.count(pick.map_or("dodge_lie", |p| p.3));
+        for row in aspect_w.chunks_exact(dodge::ASPECTS) {
+            self.tel.count(if row.iter().all(|&v| v == 1.0) { "dodge_shell_unmatched" } else { "dodge_shell_matched" });
+        }
+        if dodge_trace() {
+            godot_print!("dodge5 {} t={:.1} n={} cost0={:.2} cost={:.2} {:?}", b.name, now, shells.len(), cost0, cost, b.dodge.plan);
         }
     }
 
@@ -1432,7 +1858,8 @@ impl BotWorld {
         self.w.space = space;
         self.w.hpa = hpa;
         self.w.registry = registry;
-        self.w.store = pm.map(|p| p.bind().point_store.clone());
+        self.w.store = pm.as_ref().map(|p| p.bind().point_store.clone());
+        self.w.pm = pm;
     }
 
     /// False until the navigation map is built.
@@ -1507,6 +1934,12 @@ impl BotWorld {
     fn set_target_live(&mut self, id: i64, sat: i64, fires: PackedFloat32Array, fire_k: f32) {
         let fires = fires.as_slice().chunks_exact(4).map(|c| (Vector3::new(c[0], c[1], c[2]), c[3] > 0.5)).collect();
         self.w.live.insert(id, TargetLive { sat, fires, fire_k });
+    }
+
+    /// [owner team, x, z, vx, vz] per armed enemy torpedo the other team has seen.
+    #[func]
+    fn set_torpedoes(&mut self, data: PackedFloat32Array) {
+        self.w.torps_in = data.as_slice().chunks_exact(5).map(|c| [c[0], c[1], c[2], c[3], c[4]]).collect();
     }
 
     #[func]
@@ -1781,9 +2214,13 @@ impl BotWorld {
             d.set("pos", me.pos);
             d.set("hp", me.hp_frac);
             d.set("gun_range", me.gun_range);
-            let band = b.style.style().band;
-            d.set("band_lo", band.0 * me.gun_range);
-            d.set("band_hi", band.1 * me.gun_range);
+            let band = b.trade_band.unwrap_or((b.style.style().band.0 * me.gun_range, b.style.style().band.1 * me.gun_range));
+            d.set("band_lo", band.0);
+            d.set("band_hi", band.1);
+            d.set("brawl", b.brawl);
+            if let Some(id) = b.spot_for {
+                d.set("spot_for", id);
+            }
             if let Some(p) = b.plan {
                 d.set("hold_radius", p.hold_radius);
                 d.set("station_shot", p.shot);

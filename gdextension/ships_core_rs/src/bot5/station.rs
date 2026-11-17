@@ -27,9 +27,13 @@ const DEF_W: f32 = 0.25;
 /// v4's window: every station lies within this of us; a hop gains at least HOP_MIN_M on the anchor.
 pub const WINDOW_M: f32 = 6000.0;
 const HOP_MIN_M: f32 = 500.0;
-/// Out of an enemy's secondaries by this much unless we out-trade it by TRADE_MARGIN at half their range.
-const RING_MARGIN_M: f32 = 500.0;
-const TRADE_MARGIN: f32 = 1.25;
+/// v4 Disengage: cells within this of the threat axis (toward or away) only.
+pub const CONE_HALF: f32 = 35.0 * std::f32::consts::PI / 180.0;
+/// v4 kite leg: straight away, swung in KITE_SWING steps up to KITE_SWING_MAX while the point is off the water.
+const KITE_REACH_M: f32 = 3000.0;
+const KITE_REACH_TURNS: f32 = 8.0;
+const KITE_SWING: f32 = 15.0 * std::f32::consts::PI / 180.0;
+const KITE_SWING_MAX: f32 = 150.0 * std::f32::consts::PI / 180.0;
 /// Value gained for standing off from the nearest flank-mate's bearing round the anchor, full at SPREAD_FULL.
 const SPREAD_W: f32 = 0.5;
 const SPREAD_FULL: f32 = std::f32::consts::FRAC_PI_3;
@@ -39,6 +43,7 @@ const KEEP_MARGIN: f32 = 0.1;
 const MOVE_ON_M: f32 = 1500.0;
 /// Candidates exact-checked for a shot, best first, before the scan gives up on fighting from here.
 const VERIFY: usize = 32;
+const RING_BEARINGS: usize = 36;
 /// Guns that reach a station from bearings spread wider than this crossfire it (v4's brawl limit).
 const CROSSFIRE: f32 = std::f32::consts::FRAC_PI_2;
 /// No contact yet: HP share per minute a station is worth for being hidden from the anchor, and for flanking it.
@@ -56,6 +61,8 @@ pub struct Curve {
     ranges: Vec<f32>,
     aspects: Vec<f32>,
     v: Vec<f32>,
+    /// Per (range, aspect) node: the best aim's damage per hit, share of alpha.
+    hit: Vec<f32>,
     mean: Vec<f32>,
     /// Per LUT_M step: per aspect value, and the aspect mean.
     lut: Vec<f32>,
@@ -69,18 +76,34 @@ impl Curve {
     fn build(t: &PtTable, now: f64) -> Curve {
         let (nr, na) = (t.ranges.len(), t.aspects.len());
         let mut v = vec![0.0; nr * na];
+        let mut hit = vec![0.0; nr * na];
         // At a bucket's own node `best` blends that bucket alone: its best role's unsaturated value per shot.
         for (&key, slots) in &t.slots {
             if key < v.len() {
-                v[key] = slots.iter().filter(|s| s.point != u32::MAX).map(|s| s.v[0]).fold(0.0, f32::max);
+                let best = slots.iter().filter(|s| s.point != u32::MAX).max_by(|a, b| a.v[0].total_cmp(&b.v[0]));
+                v[key] = best.map_or(0.0, |s| s.v[0].max(0.0));
+                hit[key] = best.filter(|s| s.landed > 1e-3).map_or(0.0, |s| s.v[0].max(0.0) / s.landed);
             }
         }
         let done = t.slots.len() >= nr * na;
         let mean = (0..nr).map(|ri| v[ri * na..(ri + 1) * na].iter().sum::<f32>() / na.max(1) as f32).collect();
         let mut c = Curve { ranges: t.ranges.iter().map(|&r| r as f32).collect(), aspects: t.aspects.iter().map(|&a| a as f32).collect(),
-            v, mean, lut: Vec::new(), lut_mean: Vec::new(), done, at: now, buckets: t.slots.len() };
+            v, hit, mean, lut: Vec::new(), lut_mean: Vec::new(), done, at: now, buckets: t.slots.len() };
         c.resample();
         c
+    }
+
+    /// Damage per hit (share of alpha) at `range`, `aspect` degrees off our bow.
+    pub fn hit_at(&self, range: f32, aspect: f32) -> f32 {
+        let (na, nr) = (self.aspects.len(), self.ranges.len());
+        if self.hit.len() < na * nr || na == 0 {
+            return 0.0;
+        }
+        let (ri, rf) = Self::frac(&self.ranges, range);
+        let (ai, af) = Self::frac(&self.aspects, aspect);
+        let node = |r: usize, a: usize| self.hit[r.min(nr - 1) * na + a.min(na - 1)];
+        let row = |r: usize| node(r, ai) * (1.0 - af) + node(r, ai + 1) * af;
+        row(ri) * (1.0 - rf) + row(ri + 1) * rf
     }
 
     fn resample(&mut self) {
@@ -187,12 +210,28 @@ impl<'a> Fire<'a> {
         f
     }
 
+    /// Only `ammo`'s curve (0 AP, 1 HE) when it has one; None keeps the worse of the two.
+    pub fn read(self, ammo: Option<usize>) -> Self {
+        match ammo.filter(|&a| self.curves[a].is_some()) {
+            Some(a) => {
+                let mut c = self.curves;
+                c[1 - a] = None;
+                Fire { sec_on: self.sec_on, ..Fire::new(c, self.gun, self.ship) }
+            }
+            None => self,
+        }
+    }
+
     pub fn mains(self) -> Self {
         Fire { sec_on: false, ..self }
     }
 
     fn per_min(&self) -> f32 {
         if self.gun.reload <= 0.0 { 0.0 } else { self.gun.barrels * 60.0 / self.gun.reload }
+    }
+
+    pub fn gun_range(&self) -> f32 {
+        self.gun.gun_range
     }
 
     pub fn sec_at(&self, d: f32) -> f32 {
@@ -220,17 +259,6 @@ pub struct Threat<'a> {
     pub ring: f32,
 }
 
-/// Secondary range plus RING_MARGIN_M, unless `ours` out-trades the threat by TRADE_MARGIN at half that range.
-pub fn ring_of(t: &Threat, ours: Option<&Fire>, k_in: f32, k_out: f32, my_hp: f32) -> f32 {
-    let e = t.fire.ship;
-    if e.sec_range <= 0.0 || e.sec_dpm <= 0.0 {
-        return 0.0;
-    }
-    let d = 0.5 * e.sec_range;
-    let theirs = t.fire.mean_at(d) * k_in / my_hp;
-    let ours = ours.map_or(0.0, |f| f.mean_at(d) * k_out / (e.hp_frac * e.hp_max).max(1.0));
-    if ours >= TRADE_MARGIN * theirs { 0.0 } else { e.sec_range + RING_MARGIN_M }
-}
 
 pub struct Target<'a> {
     pub ship: &'a ShipState,
@@ -285,6 +313,8 @@ pub struct Req {
     pub cover: Option<f32>,
     /// Disengage: least exposure within reach of `anchor` (us), no offence.
     pub escape: bool,
+    /// Disengage cones: (bearing from us, transit multiplier); a cell must lie within CONE_HALF of one. Empty: no limit.
+    pub cones: Vec<(f32, f32)>,
 }
 
 /// A believed enemy position at one moment.
@@ -302,6 +332,10 @@ pub struct Foe<'a> {
     pub primary: bool,
     /// Allies' fire on it (HP share per minute) that waits on us lighting it: 0 when another ally lights it.
     pub spot: f32,
+    /// Range band a station holds to it: the trade's, or a spotter's spot band.
+    pub band: (f32, f32),
+    /// The spotter's spot target: every station must be in its band with line of sight to it.
+    pub must: bool,
     /// Now, and FORECAST_S ahead.
     pub at: [Pos; 2],
 }
@@ -320,6 +354,7 @@ pub struct Scan<'a> {
     pub my: Vector2,
     pub speed: f32,
     pub clearance: f32,
+    pub turn_radius: f32,
     pub risk: f32,
     pub reach: f32,
     pub my_hp: f32,
@@ -348,6 +383,8 @@ pub struct Found {
     pub candidates: usize,
     /// No fighting station: a hidden step toward the anchor.
     pub hop: bool,
+    /// The kite leg: sailed straight away, recomputed every tick.
+    pub kite: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -406,7 +443,7 @@ impl Scan<'_> {
                 continue;
             }
             n_range += 1;
-            n_band += (d >= req.lo && d <= req.hi) as usize;
+            n_band += (d >= f.band.0 && d <= f.band.1) as usize;
             let v = value_from(&f.fire, pos.at, p) * f.k_out / f.hp;
             if f.primary {
                 primary = Some(v);
@@ -488,8 +525,49 @@ impl Scan<'_> {
         if sep.is_finite() { 1.0 + SPREAD_W * (sep / SPREAD_FULL).min(1.0) } else { 1.0 }
     }
 
+    /// Inside some enemy's ring where its shells land.
     fn ringed(&self, p: Vector2) -> bool {
-        self.threats.iter().flatten().any(|t| t.ring > 0.0 && t.at.distance_to(p) < t.ring)
+        let k = self.vis.cell_of(p);
+        self.threats.iter().flatten().any(|t| t.ring > 0.0 && t.at.distance_to(p) < t.ring
+            && k.is_none_or(|k| t.row.is_none_or(|r| r[k / 64].load(Relaxed) >> (k % 64) & 1 != 0)))
+    }
+
+    /// The transit multiplier of the disengage cone cell p lies in; None outside every cone.
+    fn cone_ratio(&self, req: &Req, p: Vector2) -> Option<f32> {
+        if req.cones.is_empty() {
+            return Some(1.0);
+        }
+        let b = (p.x - self.my.x).atan2(p.y - self.my.y);
+        req.cones.iter().filter(|c| wrap(b - c.0).abs() <= CONE_HALF).map(|c| c.1).reduce(f32::min)
+    }
+
+    /// v4's kite leg: KITE_REACH ahead along the first cone, swung either way until the point is open water.
+    fn kite(&self, req: &Req, turn_radius: f32, ok: &mut dyn FnMut(Vector2) -> bool) -> Option<Vector2> {
+        let axis = req.cones.first()?.0;
+        let reach = KITE_REACH_M.max(KITE_REACH_TURNS * turn_radius);
+        let n = (KITE_SWING_MAX / KITE_SWING).round() as i32;
+        (0..=n).flat_map(|k| [k, -k]).map(|k| axis + k as f32 * KITE_SWING).map(|a| self.my + Vector2::new(a.sin(), a.cos()) * reach)
+            .find(|&p| self.vis.cell_of(p).is_some_and(|k| self.vis.sdf_c[k] >= self.clearance) && ok(p))
+    }
+
+    /// A spotter's station: in its spot target's band with line of sight to it.
+    fn spots_must(&self, p: Vector2) -> bool {
+        self.foes.iter().find(|f| f.must).is_none_or(|f| {
+            let d = p.distance_to(f.at[0].at);
+            d >= f.band.0 && d <= f.band.1 && self.vis.cell_of(p).is_some_and(|k| self.vis.visible_idx(k, f.at[0].cell))
+        })
+    }
+
+    /// Nearest open water on the target's band (any distance from us) with a shot, for when nothing in the window has one.
+    fn shot_ring(&self, req: &Req, ok: &mut dyn FnMut(Vector2) -> bool) -> Option<Vector2> {
+        let hi = req.hi.min(self.reach);
+        let lo = req.lo.min(hi);
+        let mut pts: Vec<Vector2> = [lo, 0.5 * (lo + hi), hi].iter().filter(|&&r| r > 0.0).flat_map(|&r| {
+            (0..RING_BEARINGS).map(move |i| req.anchor + Vector2::from_angle(i as f32 * std::f32::consts::TAU / RING_BEARINGS as f32) * r)
+        }).filter(|&p| self.vis.cell_of(p).is_some_and(|k| self.vis.sdf_c[k] >= self.clearance) && !self.ringed(p)
+            && self.cone_ratio(req, p).is_some() && self.spots_must(p)).collect();
+        pts.sort_unstable_by(|a, b| a.distance_to(self.my).total_cmp(&b.distance_to(self.my)));
+        pts.into_iter().take(VERIFY).find(|&p| ok(p))
     }
 
     fn past_front(&self, p: Vector2) -> bool {
@@ -524,12 +602,21 @@ impl Scan<'_> {
         let p = self.vis.centres[k];
         let near = |f: &Foe| {
             let d = p.distance_to(f.at[0].at);
-            d >= req.lo && d <= req.hi || self.dark_ok && f.spot > 0.0 && d <= f.fire.ship.conceal
+            d >= f.band.0 && d <= f.band.1 || self.dark_ok && f.spot > 0.0 && d <= f.fire.ship.conceal
         };
-        let placed = if req.escape || self.foes.is_empty() { (req.lo..=req.hi).contains(&p.distance_to(req.anchor)) }
-            else { self.foes.iter().any(near) };
+        let spots = |f: &Foe| {
+            let d = p.distance_to(f.at[0].at);
+            d >= f.band.0 && d <= f.band.1 && self.vis.visible_idx(k, f.at[0].cell)
+        };
+        let placed = if req.escape || self.foes.is_empty() {
+            (req.lo..=req.hi).contains(&p.distance_to(req.anchor)) && self.cone_ratio(req, p).is_some()
+        } else if let Some(f) = self.foes.iter().find(|f| f.must) {
+            spots(f)
+        } else {
+            self.foes.iter().any(near)
+        };
         let fighting = !req.escape && !self.foes.is_empty();
-        placed && self.vis.sdf_c[k] >= self.clearance
+        placed && self.vis.sdf_c[k] >= self.clearance && self.cone_ratio(req, p).is_some()
             && !req.avoid.is_some_and(|q| q.distance_to(p) < MOVE_ON_M)
             && (self.foes.is_empty() || p.distance_to(self.my) <= WINDOW_M)
             && !(fighting && (self.ringed(p) || self.past_front(p)))
@@ -562,7 +649,7 @@ impl Scan<'_> {
     fn rank(&self, req: &Req, cells: &[(usize, u8)], here: f32, need: usize, d: &mut Diag) -> Vec<Cand> {
         let score = |p: Vector2, net: f32, sail: bool| {
             let m = if sail { self.vis.sail_route(self.my, p) } else { None };
-            let t = m.unwrap_or_else(|| self.my.distance_to(p)) / self.speed.max(1.0);
+            let t = m.unwrap_or_else(|| self.my.distance_to(p)) / self.speed.max(1.0) * self.cone_ratio(req, p).unwrap_or(1.0);
             // The sail there earns about the mean of where we are and where we go.
             ((t * 0.5 * (here + net) + DWELL_S * net) / (t + DWELL_S), t)
         };
@@ -595,12 +682,12 @@ impl Scan<'_> {
         let t0 = std::time::Instant::now();
         let v = self.vis;
         let found = |c: &Cand, shot: bool, negative: bool, n: usize| Found { station: c.p, shot, value: c.e.value, exposure: c.e.exposure,
-            net: c.e.net, dark: c.e.dark, negative, candidates: n, hop: false };
+            net: c.e.net, dark: c.e.dark, negative, candidates: n, hop: false, kite: false };
         if let Some(q) = req.only {
             let k = v.cell_of(q)?;
             let e = self.eval(k, req, MIN_IN_RANGE.min(self.foes.len()), true).or_else(|| self.eval(k, req, 1, true))?;
-            let shot = e.dark || req.target.is_none() || exact(q);
-            return shot.then(|| found(&Cand { k, p: q, e, score: e.net, transit_s: 0.0 }, !e.dark && req.target.is_some(), e.net < 0.0, 1));
+            let needs = !req.escape && req.target.is_some();
+            return (!needs || exact(q)).then(|| found(&Cand { k, p: q, e, score: e.net, transit_s: 0.0 }, needs, e.net < 0.0, 1));
         }
         let mut d = Diag::default();
         let here = v.cell_of(self.my).and_then(|k| self.eval(k, req, 1, true)).map_or_else(
@@ -625,7 +712,7 @@ impl Scan<'_> {
         }
         cands.sort_unstable_by(|a, b| b.score.total_cmp(&a.score).then(a.transit_s.total_cmp(&b.transit_s)));
         let n = cands.len();
-        let needs_shot = |c: &Cand| !c.e.dark && req.target.is_some();
+        let needs_shot = |_: &Cand| !req.escape && req.target.is_some();
         let keep_p = req.keep.and_then(|q| v.cell_of(q)).map(|k| v.centres[k]);
         let chosen: Option<(usize, bool)> = match cands.iter().take(VERIFY).position(|c| !needs_shot(c) || exact(c.p)) {
             None => None,
@@ -655,32 +742,41 @@ impl Scan<'_> {
             d.us = t0.elapsed().as_micros() as u64;
             *out = d;
         }
-        let hop = || (!req.escape && !self.foes.is_empty()).then(|| self.hop(req)).flatten().map(|p| Found { station: p, shot: false,
-            value: 0.0, exposure: 0.0, net: 0.0, dark: true, negative: false, candidates: n, hop: true });
+        let fire = !req.escape && req.target.is_some();
+        let mut ok = |p: Vector2| !fire || exact(p);
+        if !req.cones.is_empty() && chosen.is_none() {
+            return self.kite(req, self.turn_radius, &mut ok).map(|p| Found { station: p, shot: fire, value: 0.0, exposure: 0.0, net: 0.0,
+                dark: false, negative: true, candidates: n, hop: false, kite: true });
+        }
+        let mut hop = || if req.escape || self.foes.is_empty() || self.foes.iter().any(|f| f.must) { None } else {
+            self.hop(req).into_iter().take(VERIFY).find(|&p| ok(p)).map(|p| Found { station: p, shot: fire,
+                value: 0.0, exposure: 0.0, net: 0.0, dark: true, negative: false, candidates: n, hop: true, kite: false })
+        };
         match chosen {
             Some((i, shot)) if !negative => Some(found(&cands[i], shot, negative, n)),
             Some((i, shot)) => hop().or_else(|| Some(found(&cands[i], shot, negative, n))),
-            None => hop(),
+            None => hop().or_else(|| fire.then(|| self.shot_ring(req, &mut ok)).flatten().map(|p| Found { station: p, shot: true,
+                value: 0.0, exposure: 0.0, net: 0.0, dark: false, negative: true, candidates: n, hop: false, kite: false })),
         }
     }
 
     /// The water within WINDOW_M no enemy sees us in, now or ahead, out of every ring and short of the front,
-    /// gaining most on the anchor (at least HOP_MIN_M).
-    fn hop(&self, req: &Req) -> Option<Vector2> {
+    /// gaining most on the anchor (at least HOP_MIN_M), best first.
+    fn hop(&self, req: &Req) -> Vec<Vector2> {
         let v = self.vis;
         let from = self.my.distance_to(req.anchor);
         let near = |k: usize| v.centres[k].distance_to(self.my) <= WINDOW_M;
         let berths = self.feats.islands.iter().filter(|is| is.centre.distance_to(self.my) <= WINDOW_M + is.radius)
             .flat_map(|is| is.berths.iter().map(|b| b.1 as usize));
         let cells = berths.chain(self.feats.gaps.iter().chain(&self.feats.lattice).map(|&k| k as usize)).filter(|&k| near(k));
-        cells.filter(|&k| {
+        let mut c: Vec<(Vector2, f32)> = cells.filter(|&k| {
             let p = v.centres[k];
             v.sdf_c[k] >= self.clearance && !has(&self.seen[0][1], k) && !has(&self.seen[1][1], k)
                 && !req.avoid.is_some_and(|q| q.distance_to(p) < MOVE_ON_M) && !self.ringed(p) && !self.past_front(p)
         }).map(|k| (v.centres[k], from - v.centres[k].distance_to(req.anchor)))
-            .filter(|c| c.1 >= HOP_MIN_M)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|c| c.0)
+            .filter(|c| c.1 >= HOP_MIN_M).collect();
+        c.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        c.into_iter().map(|c| c.0).collect()
     }
 }
 
@@ -719,22 +815,22 @@ mod tests {
     }
 
     #[test]
-    fn ring_holds_off_secondaries_unless_out_traded() {
-        let (them, weak, strong) = (ship(5000.0, 600.0), ship(0.0, 0.0), ship(5000.0, 6000.0));
-        let t = Threat { at: Vector2::ZERO, range: 15000.0, row: None, fire: Fire::new([None, None], &them, &them), aim: 1.0, ring: 0.0 };
-        assert_eq!(ring_of(&t, Some(&Fire::new([None, None], &weak, &them)), 1.0, 1.0, 1000.0), 5000.0 + RING_MARGIN_M);
-        assert_eq!(ring_of(&t, Some(&Fire::new([None, None], &strong, &them)), 1.0, 1.0, 1000.0), 0.0);
-        assert_eq!(Fire::new([None, None], &them, &them).mean_at(6000.0), 0.0);
+    fn secondaries_only_inside_their_range() {
+        let them = ship(5000.0, 600.0);
+        let f = Fire::new([None, None], &them, &them);
+        assert_eq!(f.mean_at(4000.0), 600.0);
+        assert_eq!(f.mean_at(6000.0), 0.0);
     }
 
     #[test]
     fn curve_blends_range_and_aspect() {
         let mut c = Curve { ranges: vec![1000.0, 2000.0], aspects: vec![0.0, 90.0], v: vec![1.0, 3.0, 5.0, 7.0],
-            mean: vec![2.0, 6.0], lut: Vec::new(), lut_mean: Vec::new(), done: true, at: 0.0, buckets: 4 };
+            hit: vec![0.5, 1.0, 1.5, 2.0], mean: vec![2.0, 6.0], lut: Vec::new(), lut_mean: Vec::new(), done: true, at: 0.0, buckets: 4 };
         c.resample();
         assert_eq!(c.at(1500.0, 45.0), 4.0);
         assert_eq!(c.at(500.0, 0.0), 1.0);
         assert_eq!(c.at(9000.0, 90.0), 7.0);
         assert_eq!(c.mean_at(1500.0), 4.0);
+        assert_eq!(c.hit_at(1500.0, 45.0), 1.25);
     }
 }

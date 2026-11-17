@@ -135,6 +135,11 @@ impl Belief {
         }
     }
 
+    /// Where the latest-seen enemy was last seen, however long ago.
+    pub fn last_known(&self) -> Option<Vector2> {
+        self.contacts.values().max_by(|a, b| a.last_seen.total_cmp(&b.last_seen)).map(|c| c.last_pos)
+    }
+
     /// Where the team believed `id` was `delay` seconds ago; None if not known by then.
     pub fn pos_at(&self, id: i64, now: f64, delay: f64) -> Option<Vector2> {
         let c = self.contacts.get(&id)?;

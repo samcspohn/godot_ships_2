@@ -64,7 +64,8 @@ static func start_runtime_tables(ships: Array) -> void:
 				continue
 			for ammo in 2:
 				var key := point_key(shooter, target, ammo)
-				if _point_tables.has(key) or _rt_pending_file.has(key):
+				# false = a file-mode miss from before queueing (v4 warm); still build it.
+				if _point_tables.get(key, false) or _rt_pending_file.has(key):
 					continue
 				var path := PointTable.cache_path(key)
 				if mode() == PT_FILES and FileAccess.file_exists(path):

@@ -47,8 +47,11 @@ var _hit_count_offset: int = 0
 ## True while a companion log is open and accepting hits.  The native armor sim
 ## (_ProjectileManager) polls this once per frame and only builds the per-plate
 ## step payload when it returns true.
+## SHIPS_CIT_LOG: print every citadel hit with the plates its shell went through.
+var _cit_log: bool = OS.has_environment("SHIPS_CIT_LOG")
+
 func is_logging() -> bool:
-	return _file != null
+	return _file != null or _cit_log
 
 ## Open a companion .armorlog file alongside the given replay file path.
 ## ship_to_id is a copy of ReplayRecorder._ship_to_id (Ship → int).
@@ -138,6 +141,8 @@ func record_hit(
 		steps:            Array,
 		final_pos:        Vector3,
 		shell_params:     ShellParams) -> void:
+	if _cit_log and final_hit_type == 5:
+		_print_citadel(attacker_ship, victim_ship, victim_pos, victim_rot_y, shell_type, caliber, steps)
 	if _file == null:
 		return
 	var attacker_id: int = _ship_to_id.get(attacker_ship, 255)
@@ -171,6 +176,25 @@ func record_hit(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+func _print_citadel(attacker: Object, victim: Object, victim_pos: Vector3, victim_rot_y: float, shell_type: int,
+		caliber: float, steps: Array) -> void:
+	var v: Vector3 = steps[0].get("impact_vel", steps[0].get("vel", Vector3.ZERO)) if not steps.is_empty() else Vector3.ZERO
+	var horiz := Vector2(v.x, v.z).length()
+	var from := atan2(-v.x, -v.z)
+	var hdg := atan2(-sin(victim_rot_y), -cos(victim_rot_y))
+	var off_bow := rad_to_deg(absf(angle_difference(hdg, from)))
+	var fall := rad_to_deg(atan2(-v.y, maxf(horiz, 1e-3)))
+	var a_pos: Vector3 = (attacker as Node3D).global_position if attacker is Node3D else victim_pos
+	var plates := PackedStringArray()
+	for st: Dictionary in steps:
+		plates.append("%s %.0f/%.0fmm @%.0f %s%s pen=%.0f" % [st.get("armor_path", "?"), float(st.get("armor_mm", 0.0)),
+			float(st.get("effective_mm", 0.0)), float(st.get("impact_angle", 0.0)), ["PEN", "RIC", "OVP", "SHT", "NOH", "CIT", "WAT"][clampi(int(st.get("result", 0)), 0, 6)],
+			" cit" if st.get("is_citadel", false) else "", float(st.get("pen", 0.0))])
+	print("cit t=%.1f %s -> %s r=%.0f off_bow=%.0f fall=%.1f %s %.0fmm | %s" % [SimClock.now(),
+		attacker.get("ship_name") if attacker != null else "?", victim.get("ship_name") if victim != null else "?",
+		Vector2(a_pos.x - victim_pos.x, a_pos.z - victim_pos.z).length(), off_bow, fall, ["HE", "AP"][clampi(shell_type, 0, 1)],
+		caliber, " > ".join(plates)])
 
 func _write_step(step: Dictionary) -> void:
 	_file.store_8(step.get("result",       0) & 0xFF)

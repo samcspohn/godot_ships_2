@@ -140,7 +140,11 @@ static func _draw_team(team: Dictionary, b: Dictionary) -> void:
 
 static func _summary(b: Dictionary, now: float) -> String:
 	var apt: String = BotAptitude.Level.keys()[clampi(int(b.aptitude), 0, BotAptitude.Level.size() - 1)]
-	var lines := ["v5 %s %s  hp %d%%  %s" % [b.playstyle, apt.to_lower(), roundi(100.0 * float(b.get("hp", 0.0))), b.get("role", "")]]
+	var lines := ["v5 %s%s %s  hp %d%%  %s" % [b.playstyle, " PUSH" if b.get("brawl", false) else "", apt.to_lower(), roundi(100.0 * float(b.get("hp", 0.0))), b.get("role", "")]]
+	if b.has("spot_for"):
+		var sf = instance_from_id(int(b.spot_for))
+		lines.append("flank spotter: %s" % [(sf as Ship).ship_name if sf is Ship else "?"])
+	lines.append("band %.1f-%.1f km" % [float(b.get("band_lo", 0.0)) / 1000.0, float(b.get("band_hi", 0.0)) / 1000.0])
 	var tgt := "no target"
 	var tid := int(b.get("target", 0))
 	if tid != 0:

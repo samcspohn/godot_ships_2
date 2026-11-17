@@ -33,10 +33,6 @@ pub const PATH_FAIL_WARN_INTERVAL: f32 = 5.0;
 pub const DODGE_COMMITMENT_DURATION: f32 = 0.5;
 pub const DODGE_COMMITMENT_BIAS: f32 = 150.0;
 
-pub const TURN_LATCH_MIN: f32 = std::f32::consts::FRAC_PI_2;
-pub const TURN_LATCH_RELEASE: f32 = std::f32::consts::PI / 6.0;
-/// Seconds charged to a candidate turning against the latched side.
-pub const TURN_LATCH_PENALTY_S: f32 = 20.0;
 
 pub const SOFT_TERRAIN_PENALTY: f32 = 15.0;
 
@@ -268,7 +264,6 @@ pub struct ShipNavigator {
     pub(crate) dodge_committed_rudder: f32,
     pub(crate) dodge_commitment_timer: f32,
     /// Heading-change side of a big turn in progress (+1 raises heading), 0 none.
-    pub(crate) turn_latch: f32,
     pub(crate) steer_cache: Option<SteerCache>,
     /// Seconds of update() deltas, for steer_cache age.
     pub(crate) steer_clock: f32,
@@ -392,7 +387,6 @@ impl IRefCounted for ShipNavigator {
             health_fraction: 1.0,
             dodge_committed_rudder: 0.0,
             dodge_commitment_timer: 0.0,
-            turn_latch: 0.0,
             steer_cache: None,
             steer_clock: 0.0,
             engine_commit_timer: 0.0,
@@ -497,7 +491,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn get_nav_state(&self) -> i32 {
+    pub fn get_nav_state(&self) -> i32 {
         self.nav_state as i32
     }
 
@@ -518,7 +512,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn get_path_failure_count(&self) -> i32 {
+    pub fn get_path_failure_count(&self) -> i32 {
         self.path_fail_count
     }
 
@@ -528,7 +522,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn get_last_path_failure_reason_name(&self) -> GString {
+    pub fn get_last_path_failure_reason_name(&self) -> GString {
         GString::from(Self::path_fail_reason_name(self.path_fail_reason))
     }
 
@@ -773,7 +767,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn get_current_path(&self) -> PackedVector3Array {
+    pub fn get_current_path(&self) -> PackedVector3Array {
         self.get_current_path_impl()
     }
 
@@ -783,7 +777,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn get_current_waypoint(&self) -> Vector3 {
+    pub fn get_current_waypoint(&self) -> Vector3 {
         self.get_current_waypoint_impl()
     }
 

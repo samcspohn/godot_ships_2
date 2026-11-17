@@ -16,6 +16,7 @@ const HOLD_S: f32 = 30.0;
 const SWITCH: f32 = 0.1;
 /// HP share; below it the difference is noise.
 const SWITCH_ABS: f32 = 0.002;
+const SIDE_SWITCH: f32 = 0.3;
 pub const GEAR_HOLD_S: f64 = 8.0;
 const ROLL_DT: f32 = 0.5;
 /// The turn is over once the bow is this close to the heading ahead.
@@ -96,8 +97,10 @@ pub fn swing_rate(p: &ShipParams, speed: f32) -> f32 {
 }
 
 /// Best heading within `half` of `centre`, swinging from `from` at `omega`, priced over HOLD_S (HP share);
-/// `keep` stays unless beaten by SWITCH.
-pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: f32, keep: Option<f32>) -> (f32, f32) {
+/// `keep` stays unless beaten by SWITCH. With `side_ref` (bearing to the target, else the nearest threat), headings
+/// putting it off the `trained` beam (where the turrets point; else its beam now) must beat that beam's best by SIDE_SWITCH.
+pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: f32, keep: Option<f32>, side_ref: Option<f32>,
+        trained: Option<f32>) -> (f32, f32) {
     let cost = |h: f32| {
         let d = wrap(h - from);
         let steps = (d.abs() / BIN).round() as usize;
@@ -111,13 +114,19 @@ pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: 
         (c + r.net[bin(h)] * (HOLD_S - t).max(0.0)) / 60.0
     };
     let n = (half / BIN).round() as i32;
-    let mut best = (centre, f32::INFINITY);
+    let beam = |h: f32| side_ref.map_or(0.0, |s| wrap(s - h).signum());
+    let now_side = if side_ref.is_some() { trained.unwrap_or_else(|| beam(from)) } else { 0.0 };
+    let (mut best, mut other) = ((centre, f32::INFINITY), (centre, f32::INFINITY));
     for k in -n..=n {
         let h = wrap(centre + k as f32 * BIN);
         let c = cost(h);
-        if c < best.1 {
-            best = (h, c);
+        let slot = if now_side == 0.0 || beam(h) == now_side { &mut best } else { &mut other };
+        if c < slot.1 {
+            *slot = (h, c);
         }
+    }
+    if !best.1.is_finite() || other.1 < best.1 - SIDE_SWITCH * best.1.abs() - SWITCH_ABS {
+        best = other;
     }
     if let Some(h) = keep.filter(|&h| wrap(h - centre).abs() <= half + 1e-3) {
         let c = cost(h);
@@ -215,7 +224,7 @@ mod tests {
         let mut r = Rates::default();
         r.add_threat(0.0, |a| bow_cheap(a) + 0.2 * a / 180.0);
         r.finish();
-        let (h, _) = best_in(&r, PI / 2.0, CONE, PI / 2.0, 1.0, 0.0, None);
+        let (h, _) = best_in(&r, PI / 2.0, CONE, PI / 2.0, 1.0, 0.0, None, None, None);
         assert!((h - PI / 4.0).abs() < 1e-3, "{h}");
     }
 
@@ -225,7 +234,7 @@ mod tests {
         r.add_threat(0.0, |a| 1.0 + 0.001 * a);
         r.finish();
         let keep = PI / 2.0 - 2.0 * BIN;
-        let (h, _) = best_in(&r, PI / 2.0, CONE, keep, 0.02, 0.0, Some(keep));
+        let (h, _) = best_in(&r, PI / 2.0, CONE, keep, 0.02, 0.0, Some(keep), None, None);
         assert!((h - keep).abs() < 1e-6);
     }
 

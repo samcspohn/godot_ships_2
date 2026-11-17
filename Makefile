@@ -4,7 +4,7 @@ ARGS ?=
 JOBS ?= $(shell nproc)
 HULLS ?= $(wildcard assets/Ships/*/*.tscn assets/Ships/*.tscn)
 
-.PHONY: native bake sim smoke ab watch watch-vs learn
+.PHONY: native bake sim smoke ab watch watch-vs vs learn
 
 native:
 	$(MAKE) -C gdextension/ships_core_rs e
@@ -89,6 +89,13 @@ AB_OUT ?= $(HOME)/Documents/ships_sim/ab_$(shell date +%Y%m%d_%H%M%S)
 # Rebuild assets/damage_prior.json from every saved bot-only match sample in user://damage_samples.
 learn:
 	$(GODOT) --headless --path . -s res://tools/learn_damage.gd
+
+# v5 vs v4: VS_N 12v12 matches, v5 alternating teams over VS_N/2 seeds. make vs [VS_N=100] [VS_OUT=dir]
+VS_N ?= 100
+VS_JOBS ?= 100
+VS_OUT ?= $(HOME)/Documents/ships_sim/vs_$(shell date +%Y%m%d_%H%M%S)
+vs: point-tables
+	tools/botmatch/vs.sh "$(GODOT)" "$(LINEUP)" $(VS_N) $(VS_JOBS) "$(VS_OUT)"
 
 ab:
 	GODOT="$(GODOT)" tools/botmatch/ab.sh "$(AB_OUT)" $(AB_N) $(A) $(B)

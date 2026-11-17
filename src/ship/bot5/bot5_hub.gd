@@ -3,7 +3,7 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 34
+const STRIDE := 43
 const CMD_STRIDE := 19
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
@@ -119,6 +119,7 @@ func _physics_process(delta: float) -> void:
 	tp = Time.get_ticks_usec()
 	for slot in _ships.size():
 		_push_inputs(slot)
+	_push_torpedoes()
 	ph[4] = Time.get_ticks_usec() - tp
 	tp = Time.get_ticks_usec()
 	world.tick(now, delta, ProjectileManager.get_shell_time_multiplier())
@@ -190,6 +191,7 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 		gun_range = gp._range,
 		guns = ship.artillery_controller.guns,
 		hull = ship,
+		citadel = _citadel_box(ship),
 	}.merged(_torp_cfg(ship)).merged(_spot_cfg(ship)))
 	_ships.append(ship)
 	_slot_of[ship] = slot
@@ -200,6 +202,38 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 	_torp_pt.append(Vector2.INF)
 	_torp_frame.append(0)
 	_shots.append_array([0, 0])
+
+
+## The citadel's plan-view box in hull coordinates (x starboard, y forward); empty without one.
+static func _citadel_box(ship: Ship) -> Rect2:
+	var inv: Transform3D = ship.global_transform.affine_inverse()
+	var c: ArmorPart = ship.citadel
+	if c == null:
+		return Rect2()
+	for n in c.get_children() + [c.get_parent()]:
+		var a := AABB()
+		if n is MeshInstance3D:
+			a = n.get_aabb()
+		elif n is CollisionShape3D and n.shape != null:
+			a = n.shape.get_debug_mesh().get_aabb()
+		else:
+			continue
+		a = inv * n.global_transform * a
+		return Rect2(a.position.x, -a.end.z, a.size.x, a.size.z)
+	return Rect2()
+
+
+## Armed enemy torpedoes their target team has seen, once per frame for every bot.
+func _push_torpedoes() -> void:
+	var tm: _TorpedoManager = TorpedoManager as _TorpedoManager
+	var out := PackedFloat32Array()
+	for torp: _TorpedoManager.TorpedoData in tm.torpedos:
+		if torp == null or not torp.armed or not torp.visible_to_enemy:
+			continue
+		var team: int = torp.owner.team.team_id if torp.owner != null and torp.owner.team != null else -1
+		var v := torp.direction * torp.params.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER
+		out.append_array([team, torp.position.x, torp.position.z, v.x, v.z])
+	world.set_torpedoes(out)
 
 
 static func _torp_cfg(ship: Ship) -> Dictionary:
@@ -257,7 +291,21 @@ func _ship_static(ship: Ship) -> Array:
 		cp.radius if cp else 0.0, server._latent_force_spot_reach(ship) * server.LATENT_FORCE_SPOT_FACTOR,
 		g.get("speed", 0.0), g.get("drag", 0.0), g.get("gun_h", 0.0), cp,
 		ac.get_params().reload_time if ac else 0.0, float(GunneryModel.barrels(ac.guns)) if ac else 0.0,
-		_shell_damage(ac, 0), _shell_damage(ac, 1)] + _sec_static(ship)
+		_shell_damage(ac, 0), _shell_damage(ac, 1)] + _sec_static(ship) + _torp_static(ship) \
+		+ [BotBehavior.guns_bear_aspect(ship) if ac else 90.0, mv._p().rudder_response_time if mv else 5.0]
+
+
+## [range, speed m/s, damage, reload, tubes per launcher, detection, seconds to bring tubes to bear]; zeros without.
+static func _torp_static(ship: Ship) -> Array:
+	var tc := ship.torpedo_controller
+	if not is_instance_valid(tc) or tc.launchers.is_empty():
+		return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var tp := tc.get_torp_params()
+	var tubes := 1
+	for l in tc.launchers:
+		tubes = maxi(tubes, l.muzzles.size())
+	return [tc.get_max_range(), tp.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, tp.damage, tc.get_params().reload_time,
+		float(tubes), tp.detection_range, BotBehavior.torp_bear_s(ship)]
 
 
 ## [range, damage per minute at half range on its own hull]; the GDScript solve, so once per scene.
@@ -336,6 +384,8 @@ func _push_ships(now: float) -> void:
 		_data[o + 31] = st[21]
 		_data[o + 32] = st[22]
 		_data[o + 33] = st[23]
+		for j in 9:
+			_data[o + 34 + j] = st[24 + j]
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)

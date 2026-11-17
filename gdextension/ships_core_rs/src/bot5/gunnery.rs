@@ -286,7 +286,7 @@ mod tests {
             hp_max: 1.0, seen: true, max_speed: 15.0, reverse_ratio: 0.5, length: 200.0, beam: 30.0, class: HullClass::Ca,
             gun_range: 15000.0, top: 15.0, turn_radius: 700.0, air_radius: 2500.0, torp_detect_mult: 1.0, torp_detect_floor: -1.0,
             conceal: 10000.0, force_spot: 0.0, shell_speed: 800.0, shell_drag: 1e-4, gun_h: 10.0,
-            reload: 10.0, barrels: 9.0, damage: [5000.0, 2000.0], sec_range: 0.0, sec_dpm: 0.0 }
+            reload: 10.0, barrels: 9.0, damage: [5000.0, 2000.0], sec_range: 0.0, sec_dpm: 0.0, torp_range: 0.0, torp_speed: 0.0, torp_damage: 0.0, torp_reload: 0.0, torp_tubes: 0.0, torp_detect: 0.0, torp_bear_s: 0.0, guns_bear: 90.0, rudder_lag: 5.0 }
     }
 
     fn range(launch: Vector3, tof: f64) -> f32 {
