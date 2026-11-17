@@ -135,6 +135,13 @@ impl Belief {
         }
     }
 
+    /// Each presumed enemy now, and `secs` further along its march.
+    pub fn presumed_now_ahead(&self, secs: f32) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
+        self.presumed.iter().map(move |r| (r.pos, if r.held { r.pos } else {
+            r.spawn + r.dir * ((r.pos - r.spawn).length() + ADVANCE_MPS * secs).min(r.stop)
+        }))
+    }
+
     /// Where the presumed enemy nearest `p` ends its march: a stable opening reference.
     pub fn presumed_end(&self, p: Vector2) -> Option<Vector2> {
         self.presumed.iter().map(|r| if r.held { r.pos } else { r.spawn + r.dir * r.stop })

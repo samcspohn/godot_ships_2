@@ -10,6 +10,8 @@ use super::snapshot::Snapshot;
 
 pub const FORECAST_S: f32 = 60.0;
 const FORECAST_MIN_M: f32 = 300.0;
+/// Just past an enemy's range is not shelter: it closes.
+const SHIELD_EDGE_M: f32 = 2000.0;
 
 /// Water cells are numbered row-major, so a disc covers one index run per grid row.
 pub struct Layout {
@@ -90,15 +92,34 @@ pub struct Source {
 #[derive(Default)]
 pub struct TeamField {
     pub sources: Vec<Source>,
+    /// Never-seen enemies where presumed and contacts lost past FORGET_S: they see and shoot, but are no one's target.
+    pub ghosts: Vec<Source>,
     /// Some enemy's shells land here.
     pub shot: Vec<u64>,
     pub missing_rows: u32,
 }
 
 impl TeamField {
-    pub(crate) fn build(&mut self, lay: &Layout, vis: &VisibilityGrid, belief: &Belief, snap: &Snapshot, now: f64,
+    pub(crate) fn build(&mut self, lay: &Layout, vis: &VisibilityGrid, belief: &Belief, snap: &Snapshot, now: f64, ghost_range: f32,
             matrix: &mut dyn FnMut(i64) -> Option<Arc<GunMatrix>>) {
         self.sources.clear();
+        self.ghosts.clear();
+        let mut ghost = |at: Vector2, ahead: bool, range: f32| if let Some(cell) = vis.cell_of(at) {
+            self.ghosts.push(Source { id: -1, at, cell, ahead, range, force: 0.0, matrix: None });
+        };
+        for (at, ahead) in belief.presumed_now_ahead(FORECAST_S) {
+            ghost(at, false, ghost_range);
+            if ahead.distance_to(at) > FORECAST_MIN_M {
+                ghost(ahead, true, ghost_range);
+            }
+        }
+        for (&id, c) in &belief.contacts {
+            if !c.seen_now && now - c.last_seen > FORGET_S {
+                if let Some(s) = snap.get(id).filter(|s| s.alive) {
+                    ghost(c.last_pos, false, s.gun_range);
+                }
+            }
+        }
         self.missing_rows = 0;
         for (&id, c) in &belief.contacts {
             let Some(s) = snap.get(id).filter(|s| s.alive) else { continue };
@@ -115,9 +136,9 @@ impl TeamField {
         }
         self.shot.clear();
         self.shot.resize(lay.words, 0);
-        for s in &self.sources {
+        for (i, s) in self.sources.iter().chain(&self.ghosts).enumerate() {
             let row: Option<&[AtomicU64]> = s.matrix.as_ref().and_then(|m| m.row(s.cell));
-            if row.is_none() {
+            if row.is_none() && i < self.sources.len() {
                 self.missing_rows += 1;
             }
             let shot = &mut self.shot;
@@ -128,6 +149,12 @@ impl TeamField {
         }
     }
 
+    /// Seen or not, no enemy's shells land here and none sits just out of range of it.
+    pub fn shielded(&self, vis: &VisibilityGrid, k: usize) -> bool {
+        let c = vis.centres[k];
+        !has(&self.shot, k) && self.sources.iter().chain(&self.ghosts).all(|s| { let d = s.at.distance_to(c); d < s.range || d >= s.range + SHIELD_EDGE_M })
+    }
+
     /// Cells some enemy would detect a ship of detection radius `radius` in: its eyes need line of sight, radar and hydro do not.
     pub fn seen(&self, lay: &Layout, vis: &VisibilityGrid, radius: f32) -> Vec<u64> {
         self.seen_by(lay, vis, radius, |_| true)
@@ -135,12 +162,18 @@ impl TeamField {
 
     pub fn seen_by(&self, lay: &Layout, vis: &VisibilityGrid, radius: f32, by: impl Fn(&Source) -> bool) -> Vec<u64> {
         let mut out = vec![0u64; lay.words];
-        for s in self.sources.iter().filter(|s| by(s)) {
+        for s in self.sources.iter().chain(&self.ghosts).filter(|s| by(s)) {
             let los = &vis.bits[s.cell * vis.stride..(s.cell + 1) * vis.stride];
             lay.spans(s.at, radius, |a, b| or_span(&mut out, a, b, |w| los[w]));
             lay.spans(s.at, s.force, |a, b| or_span(&mut out, a, b, |_| !0));
         }
         out
+    }
+
+    /// seen_at counting ghosts too.
+    pub fn seen_at_all(&self, vis: &VisibilityGrid, k: usize, radius: f32) -> bool {
+        let c = vis.centres[k];
+        self.seen_at(vis, k, radius) || self.ghosts.iter().any(|s| s.at.distance_to(c) <= radius && vis.visible_idx(s.cell, k))
     }
 
     /// One cell of `seen`.

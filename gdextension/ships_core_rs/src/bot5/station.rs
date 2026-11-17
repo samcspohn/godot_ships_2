@@ -7,7 +7,7 @@ use crate::nav::visibility::VisibilityGrid;
 use crate::projectile::manager::point_store::{PtTable, Store};
 
 use super::features::Features;
-use super::field::{has, Layout};
+use super::field::{has, Layout, TeamField};
 use super::hive::wrap;
 use super::snapshot::{rot_y, ShipState};
 
@@ -29,6 +29,10 @@ const COVER_REACH_M: f32 = 3000.0;
 /// v4's window: every station lies within this of us; a hop gains at least HOP_MIN_M on the anchor.
 pub const WINDOW_M: f32 = 6000.0;
 const HOP_MIN_M: f32 = 500.0;
+const CHECKPOINT_STEP_M: f32 = 1000.0;
+const DEEP_TIE: f32 = 0.1;
+const ISLAND_TRIES: usize = 3;
+const DEEP_TIE_S: f32 = 10.0;
 /// v4 Disengage: cells within this of the threat axis (toward or away) only.
 pub const CONE_HALF: f32 = 35.0 * std::f32::consts::PI / 180.0;
 /// v4 kite leg: straight away, swung in KITE_SWING steps up to KITE_SWING_MAX while the point is off the water.
@@ -41,6 +45,7 @@ const SPREAD_W: f32 = 0.5;
 const SPREAD_FULL: f32 = std::f32::consts::FRAC_PI_3;
 /// Candidates scored in full (both moments, dark, defensibility) after a now-only pass over all.
 const REFINE: usize = 24;
+const NEIGHBOURS: [(i32, i32); 8] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
 const KEEP_MARGIN: f32 = 0.1;
 const MOVE_ON_M: f32 = 1500.0;
 /// Candidates exact-checked for a shot, best first, before the scan gives up on fighting from here.
@@ -355,6 +360,10 @@ pub struct Scan<'a> {
     pub seen: [[Vec<u64>; 2]; 2],
     /// Team field: some enemy's shells land here.
     pub shot: &'a [u64],
+    pub field: &'a TeamField,
+    /// Presumed and lost enemies and the flank centre, with our gun-matrix column there: an opening station shoots one in band.
+    pub aims: Vec<(Vector2, Arc<[u64]>)>,
+    pub route: std::cell::OnceCell<Vec<f32>>,
     pub my: Vector2,
     pub speed: f32,
     pub clearance: f32,
@@ -407,6 +416,7 @@ struct Cand {
     e: Eval,
     score: f32,
     transit_s: f32,
+    deep: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -437,19 +447,22 @@ impl Scan<'_> {
     /// Gun value over our targets at moment m (best full, the rest as options), the spot value, and the gate counts.
     fn offence(&self, k: usize, p: Vector2, m: usize, req: &Req, dark: bool) -> (f32, f32, usize, usize, bool) {
         let (mut primary, mut rest, mut spot, mut n_range, mut n_band) = (None, [0.0f32; 4], 0.0, 0, 0);
+        let mut primary_band = false;
         for f in &self.foes {
             let pos = &f.at[m];
             let d = p.distance_to(pos.at);
             if f.spot > 0.0 && d <= f.fire.ship.conceal && self.vis.visible_idx(k, pos.cell) {
                 spot += f.spot;
             }
-            if dark || d > self.reach || pos.col.as_ref().is_some_and(|c| !has(c, k)) {
+            if dark || d > self.reach || pos.col.as_ref().map_or(req.hidden, |c| !has(c, k)) {
                 continue;
             }
             n_range += 1;
-            n_band += (d >= f.band.0 && d <= f.band.1) as usize;
+            let in_band = d >= f.band.0 && d <= f.band.1;
+            n_band += in_band as usize;
             let v = value_from(&f.fire, pos.at, p) * f.k_out / f.hp;
             if f.primary {
+                primary_band = in_band;
                 primary = Some(v);
             } else if v > rest[3] {
                 rest[3] = v;
@@ -460,7 +473,8 @@ impl Scan<'_> {
             Some(v) => v + rest.iter().zip(OPTION_W).map(|(r, w)| r * w).sum::<f32>(),
             None => rest[0] + rest[1..].iter().zip(OPTION_W).map(|(r, w)| r * w).sum::<f32>(),
         };
-        (value, spot, n_range, n_band, req.target.is_none() || primary.is_some())
+        // Cover holds the primary in its band.
+        (value, spot, n_range, n_band, req.target.is_none() || primary.is_some() && (!req.hidden || primary_band))
     }
 
     /// Best of firing and staying dark at cell k: each scored at the worse of now and ahead. None when neither passes its gate.
@@ -476,15 +490,24 @@ impl Scan<'_> {
                 let (u, v) = (p - req.anchor, c - req.anchor);
                 (u.angle_to(v).abs() / OPEN_FLANK_RAD).min(1.0)
             });
-            if req.hidden && hidden == 0.0 {
+            if !req.hidden {
+                let net = OPEN_COVER_W * hidden + OPEN_FLANK_W * flank - x;
+                return (d >= req.lo && d <= req.hi).then_some(Eval { value: 0.0, spot: 0.0, exposure: x, net, dark: false });
+            }
+            // Cover: a shot on a presumed or lost enemy or the flank centre, unseen at our firing bloom by all of them.
+            // Else a step nearer, unseen at our concealment.
+            let cov = |dark: bool| (0..1 + full as usize).all(|m| self.covered(m, dark, k));
+            let cover = self.aims.iter().any(|(q, c)| has(c, k) && (req.lo..=req.hi).contains(&p.distance_to(*q))) && cov(false);
+            let step = !cover && d >= req.lo && (req.only.is_some() || d <= self.my.distance_to(req.anchor) - CHECKPOINT_STEP_M) && cov(true);
+            if !(cover || step) {
                 return None;
             }
-            let net = OPEN_COVER_W * hidden + OPEN_FLANK_W * flank - x;
-            return (d >= req.lo && d <= req.hi).then_some(Eval { value: 0.0, spot: 0.0, exposure: x, net, dark: false });
+            let net = OPEN_COVER_W * cover as u8 as f32 + OPEN_FLANK_W * flank - x;
+            return Some(Eval { value: 0.0, spot: 0.0, exposure: x, net, dark: !cover });
         }
         if req.escape {
             let dark = self.dark_ok;
-            if req.hidden && (0..1 + full as usize).any(|m| has(&self.seen[m][1], k)) {
+            if req.hidden && (0..1 + full as usize).any(|m| !self.covered(m, true, k)) {
                 return None;
             }
             let x = (0..1 + full as usize).map(|m| exposure_at(&self.threats[m], has(&self.seen[m][dark as usize], k), k, p))
@@ -494,7 +517,8 @@ impl Scan<'_> {
         let spread = self.spread(p, req.anchor);
         let mut best: Option<Eval> = None;
         for dark in [false, true] {
-            if dark && !self.dark_ok || req.hidden && (0..1 + full as usize).any(|m| has(&self.seen[m][dark as usize], k)) {
+            // Dark is not shooting: only a spotter's station may be dark.
+            if dark && (!self.dark_ok || !self.foes.iter().any(|f| f.must)) || req.hidden && (0..1 + full as usize).any(|m| !self.covered(m, dark, k)) {
                 continue;
             }
             let mut e = Eval { value: 0.0, spot: 0.0, exposure: 0.0, net: f32::INFINITY, dark };
@@ -618,7 +642,12 @@ impl Scan<'_> {
             let d = p.distance_to(f.at[0].at);
             d >= f.band.0 && d <= f.band.1 && self.vis.visible_idx(k, f.at[0].cell)
         };
-        let placed = if req.escape || self.foes.is_empty() {
+        let opening = req.hidden && !req.escape && self.foes.is_empty();
+        let placed = if opening {
+            // v4's checkpoints: cover in the band, or a step nearer the anchor than we are.
+            let d = p.distance_to(req.anchor);
+            d >= req.lo && (d <= req.hi || d <= self.my.distance_to(req.anchor) - CHECKPOINT_STEP_M)
+        } else if req.escape || self.foes.is_empty() {
             (req.lo..=req.hi).contains(&p.distance_to(req.anchor)) && self.cone_ratio(req, p).is_some()
         } else if let Some(f) = self.foes.iter().find(|f| f.must) {
             spots(f)
@@ -628,7 +657,7 @@ impl Scan<'_> {
         let fighting = !req.escape && !self.foes.is_empty();
         placed && self.vis.sdf_c[k] >= self.clearance && self.cone_ratio(req, p).is_some()
             && !req.avoid.is_some_and(|q| q.distance_to(p) < MOVE_ON_M)
-            && (self.foes.is_empty() || p.distance_to(self.my) <= WINDOW_M)
+            && if req.hidden { self.route()[k] <= WINDOW_M } else { self.foes.is_empty() || p.distance_to(self.my) <= WINDOW_M }
             && !(fighting && (self.ringed(p) || self.past_front(p)))
 
     }
@@ -640,7 +669,7 @@ impl Scan<'_> {
         let centre = if now.is_empty() { req.anchor } else { now.iter().map(|t| t.at).sum::<Vector2>() / now.len() as f32 };
         let mut out: Vec<(usize, u8)> = Vec::new();
         for is in &self.feats.islands {
-            if is.centre.distance_to(req.anchor) > self.reach + is.radius {
+            if is.centre.distance_to(req.anchor) > self.reach + is.radius && !(req.hidden && is.centre.distance_to(self.my) <= WINDOW_M + is.radius) {
                 continue;
             }
             let away = is.centre - centre;
@@ -648,13 +677,7 @@ impl Scan<'_> {
             let all = away.length() < 1.0;
             let lee_berths = is.berths.iter().filter(|b| all || wrap(b.0 - lee).abs() <= LEE_HALF);
             if req.hidden {
-                // Flat-fire ships need the water well behind the island, where their shells clear its crest.
-                for b in lee_berths {
-                    let p = v.centres[b.1 as usize];
-                    let dir = (p - is.centre).normalized_or_zero();
-                    let steps = (COVER_REACH_M / v.cell) as usize;
-                    out.extend((0..=steps).map_while(|i| v.cell_of(p + dir * (i as f32 * v.cell))).map(|k| (k, 0)));
-                }
+                self.cover_around(is.berths.iter().map(|b| b.1 as usize), &mut out);
             } else {
                 out.extend(lee_berths.map(|b| (b.1 as usize, 0)));
             }
@@ -665,6 +688,64 @@ impl Scan<'_> {
         out.sort_unstable_by_key(|c| c.0);
         out.dedup_by_key(|c| c.0);
         out
+    }
+
+    /// Islands within WINDOW_M whose range to the anchor best matches the band's middle, best first (at most
+    /// ISLAND_TRIES): each one's water out from its berths, with our cell and the kept station.
+    fn island_cells(&self, req: &Req) -> Vec<Vec<(usize, u8)>> {
+        let want = 0.5 * (req.lo + req.hi);
+        let mut isl: Vec<&super::features::Island> = self.feats.islands.iter()
+            .filter(|is| is.centre.distance_to(self.my) - is.radius <= WINDOW_M).collect();
+        isl.sort_by(|a, b| (a.centre.distance_to(req.anchor) - want).abs().total_cmp(&(b.centre.distance_to(req.anchor) - want).abs()));
+        isl.into_iter().take(ISLAND_TRIES).map(|is| {
+            let mut out = Vec::new();
+            self.cover_around(is.berths.iter().map(|b| b.1 as usize), &mut out);
+            out.extend(self.vis.cell_of(self.my).into_iter().chain(req.keep.and_then(|q| self.vis.cell_of(q))).map(|k| (k, 2)));
+            out.retain(|&(k, _)| self.usable(k, req));
+            out.sort_unstable_by_key(|c| c.0);
+            out.dedup_by_key(|c| c.0);
+            out
+        }).collect()
+    }
+
+    /// Breadth-first from the berths over hull-deep water, keeping the cells not seen at our dark bloom.
+    fn cover_around(&self, from: impl Iterator<Item = usize>, out: &mut Vec<(usize, u8)>) {
+        let v = self.vis;
+        let depth = (COVER_REACH_M / v.cell) as u32;
+        let mut seen = std::collections::HashSet::new();
+        let mut q: std::collections::VecDeque<(usize, u32)> = from.filter(|&k| seen.insert(k)).map(|k| (k, 0)).collect();
+        while let Some((k, d)) = q.pop_front() {
+            if self.covered(0, true, k) {
+                out.push((k, 0));
+            }
+            if d >= depth {
+                continue;
+            }
+            let (ix, iz) = v.grid_of(v.centres[k]);
+            for (dx, dz) in NEIGHBOURS {
+                if let Some(n) = v.water(ix + dx, iz + dz).filter(|&n| v.sdf_c[n] >= self.clearance && seen.insert(n)) {
+                    q.push_back((n, d + 1));
+                }
+            }
+        }
+    }
+
+    /// Every hull-deep water neighbour unseen at this bloom too: margin for drift and grid edge error.
+    fn deep(&self, k: usize, dark: bool) -> bool {
+        let v = self.vis;
+        let (ix, iz) = v.grid_of(v.centres[k]);
+        NEIGHBOURS.iter().all(|&(dx, dz)| v.water(ix + dx, iz + dz)
+            .is_none_or(|n| v.sdf_c[n] < self.clearance || (0..2).all(|m| self.covered(m, dark, n))))
+    }
+
+    /// Water-route metres from us, INF past WINDOW_M.
+    fn route(&self) -> &[f32] {
+        self.route.get_or_init(|| self.vis.water_route(self.my, self.clearance, WINDOW_M))
+    }
+
+    /// Unseen at this moment and bloom, or shielded from every gun.
+    fn covered(&self, m: usize, dark: bool, k: usize) -> bool {
+        !has(&self.seen[m][dark as usize], k) || self.field.shielded(self.vis, k)
     }
 
     fn rank(&self, req: &Req, cells: &[(usize, u8)], here: f32, need: usize, d: &mut Diag) -> Vec<Cand> {
@@ -681,7 +762,7 @@ impl Scan<'_> {
             let Some(e) = self.eval(k, req, need, false) else { continue };
             let p = self.vis.centres[k];
             let (s, t) = score(p, e.net, false);
-            quick.push(Cand { k, p, e, score: s, transit_s: t });
+            quick.push(Cand { k, p, e, score: s, transit_s: t, deep: false });
         }
         let keep = req.keep.and_then(|q| self.vis.cell_of(q));
         quick.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
@@ -692,7 +773,7 @@ impl Scan<'_> {
             }
             let Some(e) = self.eval(c.k, req, need, true) else { continue };
             let (s, t) = score(c.p, e.net, true);
-            out.push(Cand { k: c.k, p: c.p, e, score: s, transit_s: t });
+            out.push(Cand { k: c.k, p: c.p, e, score: s, transit_s: t, deep: req.hidden && self.deep(c.k, e.dark) });
         }
         out
     }
@@ -707,44 +788,104 @@ impl Scan<'_> {
         if let Some(q) = req.only {
             let k = v.cell_of(q)?;
             let e = self.eval(k, req, MIN_IN_RANGE.min(self.foes.len()), true).or_else(|| self.eval(k, req, 1, true))?;
-            let needs = !req.escape && (req.target.is_some() || req.hidden && self.foes.is_empty());
-            return (!needs || exact(q)).then(|| found(&Cand { k, p: q, e, score: e.net, transit_s: 0.0 }, needs, e.net < 0.0, 1));
+            let needs = !req.escape && req.target.is_some();
+            return (!needs || exact(q)).then(|| found(&Cand { k, p: q, e, score: e.net, transit_s: 0.0, deep: false }, needs, e.net < 0.0, 1));
         }
         let mut d = Diag::default();
         let here = v.cell_of(self.my).and_then(|k| self.eval(k, req, 1, true)).map_or_else(
             || -self.risk * v.cell_of(self.my).map_or(0.0, |k| exposure_at(&self.threats[0], has(&self.seen[0][0], k), k, self.my)) * self.k_in / self.my_hp,
             |e| e.net);
-        let cells = self.gather(req);
         let lattice = || -> Vec<(usize, u8)> { self.feats.lattice.iter().map(|&k| (k as usize, 2u8)).filter(|&(k, _)| self.usable(k, req)).collect() };
-        // Fewer targets in range only when no station has the full count.
+        let needs = [MIN_IN_RANGE.min(self.foes.len()), 1];
         let mut cands = Vec::new();
-        for need in [MIN_IN_RANGE.min(self.foes.len()), 1] {
-            cands = self.rank(req, &cells, here, need, &mut d);
-            if !cands.iter().any(|c| c.e.net >= 0.0) {
-                cands.extend(self.rank(req, &lattice(), here, need, &mut d));
+        let cover = req.hidden && !req.escape;
+        if cover {
+            'islands: for cells in self.island_cells(req) {
+                for need in needs {
+                    cands = self.rank(req, &cells, here, need, &mut d);
+                    if !cands.is_empty() {
+                        break 'islands;
+                    }
+                }
             }
-            if !cands.is_empty() {
-                break;
+            if cands.is_empty() {
+                let cells = lattice();
+                for need in needs {
+                    cands = self.rank(req, &cells, here, need, &mut d);
+                    if !cands.is_empty() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            let cells = self.gather(req);
+            // Fewer targets in range only when no station has the full count.
+            for need in needs {
+                cands = self.rank(req, &cells, here, need, &mut d);
+                if !cands.iter().any(|c| c.e.net >= 0.0) {
+                    cands.extend(self.rank(req, &lattice(), here, need, &mut d));
+                }
+                if !cands.is_empty() {
+                    break;
+                }
             }
         }
         let negative = !cands.iter().any(|c| c.e.net >= 0.0);
         if !negative {
             cands.retain(|c| c.e.net >= 0.0);
         }
-        cands.sort_unstable_by(|a, b| b.score.total_cmp(&a.score).then(a.transit_s.total_cmp(&b.transit_s)));
-        let n = cands.len();
-        let needs_shot = |_: &Cand| !req.escape && (req.target.is_some() || req.hidden && self.foes.is_empty());
-        let keep_p = req.keep.and_then(|q| v.cell_of(q)).map(|k| v.centres[k]);
-        let chosen: Option<(usize, bool)> = match cands.iter().take(VERIFY).position(|c| !needs_shot(c) || exact(c.p)) {
-            None => None,
-            Some(i) => {
-                let floor = cands[i].score - KEEP_MARGIN * cands[i].score.abs();
-                let kept = keep_p.and_then(|q| cands.iter().position(|c| c.p == q))
-                    .filter(|&j| j != i && cands[j].score >= floor && (!needs_shot(&cands[j]) || exact(cands[j].p)));
-                let j = kept.unwrap_or(i);
-                Some((j, needs_shot(&cands[j])))
+        let opening = cover;
+        if opening {
+            cands.sort_unstable_by(|a, b| a.e.dark.cmp(&b.e.dark).then(a.transit_s.total_cmp(&b.transit_s)));
+        } else {
+            cands.sort_unstable_by(|a, b| b.score.total_cmp(&a.score).then(a.transit_s.total_cmp(&b.transit_s)));
+        }
+        // Deep cover only breaks near-ties.
+        if let Some(c0) = cands.first().filter(|c| !c.deep) {
+            let near = |c: &Cand| c.deep && c.e.dark == c0.e.dark && if opening { c.transit_s <= c0.transit_s * (1.0 + DEEP_TIE) + DEEP_TIE_S }
+                else { c.score >= c0.score - DEEP_TIE * c0.score.abs() };
+            if let Some(j) = cands.iter().position(near) {
+                let c = cands.remove(j);
+                cands.insert(0, c);
             }
+        }
+        let n = cands.len();
+        let needs_shot = |_: &Cand| !req.escape && req.target.is_some();
+        let keep_p = req.keep.and_then(|q| v.cell_of(q)).map(|k| v.centres[k]);
+        let off = v.cell * 0.25;
+        let mut point = |c: &Cand| -> Option<Vector2> {
+            if !needs_shot(c) {
+                return Some(c.p);
+            }
+            let mut at = vec![c.p];
+            if req.hidden {
+                // The shot edge is finer than the cells: try the cell's quarters, the kept point first.
+                let mut quarters = [(-off, -off), (off, -off), (-off, off), (off, off)].map(|(x, z)| c.p + Vector2::new(x, z));
+                quarters.sort_by(|a, b| self.my.distance_to(*a).total_cmp(&self.my.distance_to(*b)));
+                at.extend(quarters);
+                if let Some(q) = req.keep.filter(|&q| v.cell_of(q) == Some(c.k)) {
+                    at.insert(0, q);
+                }
+            }
+            at.into_iter().find(|&p| exact(p))
         };
+        let mut chosen: Option<(usize, bool, Vector2)> = None;
+        for (i, c) in cands.iter().enumerate().take(VERIFY) {
+            if let Some(p) = point(c) {
+                chosen = Some((i, needs_shot(c), p));
+                break;
+            }
+        }
+        if let Some((i, _, _)) = chosen {
+            let floor = cands[i].score - KEEP_MARGIN * cands[i].score.abs();
+            let kept = keep_p.and_then(|q| cands.iter().position(|c| c.p == q))
+                .filter(|&j| j != i && cands[j].deep == cands[i].deep && cands[j].score >= floor);
+            if let Some((j, p)) = kept.and_then(|j| point(&cands[j]).map(|p| (j, p))) {
+                chosen = Some((j, needs_shot(&cands[j]), p));
+            }
+        }
+        drop(point);
+        let found = |c: &Cand, shot: bool, negative: bool, n: usize, p: Vector2| Found { station: p, ..found(c, shot, negative, n) };
         if let Some(out) = diag {
             d.passing = cands.iter().filter(|c| c.e.net >= 0.0).count();
             let cell = |c: &Cand| DiagCell { p: c.p, range: c.p.distance_to(req.anchor), value: c.e.value, exposure: c.e.exposure,
@@ -752,19 +893,19 @@ impl Scan<'_> {
             for c in cands.iter().filter(|c| c.e.exposure <= 0.0) {
                 if has(&self.seen[0][c.e.dark as usize], c.k) { d.shielded += 1 } else { d.hidden += 1 }
             }
-            d.pick = chosen.map(|(i, shot)| (cell(&cands[i]), shot));
+            d.pick = chosen.map(|(i, shot, _)| (cell(&cands[i]), shot));
             let best = cands.iter().enumerate().filter(|(_, c)| c.e.exposure <= 0.0).max_by(|a, b| a.1.e.net.total_cmp(&b.1.e.net));
             d.cover = best.map(|(j, c)| (cell(c), match chosen {
-                Some((i, _)) if j == i => "picked",
-                Some((i, true)) if j < i => "exact_fail",
-                Some((i, _)) if c.e.net > cands[i].e.net => "transit",
+                Some((i, _, _)) if j == i => "picked",
+                Some((i, true, _)) if j < i => "exact_fail",
+                Some((i, _, _)) if c.e.net > cands[i].e.net => "transit",
                 _ => "net",
             }));
             d.us = t0.elapsed().as_micros() as u64;
             *out = d;
         }
         if req.hidden {
-            return chosen.map(|(i, shot)| found(&cands[i], shot, negative, n));
+            return chosen.map(|(i, shot, p)| found(&cands[i], shot, negative, n, p));
         }
         let fire = !req.escape && req.target.is_some();
         let mut ok = |p: Vector2| !fire || exact(p);
@@ -777,8 +918,8 @@ impl Scan<'_> {
                 value: 0.0, exposure: 0.0, net: 0.0, dark: true, negative: false, candidates: n, hop: true, kite: false })
         };
         match chosen {
-            Some((i, shot)) if !negative => Some(found(&cands[i], shot, negative, n)),
-            Some((i, shot)) => hop().or_else(|| Some(found(&cands[i], shot, negative, n))),
+            Some((i, shot, p)) if !negative => Some(found(&cands[i], shot, negative, n, p)),
+            Some((i, shot, p)) => hop().or_else(|| Some(found(&cands[i], shot, negative, n, p))),
             None => hop().or_else(|| fire.then(|| self.shot_ring(req, &mut ok)).flatten().map(|p| Found { station: p, shot: true,
                 value: 0.0, exposure: 0.0, net: 0.0, dark: false, negative: true, candidates: n, hop: false, kite: false })),
         }

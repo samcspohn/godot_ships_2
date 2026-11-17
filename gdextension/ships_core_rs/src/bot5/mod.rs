@@ -801,8 +801,9 @@ impl World {
             matrices.insert(id, m.clone());
             Some(m)
         };
+        let ghost_range = snap.enemies_of(team).filter(|s| s.alive).map(|s| s.gun_range).fold(0.0, f32::max);
         let h = self.teams.get_mut(&team).unwrap();
-        h.field.build(lay, &vis, &h.belief, snap, now, &mut matrix);
+        h.field.build(lay, &vis, &h.belief, snap, now, ghost_range, &mut matrix);
         // Enemy cells: their own gun's rows (fire on us) and our guns' columns (our fire on them).
         type Want = (Arc<GunMatrix>, Vec<u32>, Vec<u32>, Vec<Vector2>);
         let mut want: HashMap<*const GunMatrix, Want> = HashMap::new();
@@ -810,6 +811,13 @@ impl World {
             want.entry(Arc::as_ptr(&m)).or_insert_with(|| (m, Vec::new(), Vec::new(), Vec::new()))
         }
         let own: Vec<Arc<GunMatrix>> = snap.allies_of(team).filter(|s| s.alive).filter_map(|s| matrix(s.id)).collect();
+        let aim_cells: Vec<usize> = h.field.ghosts.iter().filter(|g| !g.ahead).map(|g| g.cell)
+            .chain(h.flanks.iter().flat_map(|f| f.groups.iter()).filter_map(|g| vis.cell_of(g.centre))).collect();
+        for &c in &aim_cells {
+            for m in &own {
+                entry(&mut want, m.clone()).2.push(c as u32);
+            }
+        }
         for s in &h.field.sources {
             if let Some(m) = matrix(s.id) {
                 let w = entry(&mut want, m);
@@ -888,6 +896,8 @@ impl World {
             .filter(|s| self.snap.get(s.id).is_some_and(|e| s.at.distance_to(me.p2()) <= e.gun_range * 1.05))
             .map(|s| (s.at.x - me.pos.x).atan2(s.at.y - me.pos.z)).collect();
         let crossfire = station::arc_of(&mut bearings);
+        // Gun ships' torpedoes are for close quarters they fall into, not a range to seek.
+        let me = &if me.torp_boat() { *me } else { snapshot::ShipState { torp_range: 0.0, ..*me } };
         let mut out = HashMap::new();
         for (id, _, _) in sources_by_id(field) {
             let Some(e) = self.snap.get(id) else { continue };
@@ -1114,7 +1124,10 @@ impl World {
                 }
                 let bloom = me.conceal.max(me.gun_range);
                 let seen = [false, true].map(|later| [bloom, me.conceal].map(|r| field.seen_by(lay, vis, r, |s| later || !s.ahead)));
-                let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, my: me.p2(), speed: me.max_speed,
+                let aims: Vec<(Vector2, Arc<[u64]>)> = field.ghosts.iter().filter(|g| !g.ahead).map(|g| g.at)
+                    .chain(m.flank.as_ref().and_then(|f| f.centre))
+                    .filter_map(|q| Some((q, own?.col(vis.cell_of(q)?)?))).collect();
+                let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, field, aims, route: Default::default(), my: me.p2(), speed: me.max_speed,
                     clearance, turn_radius: me.turn_radius, risk: m.style.risk, reach: me.gun_range, my_hp, k_in, mates: mates.clone(), front,
                     dark_ok: me.class == HullClass::Dd || me.class == HullClass::Ca && me.conceal < DARK_CA_CONCEAL * me.gun_range,
                     allies: {
@@ -1177,7 +1190,8 @@ impl World {
             let (kite_axis, n_src, n_holds) = (m.kite_axis, field.sources.len(), holds.len());
             let (plan, assign, reason) = hive::resolve(&m, snap, belief, &p.committed, now, &mut ev, &mut |a, b| shot(a, b), &mut scan);
             if scan_trace() {
-                godot_print!("pass5 t={:.0} {} cover={} pkite={} st={:?} kite={:?} src={} holds={} tgt={:?} reason={:?} posture={:?}", now, self.bots[i].name,
+                godot_print!("pass5 t={:.0} {} id={} my=({:.0},{:.0}) fc={:?} cover={} pkite={} st={:?} kite={:?} src={} holds={} tgt={:?} reason={:?} posture={:?}", now, self.bots[i].name,
+                    m.me.id, m.me.pos.x, m.me.pos.z, m.flank.as_ref().and_then(|f| f.centre).map(|c| (c.x as i32, c.y as i32)),
                     plan.is_some_and(|p| p.cover), plan.is_some_and(|p| p.kite), plan.map(|p| (p.station.x as i32, p.station.y as i32)), kite_axis.map(|a| a.to_degrees() as i32),
                     n_src, n_holds, assign.target, reason, plan.map(|p| p.posture));
             }
@@ -1731,7 +1745,7 @@ impl World {
             Posture::Engage if p.cover => {
                 let (Some(vis), Some(h)) = (&self.vis, self.teams.get(&b.team)) else { return false };
                 let vis = vis.bind();
-                vis.cell_of(me.p2()).is_none_or(|k| h.field.seen_at(&vis, k, me.conceal.max(me.gun_range)))
+                vis.cell_of(me.p2()).is_none_or(|k| h.field.seen_at_all(&vis, k, me.conceal.max(me.gun_range)) && !h.field.shielded(&vis, k))
             }
             Posture::Engage => false,
         }
