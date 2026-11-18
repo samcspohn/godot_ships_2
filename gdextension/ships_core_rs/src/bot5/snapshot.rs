@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 43;
+pub const STRIDE: usize = 44;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -82,6 +82,8 @@ pub struct ShipState {
     /// Degrees off the bow where every main gun bears.
     pub guns_bear: f32,
     pub rudder_lag: f32,
+    /// ConcealmentParams.bloom_duration: a salvo keeps us visible at gun range this long.
+    pub bloom_s: f32,
 }
 
 /// v4 DDBehavior._is_gunboat inverted: tubes reaching well past our own detection.
@@ -137,6 +139,7 @@ impl ShipState {
             torp_bear_s: r[40],
             guns_bear: r[41],
             rudder_lag: r[42],
+            bloom_s: r[43],
         }
     }
 

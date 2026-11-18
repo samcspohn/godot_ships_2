@@ -3,7 +3,7 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 43
+const STRIDE := 44
 const CMD_STRIDE := 19
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
@@ -386,6 +386,7 @@ func _push_ships(now: float) -> void:
 		_data[o + 33] = st[23]
 		for j in 9:
 			_data[o + 34 + j] = st[24 + j]
+		_data[o + 43] = cp.bloom_duration if cp else 0.0
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)

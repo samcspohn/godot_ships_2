@@ -1,7 +1,9 @@
 //! Bot controller v5: team hive + per-bot controllers. See doc/BOT_V5_DESIGN.md.
 
 pub mod belief;
+pub mod cover;
 pub mod dodge;
+pub mod edge;
 pub mod shell_read;
 pub mod trade;
 pub mod features;
@@ -47,6 +49,8 @@ use station::{Curves, Fire, Scan, Target, Threat};
 use telemetry::Telemetry;
 use torpedo::{TorpAim, TorpSpec, Tracks};
 
+/// v4 SkillCover BLOCKED_TTL_S.
+const COVER_BLOCK_TTL_S: f64 = 60.0;
 const HIVE_INTERVAL_S: f64 = 1.0;
 const EVENT_MIN_GAP_S: f64 = 0.25;
 const HP_EVENT_DROP: f32 = 0.15;
@@ -56,8 +60,6 @@ const NAV_PUSH_EVERY: i64 = 12;
 const JUMP_PUSHES_PER_FRAME: u32 = 4;
 /// Bots that re-plan per frame; a team pass resumes in its aptitude order on the next frame.
 const REPLANS_PER_FRAME: u32 = 2;
-/// A cruiser hiding inside this share of its gun range may hold fire to spot.
-const DARK_CA_CONCEAL: f32 = 0.7;
 const AIM_EVERY: i64 = 3;
 const ALT_HOLD_S: f64 = 4.0;
 const WALL_SHORT_M: f32 = 200.0;
@@ -144,12 +146,19 @@ struct Bot {
     gun_range: f32,
     /// Terrain clearance table for station search; built by prepare().
     shot_gun: Option<Gun>,
+    flight: Option<edge::Flight>,
     inputs: BotInputs,
     cmd: Command,
     hp_at_pass: f32,
     serial: u32,
     blocked_s: f32,
     blocked_serial: u32,
+    /// v4 SkillCover _blocked: stations the exact shot refuted, until the time given.
+    cover_blocked: Vec<(Vector2, f64)>,
+    /// Lit and a known enemy sees us at concealment: holding fire cannot hide us.
+    pinned: bool,
+    fired_at: f64,
+    ring_kiting: bool,
     last_release: Option<(&'static str, f64)>,
     last_gate: &'static str,
     gates: std::collections::BTreeMap<&'static str, u32>,
@@ -252,6 +261,7 @@ pub struct World {
     allies: Vec<ShipState>,
     tracks: Tracks,
     shots: ShotMap,
+    island: Option<edge::IslandMesh>,
     frame: i64,
     time_mult: f64,
     time_us: [u64; 4],
@@ -295,8 +305,13 @@ const KITE_LEGS: usize = 4;
 const BAND_OUT_M: f32 = 1500.0;
 /// v4 _brawl: push to this, while the guns on us lie within BRAWL_CROSSFIRE.
 const BRAWL_CROSSFIRE: f32 = std::f32::consts::FRAC_PI_2;
-/// Kite out while in this share of the band nearest the target: a station across the bow lets an equal-speed chaser in.
-const KITE_BAND: f32 = 0.5;
+/// v4 FightStation ring kite: start this far inside our ring of the lit priority, stop this far short of it,
+/// never with the guns on us spread wider than RING_KITE_ARC.
+const RING_KITE_IN_M: f32 = 1000.0;
+/// v4 COVER_FIRST_SHOOTERS.
+const DANGEROUS_SHOOTERS: usize = 2;
+const RING_KITE_OUT_M: f32 = 200.0;
+const RING_KITE_ARC: f32 = std::f32::consts::FRAC_PI_2;
 /// The ring sits this far inside the band.
 const RING_IN_M: f32 = 500.0;
 /// Spotting short of the target's detection by this much.
@@ -570,11 +585,16 @@ impl World {
             gun,
             gun_range: g("gun_range"),
             shot_gun: None,
+            flight: None,
             inputs: BotInputs::default(),
             cmd: Command::default(),
             hp_at_pass: 1.0,
             serial: 0,
             blocked_s: 0.0,
+            cover_blocked: Vec::new(),
+            pinned: false,
+            fired_at: f64::NEG_INFINITY,
+            ring_kiting: false,
             blocked_serial: 0,
             last_release: None,
             last_gate: "",
@@ -630,8 +650,17 @@ impl World {
                 f.islands.iter().map(|i| i.berths.len()).sum::<usize>(), f.gaps.len(), f.lattice.len(), t.elapsed().as_millis());
             self.layout = Some(lay);
         }
+        if self.island.is_none() {
+            let Some(m) = &self.map else { return false };
+            let t = std::time::Instant::now();
+            let isl = edge::IslandMesh::build(&m.bind().collider_tris);
+            godot_print!("bot5 island mesh: {} tris in {} ms", m.bind().collider_tris.len(), t.elapsed().as_millis());
+            self.island = Some(isl);
+        }
         for b in self.bots.iter_mut().filter(|b| b.shot_gun.is_none()) {
-            b.shot_gun = b.gun.spec(b.gun_range).and_then(|g| self.shots.gun(g));
+            let spec = b.gun.spec(b.gun_range);
+            b.shot_gun = spec.and_then(|g| self.shots.gun(g));
+            b.flight = spec.and_then(|g| edge::Flight::new(g.speed, g.drag, g.gun_h, g.range));
         }
         true
     }
@@ -683,9 +712,13 @@ impl World {
         self.ph[9] = (t2 - t1).as_micros() as u32;
         for i in 0..self.bots.len() {
             let t = std::time::Instant::now();
+            self.bots[i].pinned = self.pinned(i, now);
             self.guns(i, now, dt, time_mult);
             if self.guns_dark(i) {
                 self.bots[i].cmd.fire = false;
+            }
+            if self.bots[i].cmd.fire {
+                self.bots[i].fired_at = now;
             }
             let g = std::time::Instant::now();
             self.torps(i, now);
@@ -818,7 +851,7 @@ impl World {
                 entry(&mut want, m.clone()).2.push(c as u32);
             }
         }
-        for s in &h.field.sources {
+        for s in h.field.sources.iter().chain(h.field.ghosts.iter().filter(|g| g.id >= 0)) {
             if let Some(m) = matrix(s.id) {
                 let w = entry(&mut want, m);
                 w.1.push(s.cell as u32);
@@ -996,7 +1029,7 @@ impl World {
                 let (ids, centre) = f.view(r, me.p2());
                 FlankView { ids, centre }
             });
-            let (danger, dtel) = self.danger(i, team, &p.spot);
+            let (mut danger, dtel) = self.danger(i, team, &p.spot);
             for w in dtel {
                 self.tel.count(w);
             }
@@ -1012,6 +1045,13 @@ impl World {
             let spot_on = p.spotters.get(&i).copied().flatten();
             let hunt = p.spotters.get(&i).is_some_and(|s| s.is_none());
             let mut holds = self.holds(i, team, me);
+            // v4 _cover_first: DANGEROUS_SHOOTERS in range of us we lose the trade to.
+            let dangerous = holds.iter().filter(|(id, h)| h.trade.desire == trade::Desire::Lose
+                && snap.get(**id).is_some_and(|e| e.alive && e.p2().distance_to(me.p2()) <= e.gun_range)).count();
+            if !danger.spotting && dangerous >= DANGEROUS_SHOOTERS && !danger.cover_first {
+                danger.cover_first = true;
+                self.tel.count("cover_first_shooters");
+            }
             if let Some(e) = spot_on.and_then(|id| snap.get(id)) {
                 let (s, h) = (spot_band(me, e), holds.get_mut(&e.id));
                 if let Some(h) = h {
@@ -1035,10 +1075,15 @@ impl World {
             let tgt_band = bot.assign.target.and_then(|t| holds.get(&t)).map(|h| h.band);
             let b = &mut self.bots[i];
             (b.brawl, b.spot_for, b.trade_band) = (brawl, spot_on, tgt_band);
-            let away: Vector2 = self.teams[&team].field.sources.iter().filter(|s| !s.ahead)
-                .filter(|s| holds.get(&s.id).is_some_and(|h| !h.brawl && s.at.distance_to(me.p2()) < KITE_BAND * h.band.1 + (1.0 - KITE_BAND) * h.band.0))
-                .map(|s| (me.p2() - s.at).normalized()).sum();
-            let kite_axis = (away.length() > 1e-3).then(|| away.x.atan2(away.y));
+            let my = me.p2();
+            let mut on_us: Vec<f32> = snap.enemies_of(team).filter(|e| e.alive && e.seen && e.p2().distance_to(my) <= e.gun_range)
+                .map(|e| stance::bearing(my, e.p2())).collect();
+            let prio = b.assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen)
+                .and_then(|t| holds.get(&t.id).filter(|h| h.ring > 0.0).map(|h| (t.p2(), h.ring)));
+            let inside = if b.ring_kiting { RING_KITE_OUT_M } else { RING_KITE_IN_M };
+            let crossfire = station::arc_of(&mut on_us);
+            b.ring_kiting = crossfire <= RING_KITE_ARC && prio.is_some_and(|(at, r)| r - at.distance_to(my) > inside);
+            let kite_axis = prio.filter(|_| b.ring_kiting).map(|(at, _)| stance::bearing(at, my));
             if kite_axis.is_some() {
                 self.tel.count("ring_in");
             }
@@ -1048,7 +1093,9 @@ impl World {
             let bot = &self.bots[i];
             let m = Member { me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
                 torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank, danger, bands: bands.clone(), brawl, kite_axis, hunt,
-                under_fire: now < bot.fired_on_until, cover_ok: me.class != HullClass::Dd && !brawl && spot_on.is_none() && !hunt };
+                under_fire: now < bot.fired_on_until, pinned: bot.pinned, brawler: bot.style == Playstyle::Brawler, crossfire,
+                bounds: self.map.as_ref().map(|m| { let m = m.bind(); (Vector2::new(m.min_x, m.min_z), Vector2::new(m.max_x, m.max_z)) }),
+                cover_ok: me.class != HullClass::Dd && !brawl && spot_on.is_none() && !hunt };
             let live = &self.live;
             let gun = &bot.gun;
             let mut no_table = 0u32;
@@ -1063,12 +1110,16 @@ impl World {
                 r
             };
             let shots = &self.shots;
+            let island = self.island.as_ref();
             let nav = bot.nav.bind();
             let clearance = nav.get_ship_clearance();
             let map = self.map.as_ref().map(|m| m.bind());
+            let nav_ok = |q: Vector2| map.as_ref().is_some_and(|m| m.is_navigable_impl(q.x, q.y, clearance));
+            let land = |q: Vector2| map.as_ref().map_or(0.0, |m| m.get_distance_impl(q.x, q.y));
             let shot = |st: Vector2, aim: Vector2| -> bool {
                 let (Some(g), Some(m)) = (&bot.shot_gun, &map) else { return false };
-                m.is_navigable_impl(st.x, st.y, clearance) && shots.clear(g, st, aim)
+                m.is_navigable_impl(st.x, st.y, clearance)
+                    && (shots.clear(g, st, aim) || island.zip(bot.flight).is_some_and(|(i, f)| i.shot(&f, st, aim)))
             };
             let field = &self.teams[&team].field;
             let (curves, matrices) = (&self.curves, &self.matrices);
@@ -1079,10 +1130,14 @@ impl World {
                 .filter(|o| o.team == team && o.ship_id != me.id && o.role.is_some() && o.role == bot.role
                     && snap.get(o.ship_id).is_some_and(|s| s.alive))
                 .filter_map(|o| o.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station)).collect();
+            let taken: Vec<Vector2> = self.bots.iter()
+                .filter(|o| o.team == team && o.ship_id != me.id && snap.get(o.ship_id).is_some_and(|s| s.alive))
+                .filter_map(|o| o.plan.filter(|p| p.posture == Posture::Engage).map(|p| p.station)).collect();
             let front = self.teams[&team].flanks.as_ref().map(|f| f.axis());
             let my_hp = (me.hp_frac * me.hp_max).max(1.0);
             let k_in = *calib_in.get(&class_key(me.class)).unwrap_or(&1.0);
             let mut rings: Vec<(Vector2, f32)> = Vec::new();
+            let mut refuted: Vec<Vector2> = Vec::new();
             let mut scan = |req: &station::Req| -> Option<station::Found> {
                 let ts = std::time::Instant::now();
                 let (Some(lay), Some(vis), Some(feats)) = (&self.layout, &vis, &self.features) else { return None };
@@ -1127,9 +1182,9 @@ impl World {
                 let aims: Vec<(Vector2, Arc<[u64]>)> = field.ghosts.iter().filter(|g| !g.ahead).map(|g| g.at)
                     .chain(m.flank.as_ref().and_then(|f| f.centre))
                     .filter_map(|q| Some((q, own?.col(vis.cell_of(q)?)?))).collect();
-                let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, field, aims, route: Default::default(), my: me.p2(), speed: me.max_speed,
-                    clearance, turn_radius: me.turn_radius, risk: m.style.risk, reach: me.gun_range, my_hp, k_in, mates: mates.clone(), front,
-                    dark_ok: me.class == HullClass::Dd || me.class == HullClass::Ca && me.conceal < DARK_CA_CONCEAL * me.gun_range,
+                let sc = Scan { lay, vis, feats, foes, threats, seen, shot: &field.shot, field, island: self.island.as_ref(), arc: bot.flight, nav_ok: &nav_ok, land: &land, aims, route: Default::default(), my: me.p2(), speed: me.max_speed, conceal: me.conceal,
+                    clearance, turn_radius: me.turn_radius, risk: m.style.risk, reach: me.gun_range, my_hp, k_in, mates: mates.clone(), taken: taken.clone(), front,
+                    dark_ok: me.class == HullClass::Dd,
                     allies: {
                         let a: Vec<Vector2> = snap.allies_of(team).filter(|a| a.alive && a.id != me.id).map(|a| a.p2()).collect();
                         (!a.is_empty()).then(|| a.iter().copied().sum::<Vector2>() / a.len() as f32)
@@ -1137,6 +1192,42 @@ impl World {
                 let tcell = vis.cell_of(req.anchor);
                 let t0 = std::time::Instant::now();
                 scan_t[2] += (t0 - ts).as_micros() as u64;
+                if let Some(a) = &req.hide {
+                    let mut a = a.clone();
+                    a.exclude.extend(bot.cover_blocked.iter().map(|&(q, _)| (q, cover::BLOCK_M)));
+                    if !req.escape {
+                        a.exclude.extend(taken.iter().map(|&q| (q, station::MATE_SEP_M)));
+                    }
+                    let mut cd = cover::CoverDiag::default();
+                    let (hit, why) = match req.only {
+                        Some(q) => match sc.cover_eval(&a, q) {
+                            Ok((h, shot, soft)) => (Some((h, shot, soft)), soft.unwrap_or("ok")),
+                            Err(w) => (None, w),
+                        },
+                        None => (sc.cover(&a, &mut cd).map(|h| (h, true, None)), "none"),
+                    };
+                    let us = t0.elapsed().as_micros() as u64;
+                    scan_t[0] += us;
+                    if scan_trace() {
+                        let near = a.near.map_or("-".to_string(), |(_, r)| format!("{:.0}", r));
+                        godot_print!("cover5 t={:.0} {} {} {} from=({:.0},{:.0}) near={} clip={} excl={} foes={} aims={} cells={} why={:?} mesh={:?} tries={} refuted={} us={} | {}",
+                            now, bot.name, if a.offense { "off" } else { "def" }, if req.only.is_some() { "hold" } else if a.deep_only { "deep" } else { "search" },
+                            a.from.x, a.from.y, near, a.clip.len(), a.exclude.len(), sc.foes.len(), sc.aims.len(), cd.cells,
+                            cd.why.each_ref().map(|c| c.get()), cd.mesh.each_ref().map(|c| c.get()), cd.tries, cd.refuted.len(), us,
+                            hit.map_or(format!("none {}", why), |(h, shot, _)| format!("at=({:.0},{:.0}) r={:.0} route={:.0} deep={} dark={} shielded={} targets={} shot={} quarter={} {}",
+                                h.station.x, h.station.y, h.station.distance_to(me.p2()), h.route, h.deep, h.dark, h.shielded, h.targets, shot, cd.quarter, why)));
+                    }
+                    refuted.extend(cd.refuted.iter().copied());
+                    scan_tel.push(match (req.only.is_some(), hit.is_some()) {
+                        (true, true) if hit.is_some_and(|h| h.2.is_some()) => "cover_hold_soft",
+                        (true, true) => "cover_hold_ok",
+                        (true, false) => "cover_hold_fail",
+                        (false, true) => "cover_found",
+                        (false, false) => "cover_none",
+                    });
+                    return hit.map(|(h, shot, soft)| station::Found { station: h.station, shot, value: 0.0, exposure: 0.0, net: 0.0,
+                        dark: !a.offense && !h.shielded, negative: false, candidates: cd.cells, kite: false, deep: h.deep, targets: h.targets, soft, route: h.route });
+                }
                 let mut exact_us = 0u64;
                 let centre = tcell.map(|c| vis.centres[c]);
                 let mut diag = scan_trace().then(station::Diag::default);
@@ -1178,9 +1269,6 @@ impl World {
                 if f.is_some_and(|f| f.dark) {
                     scan_tel.push("station_dark");
                 }
-                if f.is_some_and(|f| f.hop) {
-                    scan_tel.push("station_hop");
-                }
                 if req.target.is_some() && f.is_some_and(|f| !f.shot) {
                     scan_tel.push("station_no_shot");
                 }
@@ -1194,6 +1282,21 @@ impl World {
                     m.me.id, m.me.pos.x, m.me.pos.z, m.flank.as_ref().and_then(|f| f.centre).map(|c| (c.x as i32, c.y as i32)),
                     plan.is_some_and(|p| p.cover), plan.is_some_and(|p| p.kite), plan.map(|p| (p.station.x as i32, p.station.y as i32)), kite_axis.map(|a| a.to_degrees() as i32),
                     n_src, n_holds, assign.target, reason, plan.map(|p| p.posture));
+                if let (Some(p), Some(vis)) = (plan.filter(|p| p.posture == Posture::Disengage || p.dark), vis.as_deref()) {
+                    let my = m.me.p2();
+                    let mk = vis.cell_of(my);
+                    let near: Vec<String> = snap.enemies_of(m.me.team).filter(|e| e.alive && e.p2().distance_to(my) <= m.me.conceal.max(m.me.gun_range))
+                        .map(|e| format!("{}:{:.0}{}{}", e.id, e.p2().distance_to(my), if e.seen { "s" } else { "u" },
+                            if mk.zip(vis.cell_of(e.p2())).is_some_and(|(a, b)| vis.visible_idx(b, a)) { "L" } else { "-" })).collect();
+                    let away: Vector2 = snap.enemies_of(m.me.team).filter(|e| e.alive && e.seen && e.p2().distance_to(my) < e.gun_range * 1.05)
+                        .map(|e| (my - e.p2()).normalized()).sum();
+                    let sd = p.station - my;
+                    godot_print!("dis5 t={:.0} {} reason={:?} posture={:?} pinned={} seen={} conceal={:.0} gun={:.0} cover={} kite={} dark={} st_r={:.0} st_off_away={:.0} my_seen_conceal={} my_seen_bloom={} threat={:.2} ttd={:.0} ttw={:?} near=[{}]",
+                        now, self.bots[i].name, reason, p.posture, m.pinned, m.me.seen, m.me.conceal, m.me.gun_range, p.cover, p.kite, p.dark, sd.length(),
+                        if away.length() > 1e-3 && sd.length() > 1.0 { hive::wrap(sd.x.atan2(sd.y) - away.x.atan2(away.y)).to_degrees() } else { f32::NAN },
+                        mk.is_some_and(|k| field.seen_at(&vis, k, m.me.conceal)), mk.is_some_and(|k| field.seen_at(&vis, k, m.me.conceal.max(m.me.gun_range))),
+                        m.danger.threat, m.danger.ttd, m.danger.ttw.map(|w| w as i32), near.join(" "));
+                }
             }
             drop(scan);
             drop(vis);
@@ -1207,9 +1310,15 @@ impl World {
             scan_t = [0; 3];
             drop(map);
             drop(nav);
+            let cb = &mut self.bots[i].cover_blocked;
+            cb.retain(|b| now < b.1);
+            cb.extend(refuted.iter().chain(&assign.cover.block).map(|&q| (q, now + COVER_BLOCK_TTL_S)));
             let hp = me.hp_frac;
             for _ in 0..no_table {
                 self.tel.count("target_no_table");
+            }
+            if assign.dark_latch {
+                self.tel.count("dark_latch");
             }
             if plan.is_some_and(|p| p.posture == Posture::Engage && assign.target.is_some() && !p.shot) {
                 self.tel.count("engage_no_shot");
@@ -1448,7 +1557,7 @@ impl World {
             let close = (my.distance_to(t.p2()) - me.gun_range.max(want)).max(0.0);
             Some(close / me.max_speed.max(1.0) + 1.0 / r)
         });
-        let d = Danger { threat, ttd, ttw, cover_first: false, safe_x: -(1.0 - hive::REENGAGE_THREAT).ln() / horizon.max(1.0) * 60.0 };
+        let d = Danger { threat, ttd, ttw, cover_first: false, spotting: false, safe_x: -(1.0 - hive::REENGAGE_THREAT).ln() / horizon.max(1.0) * 60.0 };
         let alone_spotting = tgt.and_then(|t| spot.get(&t.id)).is_some_and(|n| !n.lit_by.is_empty() && n.lit_by.iter().all(|&l| l == me.id));
         let out_traded = now_t.iter().any(|t| {
             let dist = t.at.distance_to(my);
@@ -1463,7 +1572,7 @@ impl World {
         if !alone_spotting && out_traded {
             tel.push("cover_first_out_traded");
         }
-        (Danger { cover_first: !alone_spotting && (losing || out_traded), ..d }, tel)
+        (Danger { cover_first: !alone_spotting && (losing || out_traded), spotting: alone_spotting, ..d }, tel)
     }
 
     /// Heading and gear for bot i: damage in minus out by hull heading, within the progress cone; stance alone
@@ -1734,9 +1843,27 @@ impl World {
     /// The assigned target, or while it cannot be shot (unseen, out of range, terrain), the nearest seen enemy in range
     /// with a clear shot from here, held ALT_HOLD_S.
     /// Unlit: torpedo boats and disengaging ships hold fire; cover-bound ships fire only where firing keeps them hidden.
+    /// v4 _probe_concealment, from the team's picture instead of the spotter's identity: still lit after our bloom
+    /// has run out, someone we cannot see has eyes on us.
+    fn pinned(&self, i: usize, now: f64) -> bool {
+        let Some(me) = self.snap.get(self.bots[i].ship_id).filter(|s| s.alive && s.seen) else { return false };
+        if now - self.bots[i].fired_at > me.bloom_s as f64 {
+            return true;
+        }
+        let (Some(vis), Some(h)) = (&self.vis, self.teams.get(&me.team)) else { return false };
+        let vis = vis.bind();
+        vis.cell_of(me.p2()).is_some_and(|k| h.field.sources.iter().filter(|s| !s.ahead).any(|s| {
+            let d = s.at.distance_to(me.p2());
+            d <= s.force || d <= me.conceal && vis.visible_idx(s.cell, k)
+        }))
+    }
+
     fn guns_dark(&self, i: usize) -> bool {
         let b = &self.bots[i];
         let (Some(p), Some(me)) = (b.plan, self.snap.get(b.ship_id)) else { return false };
+        if b.assign.dark_latch && !b.pinned && p.posture != Posture::Disengage {
+            return true;
+        }
         if me.seen {
             return false;
         }
@@ -1854,7 +1981,7 @@ impl World {
             self.tel.count(k);
         }
         let hold = in_range && blocked.is_none() && b.gun.sync_hold(now, b.inputs.ready_guns, b.inputs.max_lag_s);
-        let dark = b.plan.is_some_and(|p| p.dark);
+        let dark = b.plan.is_some_and(|p| p.dark) && !b.pinned;
         b.cmd.fire = in_range && blocked.is_none() && !hold && !dark;
         b.last_gate = if !in_range { "out_of_range" } else if let Some(k) = blocked { k } else if hold { "sync_hold" } else if dark { "dark" } else { "fire" };
         *b.gates.entry(b.last_gate).or_default() += 1;

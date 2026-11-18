@@ -84,7 +84,7 @@ pub struct Source {
     /// FORECAST_S ahead along its course.
     pub ahead: bool,
     range: f32,
-    force: f32,
+    pub force: f32,
     matrix: Option<Arc<GunMatrix>>,
 }
 
@@ -104,19 +104,19 @@ impl TeamField {
             matrix: &mut dyn FnMut(i64) -> Option<Arc<GunMatrix>>) {
         self.sources.clear();
         self.ghosts.clear();
-        let mut ghost = |at: Vector2, ahead: bool, range: f32| if let Some(cell) = vis.cell_of(at) {
-            self.ghosts.push(Source { id: -1, at, cell, ahead, range, force: 0.0, matrix: None });
+        let mut ghost = |id: i64, at: Vector2, ahead: bool, range: f32, matrix: Option<Arc<GunMatrix>>| if let Some(cell) = vis.cell_of(at) {
+            self.ghosts.push(Source { id, at, cell, ahead, range, force: 0.0, matrix });
         };
         for (at, ahead) in belief.presumed_now_ahead(FORECAST_S) {
-            ghost(at, false, ghost_range);
+            ghost(-1, at, false, ghost_range, None);
             if ahead.distance_to(at) > FORECAST_MIN_M {
-                ghost(ahead, true, ghost_range);
+                ghost(-1, ahead, true, ghost_range, None);
             }
         }
         for (&id, c) in &belief.contacts {
             if !c.seen_now && now - c.last_seen > FORGET_S {
                 if let Some(s) = snap.get(id).filter(|s| s.alive) {
-                    ghost(c.last_pos, false, s.gun_range);
+                    ghost(id, c.last_pos, false, s.gun_range, matrix(id));
                 }
             }
         }
@@ -142,8 +142,12 @@ impl TeamField {
                 self.missing_rows += 1;
             }
             let shot = &mut self.shot;
+            // A presumed enemy's guns are unknown: it hits what it sees.
+            let los = &vis.bits[s.cell * vis.stride..(s.cell + 1) * vis.stride];
+            let ghost = i >= self.sources.len();
             lay.spans(s.at, s.range, |a, b| match row {
                 Some(r) => or_span(shot, a, b, |w| r[w].load(Relaxed)),
+                None if ghost => or_span(shot, a, b, |w| los[w]),
                 None => or_span(shot, a, b, |_| !0),
             });
         }

@@ -498,6 +498,11 @@ impl PartMesh {
         n_hits
     }
 
+    /// any_hit in the mesh's own space.
+    pub fn hits(&self, from: V3, to: V3) -> bool {
+        self.any_hit_local(from, to)
+    }
+
     fn any_hit_local(&self, from: V3, to: V3) -> bool {
         if self.nodes4.is_empty() {
             return false;
