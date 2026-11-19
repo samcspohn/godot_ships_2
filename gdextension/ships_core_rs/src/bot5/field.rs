@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::nav::gun_matrix::GunMatrix;
 use crate::nav::visibility::VisibilityGrid;
 
-use super::belief::{Belief, FORGET_S};
+use super::belief::{certainty, radius, spread, Belief, FORGET_S};
 use super::snapshot::Snapshot;
 
 pub const FORECAST_S: f32 = 60.0;
@@ -86,6 +86,12 @@ pub struct Source {
     range: f32,
     pub force: f32,
     matrix: Option<Arc<GunMatrix>>,
+    /// Never seen: a spawn-march guess.
+    pub presumed: bool,
+    /// v4 guess_spread and certainty; 0 and 1 while seen.
+    pub spread: f32,
+    pub certainty: f32,
+    pub seen: bool,
 }
 
 /// A team's picture of enemy sight and fire over the VisibilityGrid's water cells, from belief only.
@@ -100,23 +106,32 @@ pub struct TeamField {
 }
 
 impl TeamField {
-    pub(crate) fn build(&mut self, lay: &Layout, vis: &VisibilityGrid, belief: &Belief, snap: &Snapshot, now: f64, ghost_range: f32,
+    pub(crate) fn build(&mut self, lay: &Layout, vis: &VisibilityGrid, belief: &Belief, snap: &Snapshot, now: f64,
             matrix: &mut dyn FnMut(i64) -> Option<Arc<GunMatrix>>) {
         self.sources.clear();
         self.ghosts.clear();
-        let mut ghost = |id: i64, at: Vector2, ahead: bool, range: f32, matrix: Option<Arc<GunMatrix>>| if let Some(cell) = vis.cell_of(at) {
-            self.ghosts.push(Source { id, at, cell, ahead, range, force: 0.0, matrix });
-        };
-        for (at, ahead) in belief.presumed_now_ahead(FORECAST_S) {
-            ghost(-1, at, false, ghost_range, None);
-            if ahead.distance_to(at) > FORECAST_MIN_M {
-                ghost(-1, ahead, true, ghost_range, None);
+        let age = (now - belief.start) as f32;
+        for (id, at, ahead) in belief.presumed_now_ahead(FORECAST_S) {
+            let Some(s) = snap.get(id).filter(|s| s.alive) else { continue };
+            let m = matrix(id);
+            let r = radius(age, s.max_speed);
+            let fc = (ahead.distance_to(at) > FORECAST_MIN_M).then_some(ahead);
+            for (p, later) in std::iter::once((at, false)).chain(fc.map(|f| (f, true))) {
+                if let Some(cell) = vis.cell_of(p) {
+                    self.ghosts.push(Source { id, at: p, cell, ahead: later, range: s.gun_range, force: s.force_spot, matrix: m.clone(),
+                        presumed: true, spread: spread(r), certainty: certainty(r), seen: false });
+                }
             }
         }
         for (&id, c) in &belief.contacts {
             if !c.seen_now && now - c.last_seen > FORGET_S {
                 if let Some(s) = snap.get(id).filter(|s| s.alive) {
-                    ghost(id, c.last_pos, false, s.gun_range, matrix(id));
+                    let at = belief.lost_at(c, s.max_speed, now);
+                    let r = radius((now - c.last_seen) as f32, s.max_speed);
+                    if let Some(cell) = vis.cell_of(at) {
+                        self.ghosts.push(Source { id, at, cell, ahead: false, range: s.gun_range, force: s.force_spot, matrix: matrix(id),
+                            presumed: false, spread: spread(r), certainty: certainty(r), seen: false });
+                    }
                 }
             }
         }
@@ -129,9 +144,14 @@ impl TeamField {
             let ahead = c.last_pos + Vector2::new(s.vel.x, s.vel.z) * FORECAST_S;
             let fc = (c.seen_now && ahead.distance_to(c.last_pos) > FORECAST_MIN_M).then_some(ahead);
             let m = matrix(id);
+            let (sp, ce) = if c.seen_now { (0.0, 1.0) } else {
+                let r = radius((now - c.last_seen) as f32, s.max_speed);
+                (spread(r), certainty(r))
+            };
             for (at, ahead) in std::iter::once((c.last_pos, false)).chain(fc.map(|f| (f, true))) {
                 let Some(cell) = vis.cell_of(at) else { continue };
-                self.sources.push(Source { id, at, cell, ahead, range: s.gun_range, force: s.force_spot, matrix: m.clone() });
+                self.sources.push(Source { id, at, cell, ahead, range: s.gun_range, force: s.force_spot, matrix: m.clone(),
+                    presumed: false, spread: sp, certainty: ce, seen: c.seen_now });
             }
         }
         self.shot.clear();

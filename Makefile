@@ -114,9 +114,10 @@ WATCH_REPLAY ?= 1
 # Server environment, e.g. WATCH_ENV="SHIPS_BOT5_TEAMS=0".
 WATCH_ENV ?=
 WATCH_ARGS ?=
-watch:
+# Faster than real time the runtime point tables lag the shooting: read the built ones.
+watch: $(if $(filter-out 1,$(WATCH_SPEED)),point-tables)
 	@mkdir -p build
-	@$(WATCH_ENV) $(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) $(if $(filter 0,$(WATCH_REPLAY)),--no-replay) $(WATCH_ARGS) \
+	@$(WATCH_ENV) $(GODOT) --headless --path . --fixed-fps 12 --sim-speed $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) $(if $(filter 0,$(WATCH_REPLAY)),--no-replay) $(if $(filter-out 1,$(WATCH_SPEED)),--point-table-cache) $(WATCH_ARGS) \
 		> build/watch_server.log 2>&1 & srv=$$!; \
 	trap 'kill $$srv 2>/dev/null' EXIT INT TERM; \
 	until ss -ltn | grep -q ":$(PORT) "; do kill -0 $$srv 2>/dev/null || { echo "watch: server exited, see build/watch_server.log"; exit 1; }; sleep 0.5; done; \

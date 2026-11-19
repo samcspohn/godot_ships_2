@@ -11,6 +11,13 @@ const RANGE_BINS := 6
 const SPEED_BIN_MPS := 5.0
 const SPEED_BINS := 4
 const LOW_HP := 0.3
+const AHEAD_BIN_M := 2000.0
+const AHEAD_BINS := 6
+const CLOSING_EDGES := [-5.0, -1.0, 1.0, 5.0]
+const ALLY_EDGES := [2000.0, 4000.0, 8000.0]
+const PHASE_BIN_S := 120.0
+const PHASE_BINS := 10
+const FIGHT_MODES := ["station", "cover", "spot"]
 const USE_TYPES := {
 	ConsumableItem.ConsumableType.REPAIR_PARTY: "repair", ConsumableItem.ConsumableType.DAMAGE_CONTROL: "dc",
 	ConsumableItem.ConsumableType.SMOKE_SCREEN: "smoke", ConsumableItem.ConsumableType.HYDROACOUSTIC_SEARCH: "hydro",
@@ -37,6 +44,8 @@ static func _row(ship: Ship) -> Dictionary:
 		"t_enemy_lit": 0.0, "t_team_blind": 0.0,
 		"t_first_low": -1.0, "t_low_lit": 0.0, "dmg_low_lit": 0.0, "low_shooters": 0.0, "equip": [], "uses": {}, "use_t": {},
 			"shooters": _bins(SHOOTER_BINS), "angle": _bins(6), "range": _bins(RANGE_BINS), "speed": _bins(SPEED_BINS),
+			"los": _bins(SHOOTER_BINS), "ahead": _bins(AHEAD_BINS), "closing": _bins(CLOSING_EDGES.size() + 1),
+			"ally": _bins(ALLY_EDGES.size() + 1), "phase": _bins(PHASE_BINS), "phase_lit": _bins(PHASE_BINS), "mode": {},
 		}
 	return rows[ship]
 
@@ -54,12 +63,85 @@ static func _add(b: Dictionary, k: int, dmg: float) -> void:
 	b["dmg"][k] += dmg
 
 
-static func sample(teams_ships: Array) -> void:
+static func _edge_bin(x: float, edges: Array) -> int:
+	var k := 0
+	while k < edges.size() and x >= edges[k]:
+		k += 1
+	return k
+
+
+static func _centroids(all: Array[Ship]) -> Dictionary:
+	var sum := {}
+	for s in all:
+		var t: int = s.team.team_id
+		var a: Array = sum.get(t, [Vector2.ZERO, 0])
+		sum[t] = [a[0] + Vector2(s.global_position.x, s.global_position.z), a[1] + 1]
+	var out := {}
+	for t in sum:
+		out[t] = sum[t][0] / sum[t][1]
+	return out
+
+
+static func _mode(me: Ship, hub: Bot5Hub) -> String:
+	if hub != null and hub.is_v5(me):
+		return hub.mode_of(me)
+	var bc = me.get_node_or_null("Modules/BotController")
+	if bc == null or bc.behavior == null:
+		return "none"
+	var b: BotBehavior = bc.behavior
+	var n := String(b._active_skill_name)
+	return n + "/" + FIGHT_MODES[b._skill_fight.mode] if n == "Fight" else n
+
+
+## Geometry columns: enemies in their gun range with clear LOS, ahead of own centroid toward the enemy's,
+## closing speed on the nearest enemy, nearest ally, match phase, and the bot's mode.
+static func _geometry(r: Dictionary, me: Ship, pos: Vector2, vel: Vector2, all: Array[Ship], cen: Dictionary,
+		dmg: float, hub: Bot5Hub) -> void:
+	var los := 0
+	var nearest := INF
+	var near_p := Vector2.ZERO
+	var ally := INF
+	for e in all:
+		if e == me:
+			continue
+		var ep := Vector2(e.global_position.x, e.global_position.z)
+		var d := ep.distance_to(pos)
+		if e.team.team_id == me.team.team_id:
+			ally = minf(ally, d)
+			continue
+		if d < nearest:
+			nearest = d
+			near_p = ep
+		var gp = e.artillery_controller.get_params() if e.artillery_controller != null else null
+		if gp != null and d <= gp._range and not NavigationMapManager.is_los_blocked_2d(ep, pos):
+			los += 1
+	_add(r["los"], mini(los, SHOOTER_BINS - 1), dmg)
+	var mine: Vector2 = cen.get(me.team.team_id, pos)
+	var theirs: Vector2 = cen.get(1 - me.team.team_id, mine)
+	var axis := (theirs - mine).normalized()
+	if axis != Vector2.ZERO:
+		var a := (pos - mine).dot(axis)
+		_add(r["ahead"], clampi(int(floor(a / AHEAD_BIN_M)) + AHEAD_BINS / 2, 0, AHEAD_BINS - 1), dmg)
+	if nearest < INF:
+		_add(r["closing"], _edge_bin(vel.dot((near_p - pos) / maxf(nearest, 1.0)), CLOSING_EDGES), dmg)
+	if ally < INF:
+		_add(r["ally"], _edge_bin(ally, ALLY_EDGES), dmg)
+	var ph := mini(int(r["t"] / PHASE_BIN_S), PHASE_BINS - 1)
+	_add(r["phase"], ph, dmg)
+	if me.visible_to_enemy:
+		_add(r["phase_lit"], ph, dmg)
+	var m := _mode(me, hub)
+	var row: Array = r["mode"].get(m, [0.0, 0.0, 0.0])
+	r["mode"][m] = [row[0] + DT, row[1] + dmg, row[2] + (DT if me.visible_to_enemy else 0.0)]
+
+
+static func sample(teams_ships: Array, hub: Bot5Hub = null) -> void:
 	var all: Array[Ship] = []
 	for ships in teams_ships:
 		for s in ships:
 			if is_instance_valid(s) and s.is_alive():
 				all.append(s)
+	var cen := _centroids(all)
 	for me in all:
 		var hp: float = me.health_controller.current_hp
 		var pos := Vector2(me.global_position.x, me.global_position.z)
@@ -88,6 +170,7 @@ static func sample(teams_ships: Array) -> void:
 		var r := _row(me)
 		_spotting(r, me, pos, all)
 		_consumables(r, me)
+		_geometry(r, me, pos, (pos - prev["pos"]) / DT, all, cen, dmg, hub)
 		var low: bool = hp < LOW_HP * me.health_controller.max_hp
 		if low and r["t_first_low"] < 0.0:
 			r["t_first_low"] = r["t"]
@@ -187,7 +270,7 @@ static func summary(apt_of: Callable) -> Dictionary:
 			continue
 		var key := "%s|%s|%s" % [apt_of.call(ship), ship.ship_name, ship.name]
 		var r: Dictionary = rows[ship].duplicate(true)
-		for b in ["shooters", "angle", "range", "speed"]:
+		for b in ["shooters", "angle", "range", "speed", "los", "ahead", "closing", "ally", "phase", "phase_lit"]:
 			r[b] = {"t": Array(r[b]["t"]), "dmg": Array(r[b]["dmg"])}
 		out[key] = r
 	return out

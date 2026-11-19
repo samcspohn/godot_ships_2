@@ -1717,7 +1717,7 @@ func _physics_process(_delta: float) -> void:
 	for t in teams:
 		t.ships = _get_team(t.id)
 	if match_active and not match_ended and BotTiming.on and Engine.get_physics_frames() % 12 == 0:
-		ExposureStats.sample(teams.map(func(t): return t.ships))
+		ExposureStats.sample(teams.map(func(t): return t.ships), bot5_hub)
 
 	# Update clusters and average positions
 	_update_team_clusters()

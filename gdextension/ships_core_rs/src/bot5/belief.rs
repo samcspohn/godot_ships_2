@@ -6,21 +6,31 @@ use super::snapshot::Snapshot;
 const SAMPLE_S: f64 = 1.0;
 const HISTORY_S: f64 = 20.0;
 pub const FORGET_S: f64 = 90.0;
-/// EnemyPresumption.ADVANCE_SPEED: half of 30 kn at ShipMovementV4's speed scale.
-const ADVANCE_MPS: f32 = 30.0 * 0.514444 * 2.6 * 0.5;
-const REF_STOP_SHORT_M: f32 = 6000.0;
+/// EnemyPresumption ADVANCE_SPEED and RADIUS_GROWTH: half flank. v4's class multipliers (DD 1.3, CA 1.0, BB 0.85
+/// over a nominal 30 kn) were flank speed ratios; max_speed is game speed (SHIP_SPEED_MODIFIER in), so none here.
+const ADVANCE_SHARE: f32 = 0.5;
+const GROWTH_SHARE: f32 = 0.5;
+/// EnemyPresumption.ENGAGEMENT_GAP: the march stops half of what the spawn gap leaves beyond this.
+const ENGAGEMENT_GAP_M: f32 = 16000.0;
+pub const RADIUS_MIN_M: f32 = 1500.0;
+const RADIUS_MAX_M: f32 = 9000.0;
+const SPREAD_MAX_M: f32 = 2500.0;
 const REF_STEP_M: f32 = 250.0;
+/// A shot this recent places an unseen shooter where it is now (v4 note_gunfire).
+const GUNFIRE_FIX_S: f64 = 1.0;
 /// Water this near one of our ships with nothing spotted is presumed empty of the unseen.
 const SEARCH_M: f32 = 8000.0;
 
 /// An enemy never seen, presumed marching from its spawn slot down its lane.
 pub struct Presumed {
+    pub id: i64,
     pub spawn: Vector2,
     pub pos: Vector2,
     dir: Vector2,
     stop: f32,
     /// Pushed out of searched water: stays where it was pushed instead of marching.
     held: bool,
+    speed: f32,
 }
 
 pub struct Contact {
@@ -39,7 +49,10 @@ pub struct Belief {
     pub own_spawn: Option<Vector2>,
     pub presumed: Vec<Presumed>,
     identified: HashSet<i64>,
-    start: f64,
+    pub start: f64,
+    /// Enemy spawn toward ours, and how far along it a march stops.
+    axis: Vector2,
+    max_advance: f32,
     pub seen_count: usize,
 }
 
@@ -62,11 +75,12 @@ impl Belief {
             self.own_spawn = centroid(snap.allies_of(team).map(|e| e.p2()));
             if let (Some(es), Some(os)) = (self.enemy_spawn, self.own_spawn) {
                 self.start = now;
-                let mid = (es + os) * 0.5;
-                let dir = (mid - es).normalized_or_zero();
+                let dir = (os - es).normalized_or_zero();
+                self.axis = dir;
+                self.max_advance = ((es.distance_to(os) - ENGAGEMENT_GAP_M) * 0.5).max(0.0);
                 for e in snap.enemies_of(team) {
                     let spawn = e.p2();
-                    let mut stop = ((mid - spawn).dot(dir) - REF_STOP_SHORT_M).max(0.0);
+                    let mut stop = self.max_advance;
                     let mut d = 0.0;
                     while d < stop {
                         if !water(spawn + dir * (d + REF_STEP_M)) {
@@ -74,7 +88,7 @@ impl Belief {
                         }
                         d += REF_STEP_M;
                     }
-                    self.presumed.push(Presumed { spawn, pos: spawn, dir, stop, held: false });
+                    self.presumed.push(Presumed { id: e.id, spawn, pos: spawn, dir, stop, held: false, speed: e.max_speed * ADVANCE_SHARE });
                 }
             }
         }
@@ -82,14 +96,26 @@ impl Belief {
         let mut fresh = 0;
         let mut seen = 0;
         for e in snap.enemies_of(team) {
-            if !e.seen {
+            let fired = !e.seen && e.alive && now - e.fired_at as f64 <= GUNFIRE_FIX_S;
+            if !e.seen && !fired {
                 if let Some(c) = self.contacts.get_mut(&e.id) {
                     c.seen_now = false;
                 }
                 continue;
             }
             if self.identified.insert(e.id) {
-                self.retire_nearest(e.p2());
+                self.presumed.retain(|r| r.id != e.id);
+            }
+            if fired {
+                let c = self.contacts.entry(e.id).or_insert_with(|| Contact {
+                    hist: VecDeque::new(), last_seen: now, last_pos: e.p2(), last_hp: e.hp_frac, seen_now: false });
+                c.seen_now = false;
+                c.last_seen = now;
+                c.last_pos = e.p2();
+                if c.hist.back().is_none_or(|&(t, _)| now - t >= SAMPLE_S) {
+                    c.hist.push_back((now, e.p2()));
+                }
+                continue;
             }
             let c = self.contacts.entry(e.id).or_insert_with(|| Contact {
                 hist: VecDeque::new(),
@@ -119,20 +145,11 @@ impl Belief {
         fresh
     }
 
-    fn retire_nearest(&mut self, at: Vector2) {
-        let best = self.presumed.iter().enumerate()
-            .min_by(|a, b| a.1.pos.distance_squared_to(at).total_cmp(&b.1.pos.distance_squared_to(at)))
-            .map(|(i, _)| i);
-        if let Some(i) = best {
-            self.presumed.swap_remove(i);
-        }
-    }
-
     fn march(&mut self, now: f64, snap: &Snapshot, team: i32) {
-        let lane = ((now - self.start) as f32 * ADVANCE_MPS).max(0.0);
+        let t = ((now - self.start) as f32).max(0.0);
         for r in self.presumed.iter_mut() {
             if !r.held {
-                r.pos = r.spawn + r.dir * lane.min(r.stop);
+                r.pos = r.spawn + r.dir * (t * r.speed).min(r.stop);
             }
             for a in snap.allies_of(team) {
                 let off = r.pos - a.p2();
@@ -147,11 +164,37 @@ impl Belief {
     }
 
     /// Each presumed enemy now, and `secs` further along its march.
-    pub fn presumed_now_ahead(&self, secs: f32) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
-        self.presumed.iter().map(move |r| (r.pos, if r.held { r.pos } else {
-            r.spawn + r.dir * ((r.pos - r.spawn).length() + ADVANCE_MPS * secs).min(r.stop)
+    pub fn presumed_now_ahead(&self, secs: f32) -> impl Iterator<Item = (i64, Vector2, Vector2)> + '_ {
+        self.presumed.iter().map(move |r| (r.id, r.pos, if r.held { r.pos } else {
+            r.spawn + r.dir * ((r.pos - r.spawn).length() + r.speed * secs).min(r.stop)
         }))
     }
+
+    /// v4 EnemyPresumption._advance from a lost contact's last position: on along the spawn axis at half flank, never
+    /// past the march's stop line.
+    pub fn lost_at(&self, c: &Contact, max_speed: f32, now: f64) -> Vector2 {
+        let (Some(es), dir) = (self.enemy_spawn, self.axis) else { return c.last_pos };
+        let left = (self.max_advance - (c.last_pos - es).dot(dir)).max(0.0);
+        c.last_pos + dir * ((now - c.last_seen) as f32 * max_speed * ADVANCE_SHARE).min(left)
+    }
+}
+
+/// v4 EnemyPresumption radius over `unseen_s`, from the ship's own flank speed.
+pub fn radius(unseen_s: f32, max_speed: f32) -> f32 {
+    (RADIUS_MIN_M + unseen_s.max(0.0) * max_speed * GROWTH_SHARE).clamp(RADIUS_MIN_M, RADIUS_MAX_M)
+}
+
+/// v4 EnemyPresumption.certainty.
+pub fn certainty(r: f32) -> f32 {
+    (1.0 - (r - RADIUS_MIN_M) / (RADIUS_MAX_M - RADIUS_MIN_M)).clamp(0.0, 1.0)
+}
+
+/// v4 EnemyPresumption.guess_spread.
+pub fn spread(r: f32) -> f32 {
+    (r * 0.5).min(SPREAD_MAX_M)
+}
+
+impl Belief {
 
     /// Where the presumed enemy nearest `p` ends its march: a stable opening reference.
     pub fn presumed_end(&self, p: Vector2) -> Option<Vector2> {

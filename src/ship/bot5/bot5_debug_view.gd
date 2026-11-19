@@ -42,6 +42,8 @@ static func _draw_plan(b: Dictionary, me: Vector3) -> void:
 	Debug.draw_line(me + LIFT, st + LIFT, col)
 	Debug.draw_im_sphere(st + LIFT, 20.0, col)
 	Debug.draw_circle(st + Vector3(0.0, 8.0, 0.0), float(b.get("hold_radius", 0.0)), Color(col, 0.6), 32)
+	for w: Vector3 in b.get("rings", PackedVector3Array()):
+		Debug.draw_circle(Vector3(w.x, 6.5, w.z), w.y, Color(1.0, 0.4, 0.1, 0.2), 48)
 	for w: Vector3 in b.get("walls", PackedVector3Array()):
 		Debug.draw_circle(Vector3(w.x, 7.0, w.z), w.y, Color(1.0, 0.4, 0.1, 0.5), 48)
 	var anchor: Vector3 = b.anchor

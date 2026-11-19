@@ -33,6 +33,8 @@ var spot_source: SpotSource = SpotSource.NONE
 ## Last frame anything at all held us. last_spotted_time is LOS-only because the
 ## bloom rules key on LOS.
 var last_detected_time: float = -101.0
+## Last main-battery shot (SimClock).
+var last_fired_time: float = -1e9
 
 ## Every enemy ship holding us this detection frame, by any means.
 var spotters: Array = []

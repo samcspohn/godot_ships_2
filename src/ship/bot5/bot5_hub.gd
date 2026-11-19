@@ -3,7 +3,7 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 45
+const STRIDE := 46
 const CMD_STRIDE := 22
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
@@ -55,6 +55,13 @@ func add_ship(ship: Ship, team_data: Dictionary) -> void:
 
 func is_v5(ship: Ship) -> bool:
 	return _slot_of.has(ship)
+
+
+## ExposureStats mode label.
+func mode_of(ship: Ship) -> String:
+	var b: Dictionary = world.debug_bot(_slot_of[ship])
+	var p: String = b.get("posture", "none")
+	return p + ("/cover" if b.get("cover", false) else "/kite" if b.get("kite", false) else "")
 
 
 func feature_bytes() -> PackedByteArray:
@@ -393,6 +400,7 @@ func _push_ships(now: float) -> void:
 			_data[o + 34 + j] = st[24 + j]
 		_data[o + 43] = cp.bloom_duration if cp else 0.0
 		_data[o + 44] = 1.0 if s.concealment != null and s.concealment.bloom_value > 0.0 else 0.0
+		_data[o + 45] = s.concealment.last_fired_time if s.concealment != null else -1e9
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)

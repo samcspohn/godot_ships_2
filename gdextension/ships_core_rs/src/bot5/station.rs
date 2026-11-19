@@ -184,6 +184,11 @@ impl Curves {
     pub fn get(&self, key: &str) -> Option<&Curve> {
         self.map.get(key)
     }
+
+    /// Every key's curve built from a full table.
+    pub fn done(&self, keys: &[Option<String>; 2]) -> bool {
+        keys.iter().flatten().all(|k| self.map.get(k).is_some_and(|c| c.done))
+    }
 }
 
 /// Damage per minute from a shooter's AP/HE curves (the better shell at each range) plus its secondaries in their reach.
@@ -257,6 +262,12 @@ pub struct Threat<'a> {
     pub aim: f32,
     /// No station inside this; 0 for none.
     pub ring: f32,
+    pub spread: f32,
+    pub certainty: f32,
+    pub seen: bool,
+    pub presumed: bool,
+    /// Harm price share: 1, or v4's presumed-mode certainty weight.
+    pub weight: f32,
 }
 
 
@@ -294,7 +305,7 @@ pub fn exposure_w(threats: &[Threat], seen: bool, k: usize, p: Vector2, aimed: b
     threats.iter().filter_map(|t| {
         let d = t.at.distance_to(p);
         let hit = d <= t.range && t.row.is_none_or(|r| r[k / 64].load(Relaxed) >> (k % 64) & 1 != 0);
-        hit.then(|| t.fire.mean_at(d) * if aimed { t.aim } else { 1.0 })
+        hit.then(|| t.fire.mean_at(d) * t.weight * if aimed { t.aim } else { 1.0 })
     }).sum()
 }
 
@@ -317,6 +328,8 @@ pub struct Req {
     pub cones: Vec<(f32, f32)>,
     /// v4 island cover instead of a fighting station.
     pub hide: Option<super::cover::CoverArgs>,
+    /// v4 _close_in presumed mode: unseen enemies are live targets and threats at their certainty weight.
+    pub presumed: bool,
 }
 
 /// A believed enemy position at one moment.

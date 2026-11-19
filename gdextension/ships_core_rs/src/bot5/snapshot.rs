@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 45;
+pub const STRIDE: usize = 46;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -86,6 +86,8 @@ pub struct ShipState {
     pub bloom_s: f32,
     /// Its guns fired within its bloom.
     pub bloomed: bool,
+    /// Last main-battery shot, sim seconds.
+    pub fired_at: f32,
 }
 
 /// v4 DDBehavior._is_gunboat inverted: tubes reaching well past our own detection.
@@ -148,6 +150,7 @@ impl ShipState {
             rudder_lag: r[42],
             bloom_s: r[43],
             bloomed: r[44] > 0.5,
+            fired_at: r[45],
         }
     }
 

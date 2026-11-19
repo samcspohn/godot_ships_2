@@ -246,6 +246,7 @@ struct Bot {
     /// Threat rings as route walls, each pulled in short of the station.
     walls: Vec<(Vector2, f32)>,
     walls_new: bool,
+    rings: Vec<(Vector2, f32)>,
     /// Shooting this instead of the assigned target until then.
     alt: Option<(i64, f64)>,
 }
@@ -368,6 +369,15 @@ const BRAWL_CROSSFIRE: f32 = std::f32::consts::FRAC_PI_2;
 const RING_KITE_IN_M: f32 = 1000.0;
 /// v4 GUNFIRE_ACTIVE_RELOADS: shells landed on us this recently mark the shooter as on us.
 const ON_US_RELOADS: f64 = 1.5;
+/// v4 PRESUMED_THREAT_WEIGHT_MIN/MAX (server _team_belief), by certainty.
+const PRESUMED_W: (f32, f32) = (0.15, 0.6);
+/// v4 _threat_contacts: PRESUMED_CERTAINTY_MIN/MAX for unseen identified ships, UNKNOWN_CERTAINTY for never seen.
+const LKP_CERTAINTY: (f32, f32) = (0.25, 0.85);
+const UNKNOWN_CERTAINTY: f32 = 0.55;
+
+fn presumed_weight(certainty: f32) -> f32 {
+    PRESUMED_W.0 + (PRESUMED_W.1 - PRESUMED_W.0) * certainty
+}
 /// v4 COVER_FIRST_SHOOTERS.
 const DANGEROUS_SHOOTERS: usize = 2;
 const RING_KITE_OUT_M: f32 = 200.0;
@@ -381,6 +391,8 @@ struct Hold {
     trade: trade::Trade,
     /// Our secondaries out-gun our mains on this enemy, crossfire aside.
     brawler: bool,
+    /// Our fire on it is still a part-built table: no brawler answer yet.
+    brawler_wait: bool,
     band: (f32, f32),
     ring: f32,
     brawl: bool,
@@ -396,23 +408,34 @@ fn spot_band(me: &snapshot::ShipState, e: &snapshot::ShipState) -> (f32, f32) {
 fn threats_of<'a>(field: &'a TeamField, bot: &Bot, snap: &'a Snapshot, curves: &'a Curves,
         matrices: &'a HashMap<i64, Arc<GunMatrix>>, tel: &mut Vec<&'static str>, ahead: bool) -> Vec<Threat<'a>> {
     let mut out = Vec::new();
-    for (_, now_i, ahead_i) in sources_by_id(field) {
-        let s = &field.sources[if ahead { ahead_i } else { now_i }];
+    for (list, _, now_i, ahead_i) in believed(field) {
+        let s = &list[if ahead { ahead_i } else { now_i }];
         let Some(f) = fire_of(snap, curves, s.id, s.id, bot.threats.get(&s.id)) else {
             tel.push("threat_no_table");
             continue;
         };
         let f = if shell_read_on() { f.read(bot.reads.read(s.id)) } else { f };
         let row = matrices.get(&s.id).and_then(|m| m.row(s.cell));
-        out.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f, aim: 1.0, ring: 0.0 });
+        out.push(Threat { at: s.at, range: f.ship.gun_range, row, fire: f, aim: 1.0, ring: 0.0, spread: s.spread, certainty: s.certainty,
+            seen: s.seen, presumed: s.presumed, weight: 1.0 });
     }
     out
 }
 
 /// Per enemy id its source now, and its source ahead (the same one when not forecast).
 fn sources_by_id(field: &TeamField) -> Vec<(i64, usize, usize)> {
+    by_id(&field.sources)
+}
+
+/// sources_by_id over sources, then ghosts (presumed and lost), each with its list.
+fn believed(field: &TeamField) -> Vec<(&[field::Source], i64, usize, usize)> {
+    let (a, b): (&[field::Source], &[field::Source]) = (&field.sources, &field.ghosts);
+    by_id(a).into_iter().map(|(id, n, f)| (a, id, n, f)).chain(by_id(b).into_iter().map(|(id, n, f)| (b, id, n, f))).collect()
+}
+
+fn by_id(list: &[field::Source]) -> Vec<(i64, usize, usize)> {
     let mut out: Vec<(i64, usize, usize)> = Vec::new();
-    for (i, s) in field.sources.iter().enumerate() {
+    for (i, s) in list.iter().enumerate() {
         match out.iter_mut().find(|o| o.0 == s.id) {
             Some(o) if s.ahead => o.2 = i,
             Some(_) => {}
@@ -702,6 +725,7 @@ impl World {
             citadel: cfg.get("citadel").and_then(|v| v.try_to::<Rect2>().ok()).unwrap_or_default(),
             walls: Vec::new(),
             walls_new: false,
+            rings: Vec::new(),
             alt: None,
         });
         (self.bots.len() - 1) as i32
@@ -910,9 +934,8 @@ impl World {
             matrices.insert(id, m.clone());
             Some(m)
         };
-        let ghost_range = snap.enemies_of(team).filter(|s| s.alive).map(|s| s.gun_range).fold(0.0, f32::max);
         let h = self.teams.get_mut(&team).unwrap();
-        h.field.build(lay, &vis, &h.belief, snap, now, ghost_range, &mut matrix);
+        h.field.build(lay, &vis, &h.belief, snap, now, &mut matrix);
         // Enemy cells: their own gun's rows (fire on us) and our guns' columns (our fire on them).
         type Want = (Arc<GunMatrix>, Vec<u32>, Vec<u32>, Vec<Vector2>);
         let mut want: HashMap<*const GunMatrix, Want> = HashMap::new();
@@ -1008,7 +1031,7 @@ impl World {
         // Gun ships' torpedoes are for close quarters they fall into, not a range to seek.
         let me = &if me.torp_boat() { *me } else { snapshot::ShipState { torp_range: 0.0, ..*me } };
         let mut out = HashMap::new();
-        for (id, _, _) in sources_by_id(field) {
+        for (_, id, _, _) in believed(field) {
             let Some(e) = self.snap.get(id) else { continue };
             let ours = fire_of(&self.snap, &self.curves, me.id, id, bot.gun.pairs.get(&id).map(|q| &q.keys));
             let k_out = *self.calib_out.get(&format!("{:?}>{:?}", me.class, e.class)).unwrap_or(&1.0);
@@ -1016,10 +1039,13 @@ impl World {
             let them = trade::Side { ship: e, fire: theirs.iter().find(|t| t.fire.ship.id == id).map(|t| &t.fire), k: k_in,
                 hp: (e.hp_frac * e.hp_max).max(1.0) };
             let t = trade::desired(&us, &them, me.hp_frac, bot.style.style().aggression, budget);
-            let brawler = ours.as_ref().is_some_and(|f| trade::brawler(f, me, me.guns_bear));
+            // A curve from a part-built table reads its unfilled cells as misses: the mains look weaker than the secondaries.
+            let done = bot.gun.pairs.get(&id).is_some_and(|q| self.curves.done(&q.keys));
+            let brawler = done && ours.as_ref().is_some_and(|f| trade::brawler(f, me, me.guns_bear));
             let brawl = brawler && crossfire <= BRAWL_CROSSFIRE;
             let (lo, hi) = if brawl { (0.0, trade::BRAWL_RANGE_M.min(t.range)) } else { t.band };
-            out.insert(id, Hold { trade: t, brawler, band: (lo, hi), ring: if brawl || !e.threatens() { 0.0 } else { (lo - RING_IN_M).max(0.0) }, brawl });
+            out.insert(id, Hold { trade: t, brawler, band: (lo, hi), ring: if brawl || !e.threatens() { 0.0 } else { (lo - RING_IN_M).max(0.0) }, brawl,
+                brawler_wait: !done && ours.is_some() });
         }
         out
     }
@@ -1105,7 +1131,7 @@ impl World {
                 let (ids, centre) = f.view(r, me.p2());
                 FlankView { ids, centre }
             });
-            let (mut danger, dtel) = self.danger(i, team, &p.spot);
+            let (mut danger, dtel) = self.danger(i, team, &p.spot, now);
             for w in dtel {
                 self.tel.count(w);
             }
@@ -1142,6 +1168,9 @@ impl World {
                 }
             }
             let bands: HashMap<i64, (f32, f32)> = holds.iter().map(|(&id, h)| (id, h.band)).collect();
+            if self.bots[i].style != Playstyle::Brawler && holds.values().any(|h| h.brawler_wait) {
+                self.tel.count("brawler_wait");
+            }
             if self.bots[i].style != Playstyle::Brawler && holds.values().any(|h| h.brawler) {
                 self.bots[i].style = Playstyle::Brawler;
                 self.tel.count("style_brawler");
@@ -1220,7 +1249,8 @@ impl World {
             let front = self.teams[&team].flanks.as_ref().map(|f| f.axis());
             let my_hp = (me.hp_frac * me.hp_max).max(1.0);
             let k_in = *calib_in.get(&class_key(me.class)).unwrap_or(&1.0);
-            let mut rings: Vec<(Vector2, f32)> = Vec::new();
+            let rings: Vec<(Vector2, f32)> = threats_of(field, bot, snap, curves, matrices, &mut Vec::new(), false).iter()
+                .filter(|t| t.fire.ship.threatens()).map(|t| (t.at, holds.get(&t.fire.ship.id).map_or(0.0, |h| (h.ring - t.spread).max(0.0)))).collect();
             let mut refuted: Vec<Vector2> = Vec::new();
             let mut scan = |req: &station::Req| -> Option<station::Found> {
                 let ts = std::time::Instant::now();
@@ -1232,14 +1262,20 @@ impl World {
                 }
                 for t in threats.iter_mut().flatten() {
                     t.aim = aim_share(snap, team, me, t.at, t.range);
-                    t.ring = holds.get(&t.fire.ship.id).map_or(0.0, |h| h.ring);
+                    t.ring = holds.get(&t.fire.ship.id).map_or(0.0, |h| (h.ring - t.spread).max(0.0));
+                    if req.presumed && !t.seen {
+                        t.weight = presumed_weight(t.certainty);
+                    }
                 }
-                rings = threats[0].iter().map(|t| (t.at, t.ring)).collect();
                 let own = matrices.get(&me.id);
                 let mut foes: Vec<station::Foe> = Vec::new();
-                for (id, now_i, ahead_i) in sources_by_id(field) {
+                for (list, id, now_i, ahead_i) in believed(field) {
+                    let ghost = std::ptr::eq(list.as_ptr(), field.ghosts.as_ptr());
+                    if ghost && !req.presumed {
+                        continue;
+                    }
                     let theirs = m.flank.as_ref().is_some_and(|f| !f.ids.contains(&id)) && req.target != Some(id) && spot_on != Some(id)
-                        && snap.get(id).is_none_or(|e| field.sources[now_i].at.distance_to(me.p2()) > e.gun_range * 1.05);
+                        && snap.get(id).is_none_or(|e| list[now_i].at.distance_to(me.p2()) > e.gun_range * 1.05);
                     if theirs {
                         continue;
                     }
@@ -1250,15 +1286,16 @@ impl World {
                         continue;
                     };
                     let pos = |i: usize| {
-                        let s = &field.sources[i];
+                        let s = &list[i];
                         station::Pos { at: if req.target == Some(id) && !s.ahead { req.anchor } else { s.at }, cell: s.cell, col: own.and_then(|m| m.col(s.cell)) }
                     };
-                    if req.target == Some(id) && own.and_then(|m| m.col(field.sources[now_i].cell)).is_none() {
+                    if req.target == Some(id) && own.and_then(|m| m.col(list[now_i].cell)).is_none() {
                         scan_tel.push("station_no_column");
                     }
                     let spot = p.spot.get(&id).filter(|n| !n.lit_by.iter().any(|&l| l != me.id))
                         .map_or(0.0, |n| n.fire.iter().filter(|f| f.0 != me.id).map(|f| f.1).sum());
-                    let k_out = *calib_out.get(&format!("{:?}>{:?}", me.class, fire.ship.class)).unwrap_or(&1.0);
+                    let k_out = *calib_out.get(&format!("{:?}>{:?}", me.class, fire.ship.class)).unwrap_or(&1.0)
+                        * if req.presumed && !list[now_i].seen { presumed_weight(list[now_i].certainty) } else { 1.0 };
                     let hp = (fire.ship.hp_frac * fire.ship.hp_max).max(1.0);
                     let band = bands.get(&id).copied().unwrap_or((req.lo, req.hi));
                     let must = spot_on == Some(id) && !req.escape;
@@ -1394,7 +1431,7 @@ impl World {
                     entries.push(sm.contact(s.id, pos, e.seen, spread, e.conceal, e.force_spot, spot_on == Some(s.id) && !e.seen,
                         !lit_by_other(s.id) && claim_ok(s.id)));
                 }
-                for g in field.ghosts.iter().filter(|g| g.id < 0 && !g.ahead) {
+                for g in field.ghosts.iter().filter(|g| g.presumed && !g.ahead) {
                     entries.push(sm.presumed(g.at, hide, false));
                 }
                 entries.truncate(64);
@@ -1511,6 +1548,7 @@ impl World {
             }
             bot.hp_at_pass = hp;
             bot.assign = assign;
+            bot.rings = rings.iter().copied().filter(|r| r.1 > 0.0).collect();
             if let Some(st) = plan.map(|p| p.station) {
                 let walls: Vec<(Vector2, f32)> = rings.iter().map(|&(at, r)| (at, r.min(at.distance_to(st) - WALL_SHORT_M).max(0.0)))
                     .filter(|w| w.1 > 0.0).collect();
@@ -1733,7 +1771,7 @@ impl World {
 
     /// v4's threat on bot i: each enemy whose shells land on us while we are seen (firing), at our aspect to it, now or
     /// FORECAST_S ahead, times the share of its aim we draw against lit allies in its range (nearer pulls harder).
-    fn danger(&self, i: usize, team: i32, spot: &HashMap<i64, SpotNeed>) -> (Danger, Vec<&'static str>) {
+    fn danger(&self, i: usize, team: i32, spot: &HashMap<i64, SpotNeed>, now: f64) -> (Danger, Vec<&'static str>) {
         let b = &self.bots[i];
         let (Some(me), Some(vis)) = (self.snap.get(b.ship_id), &self.vis) else { return Default::default() };
         let vis = vis.bind();
@@ -1751,13 +1789,19 @@ impl World {
         let ahead_t = threats_of(field, b, &self.snap, &self.curves, &self.matrices, &mut tel, true);
         let aim = |at: Vector2, range: f32| aim_share(&self.snap, team, me, at, range);
         let lands = |t: &Threat| t.row.is_none_or(|r| r[k / 64].load(std::sync::atomic::Ordering::Relaxed) >> (k % 64) & 1 != 0);
+        // v4 _threat_from: an unseen identified ship counts only while shooting at us, no nearer than it could hide.
         let share = |t: &Threat| {
-            let d = t.at.distance_to(my);
-            if !seen || d > t.range || !lands(t) {
+            let e = t.fire.ship;
+            let (w, floor) = if t.seen { (1.0, 0.0) } else if t.presumed { (UNKNOWN_CERTAINTY, 0.0) }
+                else if b.reads.on_us(e.id, now, e.reload as f64 * ON_US_RELOADS) {
+                    (LKP_CERTAINTY.0 + (LKP_CERTAINTY.1 - LKP_CERTAINTY.0) * t.certainty, e.conceal)
+                } else { (0.0, 0.0) };
+            let d = t.at.distance_to(my).max(floor);
+            if w <= 0.0 || !seen || d > t.range || !lands(t) {
                 return 0.0;
             }
             let aspect = stance::wrap(stance::bearing(my, t.at) - me.heading()).abs().to_degrees();
-            t.fire.at(d, aspect) * k_in / hp / 60.0 * aim(t.at, t.range)
+            w * t.fire.at(d, aspect) * k_in / hp / 60.0 * aim(t.at, t.range)
         };
         let rate: f32 = now_t.iter().zip(&ahead_t).map(|(a, f)| share(a).max(share(f))).sum();
         let threat = 1.0 - (-horizon * rate).exp();
@@ -2793,6 +2837,8 @@ impl BotWorld {
             d.set("heading", p.heading);
             d.set("hold_left", p.hold_until);
             d.set("disengage", p.posture == Posture::Disengage);
+            d.set("cover", p.cover);
+            d.set("kite", p.kite);
         }
         if let Some(a) = b.gun.aim {
             d.set("aim", a.world);
@@ -2810,6 +2856,7 @@ impl BotWorld {
             d.set("stance_astern", b.stance.astern);
         }
         d.set("blocked_s", b.blocked_s);
+        d.set("rings", &b.rings.iter().map(|w| Vector3::new(w.0.x, w.1, w.0.y)).collect::<PackedVector3Array>());
         d.set("walls", &b.walls.iter().map(|w| Vector3::new(w.0.x, w.1, w.0.y)).collect::<PackedVector3Array>());
         if let Some((r, t)) = b.last_release {
             d.set("release", r);

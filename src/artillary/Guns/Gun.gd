@@ -261,6 +261,7 @@ func fire(mod: TargetMod = null) -> void:
 					# print(aim)
 			if not get_shell()._secondary:
 				GunneryCalibration.on_fire(_ship, _aim_point, muzzles.size(), get_shell())
+				_ship.concealment.last_fired_time = SimClock.now()
 				var server = _ship.get_node_or_null("/root/Server")
 				if server != null:
 					server.note_gunfire(_ship, _ship.global_position)

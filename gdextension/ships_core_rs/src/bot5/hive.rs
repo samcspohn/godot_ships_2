@@ -357,7 +357,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let kite = m.kite_axis.filter(|_| !m.brawl);
     let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
         anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, only,
-        cover, escape: false, cones: kite.filter(|_| only.is_none()).map(|a| (a, 1.0)).into_iter().collect(), hide: None,
+        cover, escape: false, cones: kite.filter(|_| only.is_none()).map(|a| (a, 1.0)).into_iter().collect(), hide: None, presumed: false,
     };
     let clip: Vec<Vector2> = if me.seen { view.iter().map(|&(_, p)| p).filter(|p| p.distance_to(my) <= me.conceal.max(me.gun_range)).collect() } else { Vec::new() };
     let in_clip = |p: Vector2| clip.iter().all(|&c| {
@@ -411,7 +411,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     };
     let escape = |scan: &mut dyn FnMut(&Req) -> Option<Found>, keep: Option<Vector2>, dis: (Vector2, bool)| {
         let hid = scan(&Req { anchor: my, target: None, lo: 0.0, hi: me.gun_range, keep, avoid: None, only: None,
-            cover: None, escape: true, cones: cones.clone(), hide: Some(defense(dis)) });
+            cover: None, escape: true, cones: cones.clone(), hide: Some(defense(dis)), presumed: false });
         if let Some(f) = hid {
             return Plan { posture: Posture::Disengage, station: f.station, anchor, heading: 0.0, heading_weight: 0.0,
                 hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.net, dark: f.dark,
@@ -423,7 +423,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 anchor_id: None, kite: true, cover: false, deep: false };
         }
         let f = scan(&Req { anchor: my, target: None, lo: 0.0, hi: me.gun_range, keep, avoid: None, only: None,
-            cover: None, escape: true, cones: if me.seen { cones.clone() } else { Vec::new() }, hide: None });
+            cover: None, escape: true, cones: if me.seen { cones.clone() } else { Vec::new() }, hide: None, presumed: false });
         let (station, dark) = f.map_or((my, false), |f| (f.station, f.dark));
         Plan { posture: Posture::Disengage, station, anchor, heading: 0.0, heading_weight: 0.0, hold_radius: HOLD_RADIUS_M,
             set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: f.map_or(0.0, |f| f.net), dark, anchor_id: None,
@@ -678,7 +678,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 }
             }
             // v4 _close_in: the presumed enemy's station, else _advance up to a window toward the anchor.
-            let presumed = belief.presumed_end(my).and_then(|q| scan(&Req { anchor: q, target: None, ..req(None, None, None) }));
+            let presumed = belief.presumed_end(my).and_then(|q| scan(&Req { anchor: q, target: None, presumed: true, ..req(None, None, None) }));
             match presumed {
                 Some(f) => station_plan(&f),
                 None => {
