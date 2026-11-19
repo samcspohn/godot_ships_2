@@ -80,6 +80,7 @@ func fire() -> void:
 			reload = 0.0
 			can_fire = false
 			var offset:Vector3 = -muzzles[0].global_basis.x * 0.012 * (float(muzzles.size() -1) / 2.0)
+			var salvo := TorpStats.open(_ship, self, muzzles.size(), get_torp().speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, get_params()._range)
 			for m in muzzles:
 				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
@@ -87,6 +88,7 @@ func fire() -> void:
 				var t = ProjectileManager.get_current_time()
 				var velocity = -m.global_basis.z + offset
 				var _id = (TorpedoManager as _TorpedoManager).fireTorpedo(velocity, m.global_position, get_torp(), t, _ship, get_params()._range, self)
+				TorpedoManager.torpedos[_id].salvo = salvo
 				var bc := _ship.get_node_or_null("Modules/BotController")
 				if bc != null and bc.behavior != null and bc.behavior.torpedo_target_position.is_finite():
 					TorpedoManager.torpedos[_id].aim_d = m.global_position.distance_to(bc.behavior.torpedo_target_position)

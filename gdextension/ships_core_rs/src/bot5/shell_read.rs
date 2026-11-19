@@ -27,6 +27,19 @@ impl ShellReads {
         s.last_land = s.last_land.max(land_t);
     }
 
+    /// v4 SalvoClock.next_landing: seconds to `shooter`'s next landing here (in the air, else a reload after the
+    /// last); 0 when loaded or never seen firing at us.
+    pub fn next_landing(&self, shooter: i64, now: f64, reload: f32) -> f32 {
+        let Some(s) = self.by.get(&shooter) else { return 0.0 };
+        let due = if s.last_land > now { s.last_land - now } else { s.last_land + reload as f64 - now };
+        due.max(0.0) as f32
+    }
+
+    /// Its shells landed on us within `s` seconds.
+    pub fn on_us(&self, shooter: i64, now: f64, s: f64) -> bool {
+        self.by.get(&shooter).is_some_and(|x| now - x.last_land <= s)
+    }
+
     /// 0 = AP after one AP salvo, 1 = HE after two HE in a row; None: price the worse.
     pub fn read(&self, shooter: i64) -> Option<usize> {
         match self.by.get(&shooter)?.types {

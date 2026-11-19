@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-pub const STRIDE: usize = 44;
+pub const STRIDE: usize = 45;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HullClass {
@@ -84,6 +84,8 @@ pub struct ShipState {
     pub rudder_lag: f32,
     /// ConcealmentParams.bloom_duration: a salvo keeps us visible at gun range this long.
     pub bloom_s: f32,
+    /// Its guns fired within its bloom.
+    pub bloomed: bool,
 }
 
 /// v4 DDBehavior._is_gunboat inverted: tubes reaching well past our own detection.
@@ -92,6 +94,11 @@ pub const SPOT_SAFE: f32 = 1.15;
 const TORP_BAND_RATIO: f32 = 1.5;
 
 impl ShipState {
+    /// v4 FightStation.threatens: a destroyer spotting with its guns quiet is a target to close on, not a ring.
+    pub fn threatens(&self) -> bool {
+        self.class != HullClass::Dd || self.bloomed
+    }
+
     pub fn torp_boat(&self) -> bool {
         self.class == HullClass::Dd && self.torp_range > 0.0
             && (self.conceal <= 0.0 || self.torp_range * TORP_ENGAGE_RATIO >= self.conceal * SPOT_SAFE * TORP_BAND_RATIO)
@@ -140,6 +147,7 @@ impl ShipState {
             guns_bear: r[41],
             rudder_lag: r[42],
             bloom_s: r[43],
+            bloomed: r[44] > 0.5,
         }
     }
 

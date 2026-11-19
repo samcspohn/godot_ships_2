@@ -3,8 +3,8 @@ class_name Bot5Hub
 
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
-const STRIDE := 44
-const CMD_STRIDE := 19
+const STRIDE := 45
+const CMD_STRIDE := 21
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
 const AIM_TOL_M := 5.0
@@ -24,6 +24,7 @@ var _ships: Array[Ship] = []
 var _slot_of: Dictionary = {}
 var _repair_slot: PackedInt32Array = []
 var _dc_slot: PackedInt32Array = []
+var _sensor_slot: PackedInt32Array = []
 var _spot_idx: PackedInt32Array = []
 var _spot_wp: PackedVector2Array = []
 var _torp_pt: PackedVector2Array = []
@@ -197,6 +198,8 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 	_slot_of[ship] = slot
 	_repair_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.REPAIR_PARTY))
 	_dc_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.DAMAGE_CONTROL))
+	_sensor_slot.append_array([_consumable_slot(ship, ConsumableItem.ConsumableType.HYDROACOUSTIC_SEARCH),
+		_consumable_slot(ship, ConsumableItem.ConsumableType.RADAR)])
 	_spot_idx.append(_spotter_index(ship))
 	_spot_wp.append(Vector2.INF)
 	_torp_pt.append(Vector2.INF)
@@ -387,6 +390,7 @@ func _push_ships(now: float) -> void:
 		for j in 9:
 			_data[o + 34 + j] = st[24 + j]
 		_data[o + 43] = cp.bloom_duration if cp else 0.0
+		_data[o + 44] = 1.0 if s.concealment != null and s.concealment.bloom_value > 0.0 else 0.0
 		i += 1
 	_ids.resize(i)
 	_data.resize(i * STRIDE)
@@ -490,6 +494,13 @@ func _push_inputs(slot: int) -> void:
 	var ds: int = _dc_slot[slot]
 	if ds >= 0:
 		dc_ready = s.consumable_manager.can_use_item(s.consumable_manager.equipped_consumables[ds])
+	var sensors := PackedFloat32Array([0, 0, 0, 0])
+	for k in 2:
+		var cs: int = _sensor_slot[slot * 2 + k]
+		if cs >= 0:
+			var c = s.consumable_manager.equipped_consumables[cs]
+			sensors[k] = 1.0 if s.consumable_manager.can_use_item(c) else 0.0
+			sensors[2 + k] = c.p().spotting_range
 	var mv: ShipMovementV4 = s.movement_controller
 	var torp_ready := 0
 	var torp_live := 0
@@ -516,7 +527,8 @@ func _push_inputs(slot: int) -> void:
 		s.flood_manager.get_active_floods() if s.flood_manager else 0,
 		1.0 if repair_ready else 0.0, 1.0 if dc_ready else 0.0,
 		mv.rudder_input, mv.engine_power, 1.0 if mv.is_grounded else 0.0,
-		torp_ready, torp_live, lc.x, lc.z, 1.0 if spot_ready else 0.0, 1.0 if spot_up else 0.0]))
+		torp_ready, torp_live, lc.x, lc.z, 1.0 if spot_ready else 0.0, 1.0 if spot_up else 0.0]) + sensors
+		+ PackedFloat32Array([1.0 if s.det_hydro or s.det_radar else 0.0]))
 
 
 func _apply(cmd: PackedFloat64Array, now: float) -> void:
@@ -539,6 +551,9 @@ func _apply(cmd: PackedFloat64Array, now: float) -> void:
 			s.consumable_manager.use_consumable(_repair_slot[slot])
 		if cmd[o + 9] > 0.5:
 			s.consumable_manager.use_consumable(_dc_slot[slot])
+		for k in 2:
+			if cmd[o + 19 + k] > 0.5:
+				s.consumable_manager.use_consumable(_sensor_slot[slot * 2 + k])
 		if cmd[o + 12] > 0.5:
 			_torps(slot, s, Vector2(cmd[o + 13], cmd[o + 14]), cmd[o + 15] > 0.5, now)
 		_spotter(slot, s, cmd[o + 16] > 0.5, Vector2(cmd[o + 17], cmd[o + 18]))

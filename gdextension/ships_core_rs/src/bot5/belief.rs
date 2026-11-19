@@ -43,6 +43,17 @@ pub struct Belief {
     pub seen_count: usize,
 }
 
+impl Contact {
+    /// Over its last two sightings.
+    pub fn vel(&self) -> Vector2 {
+        let mut it = self.hist.iter().rev();
+        match (it.next(), it.next()) {
+            (Some(&(t1, p1)), Some(&(t0, p0))) if t1 > t0 => (p1 - p0) / (t1 - t0) as f32,
+            _ => Vector2::ZERO,
+        }
+    }
+}
+
 impl Belief {
     /// Returns how many enemies became spotted this update. `water(p)`: open water a fleet can sail.
     pub fn update(&mut self, now: f64, snap: &Snapshot, team: i32, water: &dyn Fn(Vector2) -> bool) -> usize {

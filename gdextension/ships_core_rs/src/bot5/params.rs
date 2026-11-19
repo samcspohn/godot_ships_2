@@ -76,6 +76,11 @@ impl Aptitude {
         [12.0, 6.0, 2.0, 0.0][self.level.clamp(0, 3) as usize]
     }
 
+    /// BotAptitude.lkp_target_max_age.
+    pub fn lkp_target_max_age(self) -> f64 {
+        [3.0, 5.0, 7.0, 9.0][self.level.clamp(0, 3) as usize]
+    }
+
     pub fn reads_turns(self) -> bool {
         self.level >= 1
     }

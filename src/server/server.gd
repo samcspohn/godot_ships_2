@@ -1522,6 +1522,9 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		for victim: Ship in attacker.stats._ships_damaged:
 			taken[victim] = taken.get(victim, 0.0) + attacker.stats._ships_damaged[victim]
 	var ships: Array[Dictionary] = []
+	var apt_of := {}
+	for entry in leaderboard:
+		apt_of[players[entry["player_name"]][0]] = entry["aptitude"]
 	for entry in leaderboard:
 		var ship: Ship = players[entry["player_name"]][0]
 		var hc := ship.health_controller
@@ -1567,6 +1570,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win
 		"aims": GunneryCalibration.aim_summary(),
 		"point_tables": PointTables.point_table_summary(),
 		"bot5": bot5_hub.telemetry() if bot5_hub != null else {},
+		"exposure": ExposureStats.summary(func(s: Ship): return apt_of.get(s, "")),
+		"torp_salvos": TorpStats.summary(func(s: Ship): return apt_of.get(s, "")),
 	}
 	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
@@ -1593,6 +1598,8 @@ func _notify_matchmaker_available():
 
 ## Per-match metric stores that are static, so a server running match after match would grow them for ever.
 static func _clear_match_metrics() -> void:
+	ExposureStats.clear()
+	TorpStats.clear()
 	BotDials.stats.clear()
 	DestChurn.stats.clear()
 	DestChurn.dis.clear()
@@ -1709,6 +1716,8 @@ func _physics_process(_delta: float) -> void:
 		PointTables.poll_runtime_tables()
 	for t in teams:
 		t.ships = _get_team(t.id)
+	if match_active and not match_ended and BotTiming.on and Engine.get_physics_frames() % 12 == 0:
+		ExposureStats.sample(teams.map(func(t): return t.ships))
 
 	# Update clusters and average positions
 	_update_team_clusters()

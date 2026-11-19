@@ -119,6 +119,8 @@ pub struct Plan {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Assignment {
+    /// Why a torpedo run was declined (torp_station).
+    pub run_decline: Option<&'static str>,
     pub target: Option<i64>,
     pub target_since: f64,
     pub last_threat: f64,
@@ -133,12 +135,14 @@ pub struct Assignment {
     pub dis_toward: Vector2,
     pub dis_ahead: bool,
     pub shelter_until: f64,
+    pub spot: super::spot::SpotState,
 }
 
 impl Default for Assignment {
     fn default() -> Self {
-        Assignment { target: None, target_since: f64::NEG_INFINITY, last_threat: f64::NEG_INFINITY, dis_since: f64::NEG_INFINITY,
-            dis_left: f64::NEG_INFINITY, clear: false, cover: CoverState::default(), dark_latch: false, dis_toward: Vector2::INF, dis_ahead: false, shelter_until: f64::NEG_INFINITY }
+        Assignment { run_decline: None, target: None, target_since: f64::NEG_INFINITY, last_threat: f64::NEG_INFINITY, dis_since: f64::NEG_INFINITY,
+            dis_left: f64::NEG_INFINITY, clear: false, cover: CoverState::default(), dark_latch: false, dis_toward: Vector2::INF, dis_ahead: false, shelter_until: f64::NEG_INFINITY,
+            spot: Default::default() }
     }
 }
 
@@ -202,6 +206,12 @@ pub struct Member<'a> {
     pub crossfire: f32,
     /// Map min and max corners.
     pub bounds: Option<(Vector2, Vector2)>,
+    /// A destroyer holding its flank's spot role: v4 DDBehavior's Spot ladder.
+    pub spot_dd: bool,
+    /// v4 spot_holding's test: we light an enemy a friend has in gun range.
+    pub spot_lights: bool,
+    /// The torpedo rule's target (torp_pick); the torpedo run sails at it.
+    pub torp_target: Option<i64>,
 }
 
 /// The fire on one bot, v4's threat: 1 - exp(-horizon / time to die).
@@ -234,9 +244,13 @@ pub struct Committed {
 /// One bot's decision against the team's view and what earlier bots committed to.
 /// `ev(target)`: point-table value per shot now, None without a table.
 /// `shot(station, aim)`: station is navigable and our shells clear terrain to `aim`.
+/// v4 SkillSpot: (station sailed for, bow-out heading, new or moved station) from the held state and a seed.
+pub type SpotFn<'a> = dyn FnMut(&mut super::spot::SpotState, Vector2) -> Option<(Vector2, f32, bool)> + 'a;
+
+#[allow(clippy::too_many_arguments)]
 pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Committed], now: f64,
         ev: &mut dyn FnMut(&ShipState) -> Option<f32>, shot: &mut dyn FnMut(Vector2, Vector2) -> bool,
-        scan: &mut dyn FnMut(&Req) -> Option<Found>)
+        scan: &mut dyn FnMut(&Req) -> Option<Found>, spot: &mut SpotFn, lane: &mut dyn FnMut(Vector2, &ShipState) -> bool)
         -> (Option<Plan>, Assignment, Option<&'static str>) {
     let me = m.me;
     let my = me.p2();
@@ -289,11 +303,14 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         || p.distance_to(my) < e.gun_range * 1.05;
     assign.target = pick_target(m, snap, committed, now, &mut assign, ev, &mut |p| shot(my, p), &|e| ours(e, e.p2()));
     let (lo, hi) = (m.style.band.0 * me.gun_range, m.style.band.1 * me.gun_range);
-    let run_target = assign.target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen);
-    let posture = match (posture, m.torp, run_target) {
-        (Posture::Engage, Some(_), Some(_)) if me.torp_boat() => Posture::TorpRun,
-        (p, _, _) => p,
+    let run_target = m.torp_target.and_then(|id| snap.get(id)).filter(|t| t.alive && t.seen);
+    let run = match (posture, m.torp, run_target) {
+        (Posture::Engage, Some((range, loaded)), Some(t)) if me.torp_boat() => Some(torp_station(t, range, loaded, me, my, snap, lane)),
+        _ => None,
     };
+    assign.run_decline = run.and_then(|r| r.err());
+    let run_station = run.and_then(|r| r.ok());
+    let posture = if run_station.is_some() { Posture::TorpRun } else { posture };
 
     let nearest = |it: &mut dyn Iterator<Item = (Option<i64>, Vector2)>| it.min_by(|a, b| a.1.distance_to(my).total_cmp(&b.1.distance_to(my)));
     let in_view = |id: i64| view.iter().find(|(e, p)| e.id == id && ours(e, *p)).map(|&(e, p)| (Some(e.id), p));
@@ -397,6 +414,34 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     };
     let shot_target = picked.and_then(|c| c.0).filter(|&id| assign.target == Some(id));
     let engage_cover = |p: &Plan| p.cover && p.posture == Posture::Engage;
+
+    // v4 DDBehavior: a held spot station that lights a friend's target stands; else the torpedo boat pushes on its
+    // run and the gunboat fights a shootable contact; else Spot. A torpedo boat Spot declines, lit with enemies seen,
+    // disengages (dd_no_spot).
+    if m.spot_dd && posture != Posture::Disengage {
+        let was = assign.spot.on();
+        let holding = was && m.spot_lights && d.threat < DISENGAGE_THREAT;
+        let fights = if me.torp_boat() { posture == Posture::TorpRun } else { assign.target.is_some() };
+        if holding || !fights {
+            let seed = m.plan.filter(|_| !was).map_or(Vector2::INF, |p| p.station);
+            let mut st = assign.spot;
+            if let Some((station, heading, moved)) = spot(&mut st, seed) {
+                assign.spot = st;
+                let p = Plan { posture: Posture::Engage, station, anchor, heading, heading_weight: 0.0, hold_radius: me.length * 0.5,
+                    set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false, score: 0.0, dark: true, anchor_id: picked.and_then(|c| c.0),
+                    kite: false, cover: false, deep: false };
+                let reason = if !was { Some(if holding { "spot_hold" } else { "spot" }) } else if moved { Some("spot_moved") } else { None };
+                return (Some(p), assign, reason);
+            }
+            assign.spot = Default::default();
+            if me.torp_boat() && me.seen && view.iter().any(|(e, _)| e.seen) {
+                assign.dis_since = now;
+                (assign.dis_toward, assign.dis_ahead) = (Vector2::INF, false);
+                return (Some(escape(scan, None, (Vector2::INF, false))), assign, Some("dd_no_spot"));
+            }
+        }
+    }
+    assign.spot = Default::default();
 
     // v4 _select_nav_skill: lit with a threat inside ra the close arm fights without preferring cover; a cruiser
     // under PUSH_THREAT takes the low-threat arm first. v4 _cover_first adds DANGEROUS_SHOOTERS losing trades.
@@ -605,7 +650,7 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
                 return (Some(station_plan(f)), assign, Some(reason));
             }
             if picked.and_then(|c| c.0).is_some() {
-                if let Some(p) = prev.filter(|p| p.shot && !lost_shot(p, shot)) {
+                if let Some(p) = prev.filter(|p| p.shot && !p.kite && !lost_shot(p, shot)) {
                     return (Some(Plan { hold_until: now + HOLD_S, ..p }), assign, Some("no_shot_station"));
                 }
             }
@@ -622,13 +667,9 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
             }
         }
         Posture::TorpRun => {
-            let (t, (range, loaded)) = (run_target.unwrap(), m.torp.unwrap());
-            let range = (if loaded { TORP_RUN_RANGE } else { TORP_WAIT_RANGE } * range).max(me.conceal * crate::bot5::snapshot::SPOT_SAFE);
+            let (t, station) = (run_target.unwrap(), run_station.unwrap());
             let tp = t.p2();
-            let away = dir_or(my - tp, Vector2::new(0.0, 1.0));
-            let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
-            let dir = dir_or(away + tf * TORP_RUN_LEAD, away);
-            Plan { posture, station: tp + dir * range, anchor: tp, heading: broadside(my, tp, me.heading()),
+            Plan { posture, station, anchor: tp, heading: broadside(my, tp, me.heading()),
                 heading_weight: 0.0, hold_radius: HOLD_RADIUS_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: false,
                 score: 0.0, dark: true, anchor_id: Some(t.id), kite: false, cover: false, deep: false }
         }
@@ -638,6 +679,36 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         }
     };
     (Some(plan), assign, Some(reason))
+}
+
+const TORP_LANE_BEARINGS: usize = 16;
+
+/// Ahead of the target's bow on our side; else the nearest bearing on our side with a clear lane (v4 torp_mask)
+/// outside every seen enemy's sight of us or its sensor.
+fn torp_station(t: &ShipState, range: f32, loaded: bool, me: &ShipState, my: Vector2, snap: &Snapshot,
+        lane: &mut dyn FnMut(Vector2, &ShipState) -> bool) -> Result<Vector2, &'static str> {
+    let range = (if loaded { TORP_RUN_RANGE } else { TORP_WAIT_RANGE } * range).max(me.conceal * crate::bot5::snapshot::SPOT_SAFE);
+    let tp = t.p2();
+    let away = dir_or(my - tp, Vector2::new(0.0, 1.0));
+    let tf = dir_or(Vector2::new(t.vel.x, t.vel.z), Vector2::ZERO);
+    let base = dir_or(away + tf * TORP_RUN_LEAD, away);
+    let step = std::f32::consts::TAU / TORP_LANE_BEARINGS as f32;
+    let sight = me.conceal * crate::bot5::snapshot::SPOT_SAFE;
+    let dark = |st: Vector2| snap.enemies_of(me.team).filter(|e| e.seen).all(|e| e.p2().distance_to(st) > sight.max(e.force_spot));
+    let (mut lit, mut blocked) = (false, false);
+    for k in 0..=TORP_LANE_BEARINGS / 4 {
+        for a in if k == 0 { vec![0.0] } else { vec![k as f32 * step, -(k as f32) * step] } {
+            let st = tp + base.rotated(a) * range;
+            if !dark(st) {
+                lit = true;
+            } else if !lane(st, t) {
+                blocked = true;
+            } else {
+                return Ok(st);
+            }
+        }
+    }
+    Err(if blocked { "torp_run_no_lane" } else if lit { "torp_run_lit" } else { "torp_run_none" })
 }
 
 fn blocked(m: &Member, p: &Plan, my: Vector2, target: Option<i64>) -> bool {

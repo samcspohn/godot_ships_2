@@ -374,6 +374,8 @@ pub struct Scan<'a> {
     pub k_in: f32,
     /// May hold fire to spot unseen: destroyers, and cruisers that hide well inside their gun range.
     pub dark_ok: bool,
+    /// v4 gunboat reach_needs_los: its gun stations see what they shoot, so they spot it too.
+    pub needs_los: bool,
     /// Where the rest of our team is.
     pub allies: Option<Vector2>,
     /// Flank-mates' stations.
@@ -459,7 +461,7 @@ impl Scan<'_> {
             if f.spot > 0.0 && d <= f.fire.ship.conceal && self.vis.visible_idx(k, pos.cell) {
                 spot += f.spot;
             }
-            if dark || d > self.reach || pos.col.as_ref().is_some_and(|c| !has(c, k)) {
+            if dark || d > self.reach || pos.col.as_ref().is_some_and(|c| !has(c, k)) || (self.needs_los && !self.vis.visible_idx(k, pos.cell)) {
                 continue;
             }
             n_range += 1;

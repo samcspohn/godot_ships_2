@@ -34,6 +34,7 @@ class TorpedoData:
 	var ships_passed: Array[Ship] = []
 	## How far the firing bot's intercept lay at launch; INF unknown.
 	var aim_d: float = INF
+	var salvo: int = -1
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float, tl: TorpedoLauncher, _armed: bool = false) -> void:
 		self.position = pos
@@ -302,8 +303,12 @@ func _physics_process(_delta: float) -> void:
 							notify_armed(id) # Update indicators for enemy teams
 						break
 
+		if p.salvo >= 0:
+			TorpStats.track(p.salvo, p.position, p.visible_to_enemy)
 		if p.position.distance_to(p.start_position) > p._range:
 			# Out of range
+			if p.salvo >= 0:
+				TorpStats.close(p.salvo, "expire")
 			self.destroyTorpedo(id, p.position)
 			id += 1
 			continue
@@ -366,7 +371,13 @@ func _physics_process(_delta: float) -> void:
 					ship.stats.torpedo_taken += dmg_sunk[0]
 					# Apply flooding damage
 					apply_flood_damage(p, ship, collision.position)
+					if p.salvo >= 0:
+						TorpStats.close(p.salvo, "hit", ship, dmg_sunk[0])
+				elif p.salvo >= 0:
+					TorpStats.close(p.salvo, "other")
 			elif is_instance_valid(p.owner):
+				if p.salvo >= 0:
+					TorpStats.close(p.salvo, "ground")
 				if p.start_position.distance_to(collision.position) < p.aim_d:
 					p.owner.stats.torpedoes_grounded += 1
 				else:

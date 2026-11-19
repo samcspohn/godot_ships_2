@@ -48,6 +48,9 @@ pub struct Telemetry {
     pub shift: BTreeMap<&'static str, [f64; 6]>,
     /// Damage key -> [predicted, real, minutes].
     pub calib: BTreeMap<String, [f64; 3]>,
+    /// "class|turn" / "class|astern" -> stance probe sums: [n, Σreal, Σreal², Σpred_i (4), Σpred_i·real (4),
+    /// Σpred_i·pred_j (16)].
+    pub stance_calib: BTreeMap<String, [f64; 27]>,
     /// "ship|ap" / "ship|he" -> samples per 10° of the angle off our bow incoming shells come from.
     pub angling: BTreeMap<String, [u64; 19]>,
 }
@@ -62,6 +65,22 @@ impl Telemetry {
         e[0] += pred as f64;
         e[1] += real.max(0.0) as f64;
         e[2] += minutes as f64;
+    }
+
+    pub fn stance_calib(&mut self, k: String, pred: &[f32; 4], real: f32) {
+        let e = self.stance_calib.entry(k).or_insert([0.0; 27]);
+        let r = real.max(0.0) as f64;
+        e[0] += 1.0;
+        e[1] += r;
+        e[2] += r * r;
+        for i in 0..4 {
+            let p = pred[i] as f64;
+            e[3 + i] += p;
+            e[7 + i] += p * r;
+            for j in 0..4 {
+                e[11 + 4 * i + j] += p * pred[j] as f64;
+            }
+        }
     }
 
     pub fn shift(&mut self, k: &'static str, station: f32, anchor: f32, away: f32) {
@@ -198,6 +217,11 @@ impl Telemetry {
             c.set(k.as_str(), &PackedFloat64Array::from(&v[..]));
         }
         out.set("calib", &c);
+        let mut c = VarDictionary::new();
+        for (k, v) in &self.stance_calib {
+            c.set(k.as_str(), &PackedFloat64Array::from(&v[..]));
+        }
+        out.set("stance_calib", &c);
         let mut sh = VarDictionary::new();
         for (k, v) in &self.shift {
             sh.set(*k, &PackedFloat64Array::from(&v[..]));
