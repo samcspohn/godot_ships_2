@@ -4,7 +4,7 @@ class_name Bot5Hub
 ## Thin adapter for the native v5 bots (BotWorld): packs ship state in, applies commands out.
 
 const STRIDE := 45
-const CMD_STRIDE := 21
+const CMD_STRIDE := 22
 const TORP_REAIM_FRAMES := 2
 const SPOT_REISSUE_M := 300.0
 const AIM_TOL_M := 5.0
@@ -25,6 +25,7 @@ var _slot_of: Dictionary = {}
 var _repair_slot: PackedInt32Array = []
 var _dc_slot: PackedInt32Array = []
 var _sensor_slot: PackedInt32Array = []
+var _smoke_slot: PackedInt32Array = []
 var _spot_idx: PackedInt32Array = []
 var _spot_wp: PackedVector2Array = []
 var _torp_pt: PackedVector2Array = []
@@ -198,6 +199,7 @@ func _register(ship: Ship, cfg: Dictionary) -> void:
 	_slot_of[ship] = slot
 	_repair_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.REPAIR_PARTY))
 	_dc_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.DAMAGE_CONTROL))
+	_smoke_slot.append(_consumable_slot(ship, ConsumableItem.ConsumableType.SMOKE_SCREEN))
 	_sensor_slot.append_array([_consumable_slot(ship, ConsumableItem.ConsumableType.HYDROACOUSTIC_SEARCH),
 		_consumable_slot(ship, ConsumableItem.ConsumableType.RADAR)])
 	_spot_idx.append(_spotter_index(ship))
@@ -501,6 +503,14 @@ func _push_inputs(slot: int) -> void:
 			var c = s.consumable_manager.equipped_consumables[cs]
 			sensors[k] = 1.0 if s.consumable_manager.can_use_item(c) else 0.0
 			sensors[2 + k] = c.p().spotting_range
+	var smoke := PackedFloat32Array([0, 0, 0])
+	var ks: int = _smoke_slot[slot]
+	if ks >= 0:
+		var sc = s.consumable_manager.equipped_consumables[ks]
+		var sp = sc.p()
+		smoke[0] = 1.0 if s.consumable_manager.can_use_item(sc) else 0.0
+		smoke[1] = 99.0 if sp.max_stack == -1 else float(sp.max_stack - sc.used)
+		smoke[2] = sp.duration + sp.smoke_duration
 	var mv: ShipMovementV4 = s.movement_controller
 	var torp_ready := 0
 	var torp_live := 0
@@ -528,7 +538,7 @@ func _push_inputs(slot: int) -> void:
 		1.0 if repair_ready else 0.0, 1.0 if dc_ready else 0.0,
 		mv.rudder_input, mv.engine_power, 1.0 if mv.is_grounded else 0.0,
 		torp_ready, torp_live, lc.x, lc.z, 1.0 if spot_ready else 0.0, 1.0 if spot_up else 0.0]) + sensors
-		+ PackedFloat32Array([1.0 if s.det_hydro or s.det_radar else 0.0]))
+		+ PackedFloat32Array([1.0 if s.det_hydro or s.det_radar else 0.0]) + smoke)
 
 
 func _apply(cmd: PackedFloat64Array, now: float) -> void:
@@ -551,6 +561,8 @@ func _apply(cmd: PackedFloat64Array, now: float) -> void:
 			s.consumable_manager.use_consumable(_repair_slot[slot])
 		if cmd[o + 9] > 0.5:
 			s.consumable_manager.use_consumable(_dc_slot[slot])
+		if cmd[o + 21] > 0.5:
+			s.consumable_manager.use_consumable(_smoke_slot[slot])
 		for k in 2:
 			if cmd[o + 19 + k] > 0.5:
 				s.consumable_manager.use_consumable(_sensor_slot[slot * 2 + k])

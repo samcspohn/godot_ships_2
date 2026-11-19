@@ -80,7 +80,14 @@ const VETO_EVERY_S: f64 = 1.0;
 /// Mount arcs are sampled toward a point this far off.
 const ARC_PROBE_M: f32 = 20000.0;
 const STATION_JUMP_M: f32 = 1000.0;
-const BOT_INPUT_STRIDE: usize = 23;
+const BOT_INPUT_STRIDE: usize = 26;
+const SMOKE_MARGIN: f32 = 1.5;
+const SMOKE_LAST_TTD_S: f32 = 30.0;
+const SMOKE_ENDGAME_S: f32 = 120.0;
+/// ConcealmentParams.assured_acquisition_range: spotted through smoke inside this.
+const ASSURED_M: f32 = 1000.0;
+/// Opening speed below this never gets us dark.
+const OPEN_MIN_MPS: f32 = 0.5;
 /// v4 BehaviorBase._should_use_hydro / _should_use_radar.
 const HYDRO_TORP_M: f32 = 3000.0;
 const HYDRO_DD_M: f32 = 8000.0;
@@ -92,7 +99,7 @@ const SENSOR_ON_STATION_M: f32 = 600.0;
 /// v4 fight_search torp_lane spares the last cell: a hull hugging a coast is still hit.
 const TORP_LANE_SPARE_M: f32 = 300.0;
 const BLOCKED_DECAY_S: f32 = 10.0;
-pub const CMD_STRIDE: usize = 21;
+pub const CMD_STRIDE: usize = 22;
 const TORP_EVERY: i64 = 8;
 const TORP_MIN_CHANCE: [f32; 4] = [0.1, 0.2, 0.25, 0.3];
 const TORP_FRESH_SALVO_S: f64 = 5.0;
@@ -129,6 +136,10 @@ struct BotInputs {
     radar_range: f32,
     /// det_hydro or det_radar.
     pinged: bool,
+    smoke_ready: bool,
+    smoke_left: i32,
+    /// Emission plus puff lifetime.
+    smoke_hold_s: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -142,6 +153,7 @@ struct Command {
     use_dc: bool,
     use_hydro: bool,
     use_radar: bool,
+    use_smoke: bool,
     torp_aim: Option<Vector2>,
     torp_fire: bool,
     spot: Option<Vector2>,
@@ -186,6 +198,9 @@ struct Bot {
     torp_idx: usize,
     torp_last_fire: f64,
     torp_gate: &'static str,
+    danger: Danger,
+    spot_lights: bool,
+    smoked_at: f64,
     torp_target: Option<i64>,
     /// Spotter tether; 0 = no spotter plane.
     spot_reach: f32,
@@ -641,6 +656,9 @@ impl World {
             torp_idx: 0,
             torp_last_fire: f64::NEG_INFINITY,
             torp_gate: "",
+            danger: Danger::default(),
+            spot_lights: false,
+            smoked_at: f64::NEG_INFINITY,
             torp_target: None,
             spot_reach: g("spot_reach"),
             spot_target: None,
@@ -1138,7 +1156,10 @@ impl World {
                 spot_dd: me.class == HullClass::Dd && (spot_on.is_some() || hunt),
                 spot_lights: p.spot.iter().any(|(id, n)| n.lit_by.contains(&me.id) && snap.get(*id).is_some_and(|e| snap.allies_of(team)
                     .any(|a| a.alive && a.id != me.id && a.p2().distance_to(e.p2()) <= a.gun_range))),
-                torp_target: bot.torp_target };
+                torp_target: bot.torp_target, smoke_hold: now - bot.smoked_at < bot.inputs.smoke_hold_s as f64 };
+            self.bots[i].danger = m.danger;
+            self.bots[i].spot_lights = m.spot_lights;
+            let bot = &self.bots[i];
             let live = &self.live;
             let gun = &bot.gun;
             let mut no_table = 0u32;
@@ -2209,6 +2230,72 @@ impl World {
         b.last_gate
     }
 
+    /// Defensive smoke: lit by sight alone, and we die before we can sail dark (time_to_dark) by SMOKE_MARGIN.
+    fn smoke(&mut self, i: usize, me: &ShipState, _now: f64) -> bool {
+        let b = &self.bots[i];
+        let inp = b.inputs;
+        let my = me.p2();
+        if !me.alive || !inp.smoke_ready || !me.seen || inp.pinged || !b.danger.ttd.is_finite() {
+            return false;
+        }
+        let seen: Vec<&ShipState> = self.snap.enemies_of(me.team).filter(|e| e.seen).collect();
+        if seen.iter().any(|e| e.p2().distance_to(my) < ASSURED_M) {
+            self.tel.count("smoke_gate_assured");
+            return false;
+        }
+        let dark = self.time_to_dark(b, me, &seen);
+        if b.danger.ttd >= dark * SMOKE_MARGIN {
+            return false;
+        }
+        let last = inp.smoke_left <= 1 && self.time_left >= SMOKE_ENDGAME_S;
+        if (last || b.spot_lights) && b.danger.ttd >= SMOKE_LAST_TTD_S {
+            self.tel.count(if last { "smoke_held_last" } else { "smoke_held_spotting" });
+            return false;
+        }
+        if std::env::var("SHIPS_BOT5_SCAN_TRACE").is_ok() {
+            godot_print!("smoke5 t={:.0} {} ttd={:.0} dark={:.0} hp={:.2} left={} spotters={}", _now, b.name, b.danger.ttd, dark, me.hp_frac, inp.smoke_left,
+                seen.iter().filter(|e| e.p2().distance_to(my) < me.conceal).count());
+        }
+        true
+    }
+
+    /// Seconds until no one sees us by sight: turn away from the spotters, accelerate, then open past our
+    /// concealment from each, its chase along the line taken off our speed; the disengage cover's ETA if no one chases.
+    /// A spotter we cannot see (lit with none in range) is taken as sitting on us, not chasing.
+    fn time_to_dark(&self, b: &Bot, me: &ShipState, seen: &[&ShipState]) -> f32 {
+        let my = me.p2();
+        let r = me.conceal;
+        let spotters: Vec<(Vector2, Vector2)> = seen.iter().filter(|e| e.p2().distance_to(my) < r)
+            .map(|e| (e.p2(), Vector2::new(e.vel.x, e.vel.z))).collect();
+        let spotters = if spotters.is_empty() { vec![(my, Vector2::ZERO)] } else { spotters };
+        let away = spotters.iter().map(|(p, _)| (my - *p).normalized_or_zero()).sum::<Vector2>().normalized_or_zero();
+        let away = if away == Vector2::ZERO { Vector2::new(me.heading().sin(), me.heading().cos()) } else { away };
+        let h = &b.hull;
+        let v = h.max_speed.max(1.0);
+        let speed = Vector2::new(me.vel.x, me.vel.z).length();
+        let turn = stance::wrap(away.x.atan2(away.y) - me.heading()).abs();
+        let lag = h.rudder_response_time + turn * h.turning_circle_radius.max(1.0) / speed.max(0.5 * v)
+            + (1.0 - (speed / v).min(1.0)) * h.acceleration_time * 0.5;
+        let mut chased = false;
+        let mut open = 0.0f32;
+        for (p, ev) in &spotters {
+            let u = if p.distance_to(my) > 1.0 { (my - *p).normalized() } else { away };
+            let chase = ev.dot(u);
+            chased |= chase > 0.0;
+            let rate = v * away.dot(u) - chase;
+            if rate < OPEN_MIN_MPS {
+                return f32::INFINITY;
+            }
+            open = open.max((r - p.distance_to(my)).max(0.0) / rate);
+        }
+        let sail = lag + open;
+        let cover = b.plan.filter(|p| p.posture == Posture::Disengage && p.cover && !chased).map(|p| {
+            let to = p.station - my;
+            stance::wrap(to.x.atan2(to.y) - me.heading()).abs() * h.turning_circle_radius.max(1.0) / speed.max(0.5 * v) + h.rudder_response_time + to.length() / v
+        });
+        cover.map_or(sail, |c| c.min(sail))
+    }
+
     fn consumables(&mut self, i: usize, now: f64) {
         let b = &self.bots[i];
         let Some(me) = self.snap.get(b.ship_id).copied() else { return };
@@ -2239,7 +2326,13 @@ impl World {
             }
             _ => (false, false),
         };
+        let smoke = self.smoke(i, &me, now);
         let b = &mut self.bots[i];
+        b.cmd.use_smoke = smoke;
+        if smoke {
+            b.smoked_at = now;
+            self.tel.count("use_smoke");
+        }
         b.cmd.use_hydro = use_hydro;
         b.cmd.use_radar = use_radar;
         if use_hydro || use_radar {
@@ -2394,6 +2487,9 @@ impl BotWorld {
             hydro_range: v[20],
             radar_range: v[21],
             pinged: v[22] > 0.5,
+            smoke_ready: v[23] > 0.5,
+            smoke_left: v[24] as i32,
+            smoke_hold_s: v[25],
         };
     }
 
@@ -2403,7 +2499,7 @@ impl BotWorld {
     }
 
     /// [throttle, rudder, has_aim, aim x, y, z, ammo, fire, use_repair, use_dc, has_target, plan serial,
-    /// has_torp_aim, torp x, z, torp_fire, spot, spot x, z, use_hydro, use_radar] per bot.
+    /// has_torp_aim, torp x, z, torp_fire, spot, spot x, z, use_hydro, use_radar, use_smoke] per bot.
     #[func]
     fn commands(&self) -> PackedFloat64Array {
         let mut v = Vec::with_capacity(self.w.bots.len() * CMD_STRIDE);
@@ -2416,7 +2512,7 @@ impl BotWorld {
             let t = c.torp_aim.unwrap_or(Vector2::ZERO);
             let sp = c.spot.unwrap_or(Vector2::ZERO);
             v.extend_from_slice(&[c.torp_aim.is_some() as i32 as f64, t.x as f64, t.y as f64, c.torp_fire as i32 as f64,
-                c.spot.is_some() as i32 as f64, sp.x as f64, sp.y as f64, c.use_hydro as i32 as f64, c.use_radar as i32 as f64]);
+                c.spot.is_some() as i32 as f64, sp.x as f64, sp.y as f64, c.use_hydro as i32 as f64, c.use_radar as i32 as f64, c.use_smoke as i32 as f64]);
         }
         PackedFloat64Array::from(v.as_slice())
     }

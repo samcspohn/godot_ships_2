@@ -212,6 +212,8 @@ pub struct Member<'a> {
     pub spot_lights: bool,
     /// The torpedo rule's target (torp_pick); the torpedo run sails at it.
     pub torp_target: Option<i64>,
+    /// Our smoke is still up: hold Disengage until it fades.
+    pub smoke_hold: bool,
 }
 
 /// The fire on one bot, v4's threat: 1 - exp(-horizon / time to die).
@@ -270,7 +272,13 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     let may_disengage = me.seen && d.threat >= DISENGAGE_THREAT
         && (now - assign.dis_left >= DISENGAGE_COOLDOWN_S || d.threat >= DISENGAGE_FORCE_THREAT);
     // v4: Disengage runs only while we are lit.
-    let posture = if m.plan.is_some_and(|p| p.posture == Posture::Disengage) {
+    let posture = if m.smoke_hold {
+        if !m.plan.is_some_and(|p| p.posture == Posture::Disengage) {
+            assign.dis_since = now;
+            (assign.dis_toward, assign.dis_ahead) = (Vector2::INF, false);
+        }
+        Posture::Disengage
+    } else if m.plan.is_some_and(|p| p.posture == Posture::Disengage) {
         let held = me.seen && now - assign.dis_since < DISENGAGE_MIN_S;
         if !me.seen {
             assign.dis_left = now;
