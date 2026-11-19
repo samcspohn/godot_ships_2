@@ -90,12 +90,13 @@ AB_OUT ?= $(HOME)/Documents/ships_sim/ab_$(shell date +%Y%m%d_%H%M%S)
 learn:
 	$(GODOT) --headless --path . -s res://tools/learn_damage.gd
 
-# v5 vs v4: VS_N 12v12 matches, v5 alternating teams over VS_N/2 seeds. make vs [VS_N=100] [VS_OUT=dir]
+# v5 vs v4: VS_N 12v12 matches, v5 alternating teams over VS_N/2 seeds. make vs [VS_N=100] [VS_OUT=dir] [VS_SEED0=0]
 VS_N ?= 100
 VS_JOBS ?= 100
+VS_SEED0 ?= 0
 VS_OUT ?= $(HOME)/Documents/ships_sim/vs_$(shell date +%Y%m%d_%H%M%S)
 vs: point-tables
-	tools/botmatch/vs.sh "$(GODOT)" "$(LINEUP)" $(VS_N) $(VS_JOBS) "$(VS_OUT)"
+	tools/botmatch/vs.sh "$(GODOT)" "$(LINEUP)" $(VS_N) $(VS_JOBS) "$(VS_OUT)" 32100 $(VS_SEED0)
 
 ab:
 	GODOT="$(GODOT)" tools/botmatch/ab.sh "$(AB_OUT)" $(AB_N) $(A) $(B)

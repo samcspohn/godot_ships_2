@@ -30,6 +30,8 @@ pub struct TorpSpec {
     pub range: f32,
     pub tubes: i32,
     pub detect: f32,
+    pub damage: f32,
+    pub reload: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -270,7 +272,7 @@ mod tests {
     fn envelope_grows_with_run() {
         let t = ship(2, 0.0, 0.0, Vector2::new(15.0, 0.0));
         let tr = Track { speed: 15.0, heading: 0.0, yaw_rate: 0.0, wiggle: 0.0, at: 0.0 };
-        let spec = TorpSpec { speed: 100.0, range: 10000.0, tubes: 4, detect: 1000.0 };
+        let spec = TorpSpec { speed: 100.0, range: 10000.0, tubes: 4, detect: 1000.0, damage: 10000.0, reload: 60.0 };
         assert!(envelope(&t, &tr, 200.0, &spec) > envelope(&t, &tr, 30.0, &spec));
         assert!(envelope(&t, &tr, 1.0, &spec) >= t.length);
     }

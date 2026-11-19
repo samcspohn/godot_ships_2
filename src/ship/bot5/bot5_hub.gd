@@ -250,7 +250,7 @@ static func _torp_cfg(ship: Ship) -> Dictionary:
 		tubes = maxi(tubes, l.muzzles.size())
 	var tp := tc.get_torp_params()
 	return {torp_speed = tp.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER, torp_range = tc.get_params()._range,
-		torp_tubes = tubes, torp_detect = tp.detection_range}
+		torp_tubes = tubes, torp_detect = tp.detection_range, torp_damage = tp.damage, torp_reload = tc.get_params().reload_time}
 
 
 static func _spotter_index(ship: Ship) -> int:

@@ -82,6 +82,19 @@ const ARC_PROBE_M: f32 = 20000.0;
 const STATION_JUMP_M: f32 = 1000.0;
 const BOT_INPUT_STRIDE: usize = 26;
 const SMOKE_MARGIN: f32 = 1.5;
+/// Offensive smoke ends when an enemy closes inside this.
+const SMOKE_LEAVE_M: f32 = 1500.0;
+const SMOKE_LKP_S: f64 = 30.0;
+/// Hold radius inside our own cloud (puffs are 300 m).
+pub const SMOKE_HOLD_M: f32 = 200.0;
+/// update_torpedo_aim rejects an intercept beyond this share of tube range.
+const TORP_REACH: f32 = 0.9;
+
+#[derive(Clone, Copy, Debug)]
+enum SmokeUse {
+    Escape,
+    Fight(i64),
+}
 const SMOKE_LAST_TTD_S: f32 = 30.0;
 const SMOKE_ENDGAME_S: f32 = 120.0;
 /// ConcealmentParams.assured_acquisition_range: spotted through smoke inside this.
@@ -201,6 +214,8 @@ struct Bot {
     danger: Danger,
     spot_lights: bool,
     smoked_at: f64,
+    /// Offensive smoke: where we laid it and whom we fight from it.
+    smoke_fight: Option<(Vector2, i64)>,
     torp_target: Option<i64>,
     /// Spotter tether; 0 = no spotter plane.
     spot_reach: f32,
@@ -300,6 +315,7 @@ pub struct World {
     allies: Vec<ShipState>,
     tracks: Tracks,
     torp_pick: Option<torp_pick::Pick>,
+    smoke_fight_on: Option<bool>,
     shots: ShotMap,
     island: Option<edge::IslandMesh>,
     frame: i64,
@@ -619,6 +635,8 @@ impl World {
             range: g("torp_range"),
             tubes: g("torp_tubes").max(1.0) as i32,
             detect: g("torp_detect"),
+            damage: g("torp_damage"),
+            reload: g("torp_reload").max(1.0),
         });
         self.teams.entry(team).or_default();
         self.bots.push(Bot {
@@ -659,6 +677,7 @@ impl World {
             danger: Danger::default(),
             spot_lights: false,
             smoked_at: f64::NEG_INFINITY,
+            smoke_fight: None,
             torp_target: None,
             spot_reach: g("spot_reach"),
             spot_target: None,
@@ -1156,7 +1175,8 @@ impl World {
                 spot_dd: me.class == HullClass::Dd && (spot_on.is_some() || hunt),
                 spot_lights: p.spot.iter().any(|(id, n)| n.lit_by.contains(&me.id) && snap.get(*id).is_some_and(|e| snap.allies_of(team)
                     .any(|a| a.alive && a.id != me.id && a.p2().distance_to(e.p2()) <= a.gun_range))),
-                torp_target: bot.torp_target, smoke_hold: now - bot.smoked_at < bot.inputs.smoke_hold_s as f64 };
+                torp_target: bot.torp_target, smoke_hold: bot.smoke_fight.is_none() && now - bot.smoked_at < bot.inputs.smoke_hold_s as f64,
+                smoke_fight: bot.smoke_fight };
             self.bots[i].danger = m.danger;
             self.bots[i].spot_lights = m.spot_lights;
             let bot = &self.bots[i];
@@ -1753,7 +1773,25 @@ impl World {
             let close = (my.distance_to(t.p2()) - me.gun_range.max(want)).max(0.0);
             Some(close / me.max_speed.max(1.0) + 1.0 / r)
         });
-        let d = Danger { threat, ttd, ttw, cover_first: false, spotting: false, safe_x: -(1.0 - hive::REENGAGE_THREAT).ln() / horizon.max(1.0) * 60.0 };
+        // v4 torpedo_rate on top of the guns, from where we sit; tubes only on the target they would be launched at.
+        let ttw_hold = tgt.and_then(|t| {
+            let d = my.distance_to(t.p2());
+            let gun = if d <= me.gun_range { kill(t, d).unwrap_or(0.0) } else { 0.0 };
+            let torp = b.torp.filter(|s| d <= s.range * TORP_REACH && b.torp_target == Some(t.id)).map_or(0.0, |s| {
+                let chance = b.torp_aim.filter(|a| a.target == t.id).map_or(TORP_MIN_CHANCE[b.apt.level.clamp(0, 3) as usize], |a| a.chance);
+                let salvo = (b.inputs.torp_live * s.tubes) as f32 * s.damage * chance;
+                if salvo <= 0.0 {
+                    return 0.0;
+                }
+                let wait = if b.inputs.torp_ready > 0 { 0.0 } else { s.reload };
+                1.0 / (wait + d / s.speed.max(1.0) + s.reload * ((t.hp_frac * t.hp_max).max(1.0) / salvo - 1.0).max(0.0))
+            });
+            let r = gun + torp;
+            (r > 0.0).then(|| 1.0 / r)
+        });
+        let target_lit_by_other = tgt.and_then(|t| spot.get(&t.id)).is_some_and(|n| n.lit_by.iter().any(|&l| l != me.id));
+        let d = Danger { threat, ttd, ttw, ttw_hold, target_lit_by_other, cover_first: false, spotting: false,
+            safe_x: -(1.0 - hive::REENGAGE_THREAT).ln() / horizon.max(1.0) * 60.0 };
         let alone_spotting = tgt.and_then(|t| spot.get(&t.id)).is_some_and(|n| !n.lit_by.is_empty() && n.lit_by.iter().all(|&l| l == me.id));
         let out_traded = now_t.iter().any(|t| {
             let dist = t.at.distance_to(my);
@@ -2006,6 +2044,9 @@ impl World {
         }
         b.cmd.rudder = nav.out_rudder;
         b.cmd.throttle = nav.out_throttle;
+        if b.smoke_fight.is_some() {
+            b.cmd.throttle = b.cmd.throttle.clamp(-1, 1);
+        }
         if b.stance.active && b.stance.holding && !nav.torpedo_override_active && b.cmd.throttle > 0 {
             b.cmd.throttle = b.cmd.throttle.min((stance::HOLD_POWER * 4.0) as i32);
         }
@@ -2230,33 +2271,75 @@ impl World {
         b.last_gate
     }
 
-    /// Defensive smoke: lit by sight alone, and we die before we can sail dark (time_to_dark) by SMOKE_MARGIN.
-    fn smoke(&mut self, i: usize, me: &ShipState, _now: f64) -> bool {
+    /// Defensive: lit by sight alone, and we die before we can sail dark (time_to_dark) by SMOKE_MARGIN.
+    /// Offensive (SHIPS_BOT5_SMOKE_FIGHT): lit and losing the trade, but from inside the cloud we sink a target others
+    /// keep lit before anyone can see in (smoke_window).
+    fn smoke(&mut self, i: usize, me: &ShipState, now: f64) -> Option<SmokeUse> {
         let b = &self.bots[i];
         let inp = b.inputs;
         let my = me.p2();
         if !me.alive || !inp.smoke_ready || !me.seen || inp.pinged || !b.danger.ttd.is_finite() {
-            return false;
+            return None;
         }
         let seen: Vec<&ShipState> = self.snap.enemies_of(me.team).filter(|e| e.seen).collect();
         if seen.iter().any(|e| e.p2().distance_to(my) < ASSURED_M) {
             self.tel.count("smoke_gate_assured");
-            return false;
+            return None;
         }
+        let ttd = b.danger.ttd;
         let dark = self.time_to_dark(b, me, &seen);
-        if b.danger.ttd >= dark * SMOKE_MARGIN {
-            return false;
+        let escape = ttd < dark * SMOKE_MARGIN;
+        let mut fight = None;
+        if *self.smoke_fight_on.get_or_insert_with(|| std::env::var("SHIPS_BOT5_SMOKE_FIGHT").is_ok_and(|v| v != "0")) {
+            let tgt = b.assign.target.filter(|&id| self.snap.get(id).is_some_and(|t| t.alive && t.seen));
+            let why = match (tgt, b.danger.ttw_hold) {
+                (None, _) => Some("smoke_fight_no_target"),
+                (_, None) => Some("smoke_fight_no_kill"),
+                _ if !b.danger.target_lit_by_other => Some("smoke_fight_sole_spotter"),
+                (_, Some(w)) if !(escape || ttd < w) => None,
+                (_, Some(w)) if w >= self.smoke_window(me, &seen, inp.smoke_hold_s, now) => Some("smoke_fight_window"),
+                (Some(id), _) => {
+                    fight = Some(id);
+                    None
+                }
+            };
+            if let Some(k) = why.filter(|_| escape || b.danger.ttw_hold.is_some_and(|w| ttd < w)) {
+                self.tel.count(k);
+            }
         }
+        let kind = if let Some(id) = fight { SmokeUse::Fight(id) } else if escape { SmokeUse::Escape } else { return None };
         let last = inp.smoke_left <= 1 && self.time_left >= SMOKE_ENDGAME_S;
-        if (last || b.spot_lights) && b.danger.ttd >= SMOKE_LAST_TTD_S {
+        if (last || b.spot_lights) && ttd >= SMOKE_LAST_TTD_S {
             self.tel.count(if last { "smoke_held_last" } else { "smoke_held_spotting" });
-            return false;
+            return None;
         }
         if std::env::var("SHIPS_BOT5_SCAN_TRACE").is_ok() {
-            godot_print!("smoke5 t={:.0} {} ttd={:.0} dark={:.0} hp={:.2} left={} spotters={}", _now, b.name, b.danger.ttd, dark, me.hp_frac, inp.smoke_left,
-                seen.iter().filter(|e| e.p2().distance_to(my) < me.conceal).count());
+            godot_print!("smoke5 t={:.0} {} kind={:?} ttd={:.0} dark={:.0} ttw_hold={:?} hp={:.2} left={} spotters={}", now, b.name, kind, ttd, dark,
+                b.danger.ttw_hold.map(|w| w as i32), me.hp_frac, inp.smoke_left, seen.iter().filter(|e| e.p2().distance_to(my) < me.conceal).count());
         }
-        true
+        Some(kind)
+    }
+
+    /// Seconds the cloud hides us where we sit: its life, cut short by the first seen enemy, or a fresh last-known one,
+    /// to close inside SMOKE_LEAVE_M or the reach of a sensor it carries.
+    fn smoke_window(&self, me: &ShipState, seen: &[&ShipState], life: f32, now: f64) -> f32 {
+        let my = me.p2();
+        let mut w = life;
+        for e in seen {
+            let reach = SMOKE_LEAVE_M.max(e.force_spot);
+            let d = e.p2().distance_to(my);
+            if d <= reach {
+                return 0.0;
+            }
+            let chase = Vector2::new(e.vel.x, e.vel.z).dot((my - e.p2()) / d);
+            if chase > 0.0 {
+                w = w.min((d - reach) / chase);
+            }
+        }
+        let near_lkp = self.teams.get(&me.team).is_some_and(|h| h.belief.contacts.iter().any(|(id, c)| !c.seen_now
+            && now - c.last_seen <= SMOKE_LKP_S && self.snap.get(*id).is_some_and(|e| e.alive)
+            && c.last_pos.distance_to(my) < SMOKE_LEAVE_M.max(self.snap.get(*id).map_or(0.0, |e| e.force_spot))));
+        if near_lkp { 0.0 } else { w }
     }
 
     /// Seconds until no one sees us by sight: turn away from the spotters, accelerate, then open past our
@@ -2296,6 +2379,31 @@ impl World {
         cover.map_or(sail, |c| c.min(sail))
     }
 
+    /// Leave the cloud when it fades, a sensor finds us, an enemy closes inside SMOKE_LEAVE_M, or the target is gone
+    /// or dark; a threat ends it into the defensive hold for what is left of the cloud.
+    fn smoke_fight_exit(&mut self, i: usize, me: &ShipState, now: f64) {
+        let b = &self.bots[i];
+        let Some((_, id)) = b.smoke_fight else { return };
+        let my = me.p2();
+        let why = if !me.alive || now - b.smoked_at >= b.inputs.smoke_hold_s as f64 {
+            "smoke_fight_faded"
+        } else if b.inputs.pinged {
+            "smoke_fight_pinged"
+        } else if self.snap.enemies_of(me.team).any(|e| e.seen && e.p2().distance_to(my) < SMOKE_LEAVE_M) {
+            "smoke_fight_closed"
+        } else if !self.snap.get(id).is_some_and(|t| t.alive && t.seen) {
+            "smoke_fight_target_gone"
+        } else {
+            return;
+        };
+        self.tel.count(why);
+        let b = &mut self.bots[i];
+        b.smoke_fight = None;
+        if why == "smoke_fight_faded" || why == "smoke_fight_target_gone" {
+            b.smoked_at = f64::NEG_INFINITY;
+        }
+    }
+
     fn consumables(&mut self, i: usize, now: f64) {
         let b = &self.bots[i];
         let Some(me) = self.snap.get(b.ship_id).copied() else { return };
@@ -2326,13 +2434,19 @@ impl World {
             }
             _ => (false, false),
         };
+        self.smoke_fight_exit(i, &me, now);
         let smoke = self.smoke(i, &me, now);
         let b = &mut self.bots[i];
-        b.cmd.use_smoke = smoke;
-        if smoke {
+        b.cmd.use_smoke = smoke.is_some();
+        if let Some(k) = smoke {
             b.smoked_at = now;
-            self.tel.count("use_smoke");
+            b.smoke_fight = match k { SmokeUse::Fight(id) => Some((me.p2(), id)), SmokeUse::Escape => None };
+            self.tel.count(if b.smoke_fight.is_some() { "use_smoke_fight" } else { "use_smoke" });
         }
+        if self.bots[i].smoke_fight.is_some() {
+            self.tel.count("smoke_fight_frames");
+        }
+        let b = &mut self.bots[i];
         b.cmd.use_hydro = use_hydro;
         b.cmd.use_radar = use_radar;
         if use_hydro || use_radar {

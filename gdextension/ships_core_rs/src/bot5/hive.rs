@@ -214,6 +214,8 @@ pub struct Member<'a> {
     pub torp_target: Option<i64>,
     /// Our smoke is still up: hold Disengage until it fades.
     pub smoke_hold: bool,
+    /// Offensive smoke: hold in the cloud at this point, fighting this target.
+    pub smoke_fight: Option<(Vector2, i64)>,
 }
 
 /// The fire on one bot, v4's threat: 1 - exp(-horizon / time to die).
@@ -223,6 +225,10 @@ pub struct Danger {
     /// Seconds to die under the fire on us, and to sink our target alone; None with nothing to beat.
     pub ttd: f32,
     pub ttw: Option<f32>,
+    /// Seconds to sink our target from where we sit, guns and tubes.
+    pub ttw_hold: Option<f32>,
+    /// Someone besides us lights our target.
+    pub target_lit_by_other: bool,
     /// Island cover leads: open water is a fight we lose here.
     pub cover_first: bool,
     /// Alone in lighting our target: v4 needs_spot, never cover first.
@@ -268,6 +274,15 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
     }
 
     let d = &m.danger;
+    if let Some((at, id)) = m.smoke_fight {
+        assign.target = Some(id);
+        let tp = snap.get(id).map_or(at, |t| t.p2());
+        let p = Plan { posture: Posture::Engage, station: at, anchor: tp, heading: broadside(my, tp, me.heading()), heading_weight: 0.0,
+            hold_radius: super::SMOKE_HOLD_M, set_at: now, hold_until: now + HOLD_S, serial: 0, shot: true, score: 0.0, dark: false,
+            anchor_id: Some(id), kite: false, cover: false, deep: false };
+        let fresh = m.plan.is_none_or(|q| q.station != at);
+        return (Some(p), assign, fresh.then_some("smoke_fight"));
+    }
     // v4 _may_disengage, for the doomed station and the brawler's tuck.
     let may_disengage = me.seen && d.threat >= DISENGAGE_THREAT
         && (now - assign.dis_left >= DISENGAGE_COOLDOWN_S || d.threat >= DISENGAGE_FORCE_THREAT);
