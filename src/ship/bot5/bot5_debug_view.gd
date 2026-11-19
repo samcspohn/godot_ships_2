@@ -46,11 +46,30 @@ static func _draw_plan(b: Dictionary, me: Vector3) -> void:
 		Debug.draw_circle(Vector3(w.x, 6.5, w.z), w.y, Color(1.0, 0.4, 0.1, 0.2), 48)
 	for w: Vector3 in b.get("walls", PackedVector3Array()):
 		Debug.draw_circle(Vector3(w.x, 7.0, w.z), w.y, Color(1.0, 0.4, 0.1, 0.5), 48)
+	if b.has("cone_from"):
+		_draw_cone(b.cone_from, float(b.cone_axis), float(b.cone_half), float(b.cone_reach), C_RETREAT, "1x")
+		if float(b.cone_ratio) > 0.0:
+			_draw_cone(b.cone_from, float(b.cone_axis) + PI, float(b.cone_half), float(b.cone_reach) / float(b.cone_ratio), Color(C_RETREAT, 0.45), "%.0fx" % float(b.cone_ratio))
 	var anchor: Vector3 = b.anchor
 	Debug.draw_im_sphere(anchor + LIFT, 25.0, C_BAND)
 	if b.has("band_lo"):
 		Debug.draw_circle(anchor + Vector3(0.0, 6.0, 0.0), b.band_lo, C_BAND, 96)
 		Debug.draw_circle(anchor + Vector3(0.0, 6.0, 0.0), b.band_hi, C_BAND, 96)
+
+
+## Bearing 0 is +z, as the bot's atan2(x, z).
+static func _draw_cone(from: Vector3, axis: float, half: float, reach: float, col: Color, label: String) -> void:
+	if is_inf(axis) or is_nan(axis):
+		Debug.draw_circle(from + Vector3(0.0, 9.0, 0.0), reach, col, 64)
+		return
+	var o := from + Vector3(0.0, 9.0, 0.0)
+	var at := func(a: float, r: float) -> Vector3: return o + Vector3(sin(a), 0.0, cos(a)) * r
+	var arc := PackedVector3Array([o])
+	for k in 17:
+		arc.append(at.call(axis - half + 2.0 * half * k / 16.0, reach))
+	arc.append(o)
+	Debug.draw_path(arc, col)
+	Debug.draw_label(at.call(axis, reach * 0.5) + Vector3(0.0, 40.0, 0.0), label, col, 14)
 
 
 static func _draw_nav(b: Dictionary, me: Vector3) -> void:
@@ -157,6 +176,8 @@ static func _summary(b: Dictionary, now: float) -> String:
 		lines.append("%s ev %.0f | %s" % [["AP", "HE"][int(b.ammo)], float(b.ev), b.get("gate", "")])
 	else:
 		lines.append(b.get("gate", ""))
+	if b.has("ttd"):
+		lines.append("threat %.2f  ttd %s  ttw %s  hold %s" % [float(b.threat), _secs(b.ttd), _secs(b.ttw), _secs(b.ttw_hold)])
 	if b.has("release"):
 		lines.append("replan: %s %ds ago" % [b.release, int(now - float(b.release_at))])
 	if b.has("torp_gate"):
@@ -174,3 +195,8 @@ static func _lift(pts: PackedVector3Array, y: float) -> PackedVector3Array:
 	for i in pts.size():
 		out[i] = Vector3(pts[i].x, y, pts[i].z)
 	return out
+
+
+static func _secs(v) -> String:
+	var s := float(v)
+	return "-" if s < 0.0 or is_inf(s) else "%ds" % roundi(s)

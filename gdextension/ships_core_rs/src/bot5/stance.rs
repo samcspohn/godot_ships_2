@@ -96,7 +96,7 @@ pub fn swing_rate(p: &ShipParams, speed: f32) -> f32 {
 /// `keep` stays unless beaten by SWITCH. With `side_ref` (bearing to the target, else the nearest threat), headings
 /// putting it off the `trained` beam (where the turrets point; else its beam now) must beat that beam's best by SIDE_SWITCH.
 pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: f32, keep: Option<f32>, side_ref: Option<f32>,
-        trained: Option<f32>) -> (f32, f32) {
+        trained: Option<f32>, ok: &dyn Fn(f32) -> bool) -> (f32, f32) {
     let cost = |h: f32| {
         let d = wrap(h - from);
         let steps = (d.abs() / BIN).round() as usize;
@@ -115,6 +115,9 @@ pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: 
     let (mut best, mut other) = ((centre, f32::INFINITY), (centre, f32::INFINITY));
     for k in -n..=n {
         let h = wrap(centre + k as f32 * BIN);
+        if !ok(h) {
+            continue;
+        }
         let c = cost(h);
         let slot = if now_side == 0.0 || beam(h) == now_side { &mut best } else { &mut other };
         if c < slot.1 {
@@ -124,13 +127,90 @@ pub fn best_in(r: &Rates, centre: f32, half: f32, from: f32, omega: f32, lag_s: 
     if !best.1.is_finite() || other.1 < best.1 - SIDE_SWITCH * best.1.abs() - SWITCH_ABS {
         best = other;
     }
-    if let Some(h) = keep.filter(|&h| wrap(h - centre).abs() <= half + 1e-3) {
+    if let Some(h) = keep.filter(|&h| wrap(h - centre).abs() <= half + 1e-3 && ok(h)) {
         let c = cost(h);
         if best.1 > c - SWITCH * c.abs() - SWITCH_ABS {
             return (h, c);
         }
     }
     best
+}
+
+const ESC_DT: f32 = 0.5;
+const ESC_STEP_M: f32 = 25.0;
+const ESC_ASTERN_S: f32 = 60.0;
+
+/// Per heading bin from here: ahead clear for `ahead_m` / reaching cover first; astern from rest reaching cover first.
+pub struct Escapes {
+    pub ahead: [bool; BINS],
+    pub ahead_cover: [bool; BINS],
+    pub astern: [bool; BINS],
+}
+
+pub fn escapes(p: &ShipParams, pos: Vector2, ahead_m: f32, limit: f32, sdf: &dyn Fn(Vector2) -> f32, covered: &dyn Fn(Vector2) -> bool) -> Escapes {
+    let mut h = Hull { pos: Vector2::ZERO, vel: Vector2::ZERO, heading: 0.0, yaw: 0.0, rudder: 0.0, power: 0.0 };
+    let mut t = 0.0;
+    while t < ESC_ASTERN_S {
+        h.step(p, 0.0, crate::nav::types::throttle_to_speed_fraction(-1), ESC_DT);
+        t += ESC_DT;
+    }
+    let back_m = h.pos.length();
+    let mut out = Escapes { ahead: [false; BINS], ahead_cover: [false; BINS], astern: [false; BINS] };
+    for b in 0..BINS {
+        let f = Vector2::new(heading_of(b).sin(), heading_of(b).cos());
+        let n = (ahead_m / ESC_STEP_M).ceil() as usize;
+        out.ahead[b] = true;
+        for k in 1..=n {
+            let q = pos + f * (k as f32 * ESC_STEP_M).min(ahead_m);
+            if sdf(q) < limit {
+                out.ahead[b] = false;
+                break;
+            }
+            out.ahead_cover[b] |= covered(q);
+        }
+        let n = (back_m / ESC_STEP_M).ceil().max(1.0) as usize;
+        for k in 1..=n {
+            let q = pos - f * (k as f32 * ESC_STEP_M).min(back_m);
+            if sdf(q) < limit {
+                break;
+            }
+            if covered(q) {
+                out.astern[b] = true;
+                break;
+            }
+        }
+    }
+    out
+}
+
+const LAND_MAX_S: f32 = 240.0;
+
+/// Turn onto `want` ahead, either way, then sail `run_m`, never under `limit` from land.
+pub fn turn_clear(p: &ShipParams, h0: Hull, want: f32, run_m: f32, limit: f32, sdf: &dyn Fn(Vector2) -> f32) -> bool {
+    [1.0f32, -1.0].iter().any(|&way| {
+        let mut h = h0;
+        let (mut t, mut run) = (0.0, 0.0);
+        while t < LAND_MAX_S && run < run_m {
+            let d = wrap(want - h.heading);
+            let r = if d.abs() <= TURN_DONE || d * way > 0.0 && d.abs() < PI / 2.0 {
+                rudder_to_heading(&h, p, want, false)
+            } else if h.speed() < -0.5 { way } else { -way };
+            let at = h.pos;
+            h.step(p, r, 1.0, ESC_DT);
+            t += ESC_DT;
+            run += h.pos.distance_to(at);
+            if sdf(h.pos) < limit {
+                return false;
+            }
+        }
+        true
+    })
+}
+
+pub fn astern_clear(pos: Vector2, heading: f32, run_m: f32, limit: f32, sdf: &dyn Fn(Vector2) -> f32) -> bool {
+    let f = Vector2::new(heading.sin(), heading.cos());
+    let n = (run_m / ESC_STEP_M).ceil() as usize;
+    (1..=n).all(|k| sdf(pos - f * (k as f32 * ESC_STEP_M).min(run_m)) >= limit)
 }
 
 const ROLL_DT: f32 = 0.5;
@@ -347,6 +427,9 @@ pub struct Stance {
     /// A decision just priced: (raw parts, window s, astern), for the stance probe.
     pub probe: Option<(Parts, f32, bool)>,
     pub holding: bool,
+    /// Backing: the bow cannot come round ahead.
+    pub land: bool,
+    pub land_at: f64,
     pub why: &'static str,
 }
 
@@ -406,7 +489,7 @@ mod tests {
         let mut r = Rates::default();
         r.add_threat(0.0, |a| bow_cheap(a) + 0.2 * a / 180.0);
         r.finish();
-        let (h, _) = best_in(&r, PI / 2.0, CONE, PI / 2.0, 1.0, 0.0, None, None, None);
+        let (h, _) = best_in(&r, PI / 2.0, CONE, PI / 2.0, 1.0, 0.0, None, None, None, &|_| true);
         assert!((h - PI / 4.0).abs() < 1e-3, "{h}");
     }
 
@@ -416,8 +499,27 @@ mod tests {
         r.add_threat(0.0, |a| 1.0 + 0.001 * a);
         r.finish();
         let keep = PI / 2.0 - 2.0 * BIN;
-        let (h, _) = best_in(&r, PI / 2.0, CONE, keep, 0.02, 0.0, Some(keep), None, None);
+        let (h, _) = best_in(&r, PI / 2.0, CONE, keep, 0.02, 0.0, Some(keep), None, None, &|_| true);
         assert!((h - keep).abs() < 1e-6);
+    }
+
+    #[test]
+    fn escapes_back_into_cover_off_a_wall() {
+        let sdf = |q: Vector2| 500.0 - q.y;
+        let covered = |q: Vector2| q.y < -100.0;
+        let e = escapes(&params(), Vector2::ZERO, 800.0, 100.0, &sdf, &covered);
+        assert!(!e.ahead[bin(0.0)] && e.astern[bin(0.0)]);
+        assert!(e.ahead[bin(PI)] && e.ahead_cover[bin(PI)] && !e.astern[bin(PI)]);
+    }
+
+    #[test]
+    fn turn_clear_needs_room_ahead() {
+        let h0 = Hull { pos: Vector2::ZERO, vel: Vector2::ZERO, heading: 0.0, yaw: 0.0, rudder: 0.0, power: 0.0 };
+        let near = |q: Vector2| 300.0 - q.y;
+        let far = |q: Vector2| 5000.0 - q.y;
+        assert!(!turn_clear(&params(), h0, PI, 800.0, 100.0, &near));
+        assert!(turn_clear(&params(), h0, PI, 800.0, 100.0, &far));
+        assert!(astern_clear(Vector2::ZERO, 0.0, 250.0, 100.0, &near));
     }
 
     fn hull(heading: f32, speed: f32, power: f32) -> Hull {

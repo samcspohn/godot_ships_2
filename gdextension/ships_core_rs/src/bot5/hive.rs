@@ -195,6 +195,8 @@ pub struct Member<'a> {
     pub hunt: bool,
     /// Bearing straight away from the enemies we are too close to by their trade; stations only within its cone.
     pub kite_axis: Option<f32>,
+    /// v4 SkillDisengage._threat_axis toward the guns; None: the priority's bearing.
+    pub threat_axis: Option<f32>,
     /// Enemy shells aimed near us are in the air.
     pub under_fire: bool,
     /// Not a destroyer, brawler or its flank's spotter: may fight from, and fall back to, hidden cover.
@@ -352,8 +354,11 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
 
     let (lo, hi) = if hunting { (0.0, HUNT_M) } else { picked.and_then(|c| c.0).and_then(|id| m.bands.get(&id).copied()).unwrap_or((lo, hi)) };
     let cover = (d.cover_first && !m.brawl).then_some(d.safe_x);
-    let away: Vector2 = view.iter().filter(|(e, p)| p.distance_to(my) < e.gun_range * 1.05).map(|(_, p)| dir_or(my - *p, Vector2::ZERO)).sum();
-    let cones = if away.length() > 1e-3 { vec![(away.x.atan2(away.y), 1.0)] } else { m.kite_axis.map(|a| (a, 1.0)).into_iter().collect() };
+    let threat_axis = m.threat_axis.or_else(|| contact.filter(|c| c.distance_to(my) > 1.0).map(|c| (c - my).x.atan2((c - my).y)));
+    let cones = match threat_axis {
+        Some(a) => vec![(wrap(a + std::f32::consts::PI), 1.0)],
+        None => m.kite_axis.map(|a| (a, 1.0)).into_iter().collect(),
+    };
     let kite = m.kite_axis.filter(|_| !m.brawl);
     let req = |keep: Option<Vector2>, avoid: Option<Vector2>, only: Option<Vector2>| Req {
         anchor, target: picked.and_then(|c| c.0), lo, hi, keep, avoid, only,
@@ -372,22 +377,26 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         CoverArgs { offense: true, axis, cone_half: cover::CONE_HALF, away_ratio: cover::AWAY_RATIO, near, clip: clip.clone(), exclude: Vec::new(),
             shield_ok: false, from, deep_only, allow_dark: false }
     };
-    // v4 SkillDisengage: toward the threat at 1x and away at AWAY_RATIO, only away once the bow points away (or only
-    // toward, ahead); the toward cone turned at most CONE_HALF onto `toward`.
+    // v4 SkillDisengage.execute: CONE on the threat axis toward the guns, the away end at AWAY_RATIO; once the bow points
+    // off the threat only the away cone (ahead_only: only toward); the cone turned at most CONE onto `toward`.
     let defense = |(toward, ahead): (Vector2, bool)| {
-        let away = cones.first().map_or(f32::INFINITY, |c| c.0);
-        let bow_away = !ahead && away.is_finite() && wrap(me.heading() - away).abs() < std::f32::consts::FRAC_PI_2;
-        let mut axis = if bow_away || !away.is_finite() { away } else { wrap(away + std::f32::consts::PI) };
         let half = super::station::CONE_HALF;
+        let axis0 = threat_axis.unwrap_or(f32::INFINITY);
+        let (mut axis, mut ratio) = (axis0, cover::AWAY_RATIO);
+        if ahead {
+            ratio = f32::INFINITY;
+        } else if axis0.is_finite() && wrap(me.heading() - axis0).abs() > std::f32::consts::FRAC_PI_2 {
+            axis = wrap(axis0 + std::f32::consts::PI);
+            ratio = f32::INFINITY;
+        }
         if toward.is_finite() && axis.is_finite() {
             let off = wrap((toward - my).x.atan2((toward - my).y) - axis);
             if off.abs() <= std::f32::consts::FRAC_PI_2 + half {
                 axis = wrap(axis + off.clamp(-half, half));
             }
         }
-
-        CoverArgs { offense: false, axis, cone_half: half, away_ratio: if bow_away || ahead { f32::INFINITY } else { cover::AWAY_RATIO }, near: None,
-            clip: clip.clone(), exclude: Vec::new(), shield_ok: true, from: my, deep_only: false, allow_dark: !m.pinned }
+        CoverArgs { offense: false, axis, cone_half: half, away_ratio: ratio, near: None, clip: clip.clone(), exclude: Vec::new(),
+            shield_ok: true, from: my, deep_only: false, allow_dark: !m.pinned }
     };
     let off_cone = |p: &Plan| !p.kite && !p.cover && kite.is_some_and(|a| {
         let d = p.station - my;
@@ -583,7 +592,9 @@ pub fn resolve(m: &Member, snap: &Snapshot, belief: &Belief, committed: &[Commit
         let fine = p.posture == posture && !blocked && (!recheck || still_good(&p, scan)) && !lost_shot(&p, shot) && !off_cone(&p) && (p.posture != Posture::Engage || p.kite == kite.is_some())
             && !went_dark(&p)
             && (p.shot || p.posture != Posture::Engage || shot_target.is_none());
-        let again = fine && (now >= p.hold_until || arrived) && posture == Posture::Engage && still_good(&p, scan);
+        // A disengage cover still hidden is kept: searched again from a turned bow, it flips to the other end.
+        let again = fine && (now >= p.hold_until || arrived) && (posture == Posture::Engage || p.cover && posture == Posture::Disengage)
+            && still_good(&p, scan);
         if fine && ((now < p.hold_until && !arrived) || again) {
             let mut p = p;
             if again {

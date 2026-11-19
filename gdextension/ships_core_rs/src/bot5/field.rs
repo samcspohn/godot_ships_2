@@ -112,7 +112,7 @@ impl TeamField {
         self.ghosts.clear();
         let age = (now - belief.start) as f32;
         for (id, at, ahead) in belief.presumed_now_ahead(FORECAST_S) {
-            let Some(s) = snap.get(id).filter(|s| s.alive) else { continue };
+            let Some(s) = snap.get(id) else { continue };
             let m = matrix(id);
             let r = radius(age, s.max_speed);
             let fc = (ahead.distance_to(at) > FORECAST_MIN_M).then_some(ahead);

@@ -448,6 +448,22 @@ func _push_pairs(now: float) -> void:
 				missing = true
 				continue
 			world.set_threat(slot, t.get_instance_id(), tap, the)
+		# Presumed enemies mirror our own ships: their guns on us and ours on them stand in, keyed by our ship.
+		for a: Ship in server.get_all_ships():
+			if a.team == null or a.team.team_id != me.team.team_id or a.artillery_controller == null:
+				continue
+			var aid := a.get_instance_id()
+			var ap2: GunParams = a.artillery_controller.get_params()
+			if not world.has_threat(slot, aid):
+				var k0 := PointTables.table_key(a, me, 0) if ap2.shell1 != null else ""
+				var k1 := PointTables.table_key(a, me, 1) if ap2.shell2 != null else ""
+				if (ap2.shell1 == null or k0 != "") and (ap2.shell2 == null or k1 != ""):
+					world.set_threat(slot, aid, k0, k1)
+			if not world.has_pair(slot, aid):
+				var p0 := PointTables.table_key(me, a, 0) if gp.shell1 != null else ""
+				var p1 := PointTables.table_key(me, a, 1) if gp.shell2 != null else ""
+				if (gp.shell1 == null or p0 != "") and (gp.shell2 == null or p1 != ""):
+					world.set_pair(slot, aid, p0, p1, GunneryModel.raw_fire_chance(gp.shell2, a) if gp.shell2 != null else 0.0)
 		if not missing:
 			_pairs_done[slot] = true
 	if all_tried:

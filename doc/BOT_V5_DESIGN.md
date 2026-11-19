@@ -296,6 +296,17 @@ v5 BBs take ~3x the damage of v4 BBs (Yamato 150k vs 60k, Montana 131k vs 54k): 
 - Stance active: the navigator gets heading weight 1, `prefer_reverse` astern, `forbid_reverse` ahead. Inactive (nothing in or out): the navigator's own gear.
 - Counters: `stance_ahead/turn/astern/hold`, `stance_veto_turn/astern`. Trace: `SHIPS_BOT5_STANCE_TRACE`.
 - Pending: dodge (shells in the air), destroyed mounts, torpedo exposure by aspect.
+- Escape at the station (2026-11-19): a hold heading must leave a way out from where the hull lies: ahead clear of land for a
+  turning radius and opening from the guns (within 90° of away) or reaching covered water (no enemy shells land, or unseen at
+  concealment), or astern (full astern from rest, `Hull::step`, 60 s) reaching covered water before land. Bow toward the enemy is
+  fine when backing reaches cover; an astern-only heading creeps astern. None passing: the unmasked best (`stance_hold_no_escape`).
+- Land (2026-11-19): within 1.5 turning radii + clearance of land, the stance heading must be reachable ahead: the turn onto it at
+  full power on `Hull::step`, either way, then a turning radius sailed, clear of the navigator's rollout limit. Else the next best
+  heading in the window, up to 4 (`stance_land_reangle`); none, with the bow within a ship length of land under 0.3 of top speed and
+  a ship length astern clear: astern, held ≥ 8 s, re-checked after (`stance_astern_land`). Not against land: unchanged
+  (`stance_land_none`); astern blocked too: unchanged (`stance_boxed`).
+  Why: nose-in with the route behind or a big turn wanted, stance forbade reverse and the navigator flipped full ahead / astern every
+  1-10 s (3 s engine commit) without moving. Trace `SHIPS_BOT5_HELM_TRACE` (1 Hz per bot: gear, sdf at bow/stern, aspect).
 - First result (12v12 t10, seeds 1-4, both sides): v5 0/8, damage ratio 0.58 (0.60 before). v5 BBs still take ~2.5× v4's incoming per second and fire 30-40% fewer salvos; Montana takes 36k from torpedoes (v4: 0). Stance 56 µs mean per frame, ~260 µs worst; drive +50 µs.
 
 ## Threat, cover first, disengage (2026-11-14)

@@ -160,7 +160,7 @@ pub struct Curves {
 }
 
 impl Curves {
-    /// True when it rebuilt the curve.
+    /// True when it rebuilt a curve already built: only those count against a budget.
     pub(crate) fn refresh(&mut self, store: &Store, key: &str, now: f64) -> bool {
         if self.map.get(key).is_some_and(|c| c.done || now - c.at < CURVE_RETRY_S) {
             return false;
@@ -171,14 +171,16 @@ impl Curves {
             return false;
         }
         let all = t.ranges.len() * t.aspects.len();
-        if let Some(c) = self.map.get_mut(key) {
-            if t.slots.len() < all && t.slots.len() < c.buckets + (all / 10).max(1) {
+        let first = match self.map.get_mut(key) {
+            Some(c) if t.slots.len() < all && t.slots.len() < c.buckets + (all / 10).max(1) => {
                 c.at = now;
                 return false;
             }
-        }
+            c => c.is_none(),
+        };
         self.map.insert(key.to_string(), Curve::build(&t, now));
-        true
+        // First builds are not budgeted: the opening's presumed threats need every curve before any shot.
+        !first
     }
 
     pub fn get(&self, key: &str) -> Option<&Curve> {
