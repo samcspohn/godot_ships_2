@@ -634,7 +634,7 @@ fn us(t: std::time::Instant) -> u32 {
 }
 
 /// Unset or anything but "0" is on.
-fn env_on(k: &str) -> bool {
+pub(crate) fn env_on(k: &str) -> bool {
     std::env::var(k).map_or(true, |v| v != "0")
 }
 
@@ -1242,7 +1242,11 @@ impl World {
             }
             let threat_axis = self.threat_axis(i, team, now);
             let bot = &self.bots[i];
-            let m = Member { threat_axis, me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
+            let fired_on = now < bot.fired_on_until || snap.enemies_of(team).any(|e| bot.reads.on_us(e.id, now, e.reload as f64 * ON_US_RELOADS));
+            if fired_on && me.seen {
+                self.tel.count("fire_cones");
+            }
+            let m = Member { threat_axis, fired_on, me, style: bot.style.style(), apt: bot.apt, plan: bot.plan, assign: bot.assign, blocked_s: bot.blocked_s,
                 torp: bot.torp.map(|t| (t.range, bot.inputs.torp_ready > 0)), flank, danger, bands: bands.clone(), brawl, kite_axis, hunt,
                 under_fire: now < bot.fired_on_until, pinned: bot.pinned, brawler: bot.style == Playstyle::Brawler, crossfire,
                 bounds: self.map.as_ref().map(|m| { let m = m.bind(); (Vector2::new(m.min_x, m.min_z), Vector2::new(m.max_x, m.max_z)) }),

@@ -171,8 +171,11 @@ impl GunMatrix {
 
     fn build_col(&self, j: usize, terrain: &Terrain, cells: &Cells) {
         let mut col = vec![0u64; self.words];
+        let bits = self.bits();
         for i in 0..cells.centres.len() {
-            if self.hit(i, j, terrain, cells) {
+            // A built row already holds the answer: loaded tables need no tracing.
+            let hit = if self.row_ready(i) { bits[i * self.words + j / 64].load(Acquire) >> (j % 64) & 1 != 0 } else { self.hit(i, j, terrain, cells) };
+            if hit {
                 col[i / 64] |= 1 << (i % 64);
             }
         }

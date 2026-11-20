@@ -230,10 +230,20 @@ static func _queue_secondary_tables(pm, shooter: Ship, target: Ship) -> void:
 			var key := "%s|%s" % [sk, target.scene_file_path]
 			if _point_tables.has(key):
 				continue
+			var path := PointTable.cache_path(key)
+			if mode() == PT_FILES and FileAccess.file_exists(path):
+				var b = GunneryModel.sec_battery(shooter, i, 0.0)
+				if b != null and _load_file(key, b["shells"][ammo], target):
+					_point_tables[key] = true
+					_rt["files"] = int(_rt["files"]) + 1
+					continue
 			var job: Dictionary = PointTable.runtime_job(shooter, target, ammo, 700, i)
 			_point_tables[key] = not job.is_empty() and pm.point_job_submit(key, target, job["shell"], job)
 			if _point_tables[key]:
 				_rt_keys.append(key)
+				if mode() == PT_FILES:
+					_rt_save[key] = {"points": job["points"], "ranges": job["ranges"], "n_aspect": (job["aspects"] as PackedFloat64Array).size(),
+						"path": path}
 
 
 ## Per table key: whether its first query found the buckets it needed.
@@ -374,18 +384,25 @@ static func table_key(shooter: Ship, target: Ship, ammo: int) -> String:
 	_rt_pending_file.erase(key)
 	var p: GunParams = shooter.artillery_controller.get_params()
 	var shell: ShellParams = p.shell1 if ammo == 0 else p.shell2
-	var t = PointTable.load_from(PointTable.cache_path(key), shell) if shell != null else null
-	if t == null:
+	if not _load_file(key, shell, target):
 		push_warning("PointTables: no point table for %s" % key)
 		_point_tables[key] = false
 		return ""
+	_point_tables[key] = true
+	return key
+
+
+## Puts the user:// table for `key` into the native store; false without a readable one.
+static func _load_file(key: String, shell: ShellParams, target: Ship) -> bool:
+	var t = PointTable.load_from(PointTable.cache_path(key), shell) if shell != null else null
+	if t == null:
+		return false
 	var aspects := PackedFloat64Array()
 	for ai in t.n_aspect:
 		aspects.append(GunneryModel.aspect_center(ai))
 	GunneryModel.native_pm().point_table_put(key, t.ranges, aspects, t.points, PointTable.N_COMP, t.buckets,
 		PointTable.sections_of(target, t.points), PointTable.sat_weights())
-	_point_tables[key] = true
-	return key
+	return true
 
 
 ## Per (target, shell damage, saturation signature): [component weights, fire array] for point_best.

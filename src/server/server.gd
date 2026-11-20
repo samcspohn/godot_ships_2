@@ -2157,8 +2157,17 @@ func _sweep_reach_fields() -> void:
 			weights.append(REF_WEIGHT)
 		field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
 			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)
-		_prefetch_edge_trees(field, team_ships[team_id], origins)
+		# Only v4's shot checks read the trees.
+		if _team_has_v4_bot(team_id):
+			_prefetch_edge_trees(field, team_ships[team_id], origins)
 	_sync_gun_matrices(field)
+
+
+func _team_has_v4_bot(team_id: int) -> bool:
+	for ship in teams[team_id].ships:
+		if is_instance_valid(ship) and ship.is_alive() and ship.get_node_or_null("Modules/BotController") != null:
+			return true
+	return false
 
 
 func _any_v4_bot() -> bool:

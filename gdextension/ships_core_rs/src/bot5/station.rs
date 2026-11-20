@@ -26,6 +26,7 @@ const DEF_R: f32 = 900.0;
 const DEF_W: f32 = 0.25;
 /// v4's window: every station lies within this of us.
 pub const WINDOW_M: f32 = 8000.0;
+pub const FIRE_CONE_HALF: f32 = 45.0 * std::f32::consts::PI / 180.0;
 pub const MATE_SEP_M: f32 = 1000.0;
 /// v4 Disengage: cells within this of the threat axis (toward or away) only.
 pub const CONE_HALF: f32 = 35.0 * std::f32::consts::PI / 180.0;
@@ -332,6 +333,8 @@ pub struct Req {
     pub hide: Option<super::cover::CoverArgs>,
     /// v4 _close_in presumed mode: unseen enemies are live targets and threats at their certainty weight.
     pub presumed: bool,
+    /// Engaging under fire: a station only within FIRE_CONE_HALF of one of these bearings from us. Empty: no limit.
+    pub fire_cones: Vec<f32>,
 }
 
 /// A believed enemy position at one moment.
@@ -573,10 +576,13 @@ impl Scan<'_> {
 
     /// The transit multiplier of the disengage cone cell p lies in; None outside every cone.
     fn cone_ratio(&self, req: &Req, p: Vector2) -> Option<f32> {
+        let b = (p.x - self.my.x).atan2(p.y - self.my.y);
+        if !req.fire_cones.is_empty() && !req.fire_cones.iter().any(|&c| wrap(b - c).abs() <= FIRE_CONE_HALF) {
+            return None;
+        }
         if req.cones.is_empty() {
             return Some(1.0);
         }
-        let b = (p.x - self.my.x).atan2(p.y - self.my.y);
         req.cones.iter().filter(|c| wrap(b - c.0).abs() <= CONE_HALF).map(|c| c.1).reduce(f32::min)
     }
 
